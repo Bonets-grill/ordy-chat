@@ -2,9 +2,12 @@
 
 import { DrizzleAdapter } from "@auth/drizzle-adapter";
 import NextAuth, { type DefaultSession } from "next-auth";
+import Credentials from "next-auth/providers/credentials";
 import Resend from "next-auth/providers/resend";
 import { db } from "@/lib/db";
 import { accounts, sessions, users, verificationTokens } from "@/lib/db/schema";
+
+const ALLOW_DEV_LOGIN = process.env.ALLOW_DEV_LOGIN === "1";
 
 declare module "next-auth" {
   interface Session {
@@ -22,22 +25,42 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     sessionsTable: sessions,
     verificationTokensTable: verificationTokens,
   }),
-  session: { strategy: "database" },
+  session: { strategy: ALLOW_DEV_LOGIN ? "jwt" : "database" },
   providers: [
-    Resend({
-      apiKey: process.env.AUTH_RESEND_KEY,
-      from: process.env.AUTH_EMAIL_FROM ?? "noreply@ordychat.com",
-    }),
+    ...(process.env.AUTH_RESEND_KEY
+      ? [Resend({ apiKey: process.env.AUTH_RESEND_KEY, from: process.env.AUTH_EMAIL_FROM ?? "noreply@ordychat.com" })]
+      : []),
+    ...(ALLOW_DEV_LOGIN
+      ? [
+          Credentials({
+            id: "dev",
+            name: "Dev Login",
+            credentials: { email: { label: "Email", type: "email" } },
+            async authorize(creds) {
+              const email = String(creds?.email ?? "").toLowerCase().trim();
+              if (!email || !email.includes("@")) return null;
+              const { eq } = await import("drizzle-orm");
+              const existing = await db.select().from(users).where(eq(users.email, email)).limit(1);
+              if (existing[0]) return existing[0];
+              const [created] = await db.insert(users).values({ email, emailVerified: new Date() }).returning();
+              return created;
+            },
+          }),
+        ]
+      : []),
   ],
   pages: {
     signIn: "/signin",
     verifyRequest: "/verify",
   },
   callbacks: {
-    async session({ session, user }) {
-      if (session.user) {
-        session.user.id = user.id;
-        session.user.role = (user as { role?: "super_admin" | "tenant_admin" }).role ?? "tenant_admin";
+    async session({ session, user, token }) {
+      const userId = user?.id ?? (token?.sub as string | undefined);
+      if (session.user && userId) {
+        session.user.id = userId;
+        const { eq } = await import("drizzle-orm");
+        const [row] = await db.select({ role: users.role }).from(users).where(eq(users.id, userId)).limit(1);
+        session.user.role = (row?.role as "super_admin" | "tenant_admin") ?? "tenant_admin";
       }
       return session;
     },

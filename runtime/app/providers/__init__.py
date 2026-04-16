@@ -1,21 +1,20 @@
-# runtime/app/providers/__init__.py — Factory de proveedores de WhatsApp.
+# runtime/app/providers/__init__.py — Factory de proveedores.
 
 from app.providers.base import MensajeEntrante, ProveedorWhatsApp
 
 
-def obtener_proveedor(nombre: str, credentials: dict) -> ProveedorWhatsApp:
-    """Selecciona el adaptador según el proveedor configurado por el tenant."""
+def obtener_proveedor(nombre: str, credentials: dict, webhook_secret: str = "") -> ProveedorWhatsApp:
     nombre = (nombre or "").lower()
 
     if nombre == "whapi":
         from app.providers.whapi import ProveedorWhapi
-        return ProveedorWhapi(credentials)
+        return ProveedorWhapi(credentials, webhook_secret)
     if nombre == "meta":
         from app.providers.meta import ProveedorMeta
-        return ProveedorMeta(credentials)
+        return ProveedorMeta(credentials, webhook_secret)
     if nombre == "twilio":
         from app.providers.twilio import ProveedorTwilio
-        return ProveedorTwilio(credentials)
+        return ProveedorTwilio(credentials, webhook_secret)
     raise ValueError(f"Proveedor no soportado: {nombre}")
 
 

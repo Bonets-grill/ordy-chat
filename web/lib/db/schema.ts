@@ -95,6 +95,7 @@ export const agentConfigs = pgTable("agent_configs", {
   knowledge: jsonb("knowledge").notNull().default([]),
   paused: boolean("paused").notNull().default(false),
   onboardingCompleted: boolean("onboarding_completed").notNull().default(false),
+  maxMessagesPerHour: integer("max_messages_per_hour").notNull().default(200),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -104,6 +105,7 @@ export const providerCredentials = pgTable("provider_credentials", {
   provider: text("provider").notNull(),
   credentialsEncrypted: text("credentials_encrypted").notNull(),
   phoneNumber: text("phone_number"),
+  webhookSecret: text("webhook_secret"),
   webhookVerified: boolean("webhook_verified").notNull().default(false),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -124,10 +126,21 @@ export const messages = pgTable("messages", {
   tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
   role: text("role").notNull(),
   content: text("content").notNull(),
+  mensajeId: text("mensaje_id"),
   tokensIn: integer("tokens_in").default(0),
   tokensOut: integer("tokens_out").default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const processedMessages = pgTable(
+  "processed_messages",
+  {
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    mensajeId: text("mensaje_id").notNull(),
+    processedAt: timestamp("processed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.tenantId, t.mensajeId] }) }),
+);
 
 // ── Platform settings (super admin) ─────────────────────────
 export const platformSettings = pgTable("platform_settings", {

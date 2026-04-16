@@ -6,20 +6,19 @@ import { Sparkles, Send } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import * as React from "react";
-import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 
-const NICHOS = [
-  "Restaurante",
-  "Clínica dental",
-  "Estética",
-  "Inmobiliaria",
-  "Tienda online",
-  "Academia",
-  "Gimnasio",
-  "Abogados",
-  "Consultoría",
-  "Barbería",
+const NICHOS: { label: string; seed: string }[] = [
+  { label: "Restaurante", seed: "Tengo un restaurante y quiero que el agente tome reservas y responda el menú por WhatsApp." },
+  { label: "Clínica dental", seed: "Soy una clínica dental. Necesito que agende citas y confirme visitas por WhatsApp." },
+  { label: "Estética", seed: "Centro de estética — quiero que el agente informe de tratamientos, precios y agende citas." },
+  { label: "Inmobiliaria", seed: "Inmobiliaria: quiero calificar leads y agendar visitas de pisos automáticamente." },
+  { label: "Tienda online", seed: "Tienda online — necesito responder preguntas de stock, envíos y tomar pedidos por WhatsApp." },
+  { label: "Academia", seed: "Academia de formación. Quiero atender a alumnos, dar horarios y vender cursos." },
+  { label: "Gimnasio", seed: "Gimnasio — atiende socios, horarios de clases y gestiona altas de membresía." },
+  { label: "Abogados", seed: "Despacho de abogados. Quiero calificar casos, agendar consultas y contestar FAQ legales básicas." },
+  { label: "Consultoría", seed: "Consultora: califica leads, agenda discovery calls y envía propuestas." },
+  { label: "Barbería", seed: "Barbería — quiero que tome reservas de cortes y confirme citas por WhatsApp." },
 ];
 
 const PLACEHOLDERS = [
@@ -47,9 +46,9 @@ export function Hero() {
   }
 
   return (
-    <section className="relative overflow-hidden">
-      <div className="absolute inset-0 grid-backdrop opacity-60" aria-hidden />
-      <div className="pointer-events-none absolute left-1/2 top-1/2 h-[500px] w-[900px] -translate-x-1/2 -translate-y-1/2 hero-glow" aria-hidden />
+    <section className="relative overflow-hidden bg-white">
+      <div className="absolute inset-0 grid-backdrop opacity-40" aria-hidden />
+      <div className="pointer-events-none absolute left-1/2 top-2/3 h-[400px] w-[700px] -translate-x-1/2 -translate-y-1/2 hero-glow" aria-hidden />
 
       <div className="relative mx-auto flex max-w-5xl flex-col items-center px-6 pt-14 pb-24 sm:pt-20 md:pt-28">
         <Link
@@ -72,21 +71,24 @@ export function Hero() {
           Funciona para cualquier negocio — desde una cafetería hasta una clínica.
         </p>
 
-        <p className="mt-5 text-sm font-medium text-neutral-500">Creado por negocios que usan:</p>
+        <p className="mt-5 text-sm font-medium text-neutral-500">Elige tu nicho para empezar:</p>
         <div className="mt-3 flex max-w-2xl flex-wrap justify-center gap-2">
           {NICHOS.map((n) => (
-            <Badge key={n} tone="muted" className="bg-white/80 px-3 py-1 text-neutral-700 shadow-sm">
-              {n}
-            </Badge>
+            <button
+              key={n.label}
+              type="button"
+              onClick={() => setValue(n.seed)}
+              className="rounded-full border border-neutral-200 bg-white/90 px-3 py-1 text-xs font-medium text-neutral-700 shadow-sm transition hover:border-brand-400 hover:bg-brand-50 hover:text-brand-700"
+            >
+              {n.label}
+            </button>
           ))}
         </div>
 
         <form
           onSubmit={onSubmit}
-          className="relative mt-10 w-full max-w-3xl rounded-2xl border border-neutral-200 bg-white p-1 shadow-[0_8px_40px_-8px_rgba(139,92,246,0.25)] ring-1 ring-brand-500/10"
+          className="neon-wrap relative mt-10 w-full max-w-3xl rounded-2xl bg-white p-1 shadow-[0_20px_60px_-20px_rgba(139,92,246,0.35)]"
         >
-          <div className="absolute -inset-px -z-10 rounded-2xl bg-gradient-to-r from-accent-pink/40 via-brand-500/30 to-accent-orange/40 opacity-70 blur-sm" aria-hidden />
-
           <textarea
             value={value}
             onChange={(e) => setValue(e.target.value)}

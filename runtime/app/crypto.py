@@ -1,8 +1,7 @@
 # runtime/app/crypto.py — Cifrado de credenciales (compatible con web/lib/crypto.ts)
 #
-# Usa AES-256-GCM con la clave de ENCRYPTION_KEY (32 bytes en base64).
-# Formato almacenado: base64(nonce || ciphertext || tag) — 12 + N + 16 bytes.
-# El web hace lo MISMO con Node crypto. Mantener compatibilidad bit-a-bit.
+# AES-256-GCM. Formato almacenado: base64(nonce(12) || ciphertext(N) || tag(16)).
+# Compatibilidad bit-a-bit con Node crypto en web/lib/crypto.ts.
 
 import base64
 import os
@@ -20,10 +19,12 @@ def _load_key() -> bytes:
 
 
 def descifrar(token_b64: str) -> str:
-    """Descifra un string cifrado por web/lib/crypto.ts y devuelve el texto plano."""
+    """Descifra un string cifrado por web/lib/crypto.ts. Lanza excepción si falla."""
     if not token_b64:
-        return ""
+        raise ValueError("descifrar: token vacío")
     raw = base64.b64decode(token_b64)
+    if len(raw) < 28:
+        raise ValueError(f"descifrar: payload demasiado corto ({len(raw)} bytes)")
     nonce, body = raw[:12], raw[12:]
     plain = AESGCM(_load_key()).decrypt(nonce, body, None)
     return plain.decode("utf-8")

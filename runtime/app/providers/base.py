@@ -12,22 +12,27 @@ class MensajeEntrante:
     texto: str
     mensaje_id: str
     es_propio: bool
+    # Para media no soportada (audio, imagen, video, doc).
+    tipo_no_texto: str | None = None
 
 
 class ProveedorWhatsApp(ABC):
-    """Interfaz que cada proveedor debe implementar."""
-
-    def __init__(self, credentials: dict):
+    def __init__(self, credentials: dict, webhook_secret: str = ""):
         self.credentials = credentials or {}
+        self.webhook_secret = webhook_secret or ""
 
     @abstractmethod
-    async def parsear_webhook(self, request: Request) -> list[MensajeEntrante]:
+    async def parsear_webhook(self, request: Request, body_bytes: bytes) -> list[MensajeEntrante]:
         """Extrae y normaliza mensajes del payload entrante."""
 
     @abstractmethod
     async def enviar_mensaje(self, telefono: str, mensaje: str) -> bool:
         """Envía un mensaje de texto. Retorna True si fue exitoso."""
 
-    async def validar_webhook(self, request: Request) -> int | str | None:
+    @abstractmethod
+    async def verificar_firma(self, request: Request, body_bytes: bytes) -> bool:
+        """Valida que el webhook venga del proveedor y no de un atacante."""
+
+    async def validar_webhook_get(self, request: Request) -> int | str | None:
         """GET de verificación (solo Meta lo usa). None si no aplica."""
         return None

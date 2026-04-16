@@ -1,6 +1,4 @@
 # runtime/app/memory.py — Pool Postgres + operaciones de memoria multi-tenant.
-#
-# Reemplaza el SQLite del AgentKit original. Todas las queries filtran por tenant_id.
 
 import os
 import logging
@@ -22,7 +20,6 @@ async def inicializar_pool() -> asyncpg.Pool:
     if not dsn:
         raise RuntimeError("DATABASE_URL no configurada")
 
-    # asyncpg no entiende el sufijo channel_binding, se limpia
     dsn = dsn.replace("?channel_binding=require&sslmode=require", "?sslmode=require")
     dsn = dsn.replace("&channel_binding=require", "")
 
@@ -32,7 +29,7 @@ async def inicializar_pool() -> asyncpg.Pool:
         max_size=10,
         command_timeout=30,
     )
-    logger.info("Pool Postgres inicializado")
+    logger.info("pool postgres inicializado", extra={"event": "pool_init"})
     return _pool
 
 
@@ -43,8 +40,13 @@ async def cerrar_pool() -> None:
         _pool = None
 
 
-async def obtener_historial(tenant_id: UUID, phone: str, limite: int = 20) -> list[dict]:
-    """Recupera los últimos N mensajes de la conversación (orden cronológico)."""
+async def obtener_historial(
+    tenant_id: UUID,
+    phone: str,
+    limite_mensajes: int = 20,
+    max_chars: int = 20000,
+) -> list[dict]:
+    """Recupera los últimos N mensajes, truncando si superan max_chars totales."""
     pool = await inicializar_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -56,9 +58,43 @@ async def obtener_historial(tenant_id: UUID, phone: str, limite: int = 20) -> li
             ORDER BY m.created_at DESC
             LIMIT $3
             """,
-            tenant_id, phone, limite,
+            tenant_id, phone, limite_mensajes,
         )
-    return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
+
+    # Invertir a orden cronológico y truncar por presupuesto de chars.
+    ordenados = [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
+
+    total = 0
+    recortados: list[dict] = []
+    # Recorremos de más reciente a más antiguo descartando los más viejos si no caben.
+    for m in reversed(ordenados):
+        cost = len(m["content"])
+        if total + cost > max_chars:
+            break
+        recortados.append(m)
+        total += cost
+    return list(reversed(recortados))
+
+
+async def ya_procesado(tenant_id: UUID, mensaje_id: str) -> bool:
+    """
+    Marca el mensaje_id como procesado de forma atómica.
+    Retorna True si YA estaba procesado (debemos saltar), False si es nuevo.
+    """
+    if not mensaje_id:
+        return False
+    pool = await inicializar_pool()
+    async with pool.acquire() as conn:
+        inserted = await conn.fetchval(
+            """
+            INSERT INTO processed_messages (tenant_id, mensaje_id)
+            VALUES ($1, $2)
+            ON CONFLICT (tenant_id, mensaje_id) DO NOTHING
+            RETURNING 1
+            """,
+            tenant_id, mensaje_id,
+        )
+    return inserted is None
 
 
 async def guardar_intercambio(
@@ -66,10 +102,11 @@ async def guardar_intercambio(
     phone: str,
     mensaje_usuario: str,
     respuesta_agente: str,
+    mensaje_id: str | None = None,
     tokens_in: int = 0,
     tokens_out: int = 0,
 ) -> None:
-    """Upsert de la conversación + inserta ambos mensajes en una transacción."""
+    """Upsert conversación + inserta user/assistant en una transacción."""
     pool = await inicializar_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -85,10 +122,10 @@ async def guardar_intercambio(
             )
             await conn.execute(
                 """
-                INSERT INTO messages (conversation_id, tenant_id, role, content, tokens_in)
-                VALUES ($1, $2, 'user', $3, $4)
+                INSERT INTO messages (conversation_id, tenant_id, role, content, mensaje_id, tokens_in)
+                VALUES ($1, $2, 'user', $3, $4, $5)
                 """,
-                conv_id, tenant_id, mensaje_usuario, tokens_in,
+                conv_id, tenant_id, mensaje_usuario, mensaje_id, tokens_in,
             )
             await conn.execute(
                 """

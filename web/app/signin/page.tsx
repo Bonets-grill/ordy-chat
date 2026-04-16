@@ -16,7 +16,8 @@ function SignInForm() {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
-    await signIn("resend", { email, callbackUrl: from });
+    const provider = process.env.NODE_ENV === "development" ? "dev" : "resend";
+    await signIn(provider, { email, callbackUrl: from });
   }
 
   return (

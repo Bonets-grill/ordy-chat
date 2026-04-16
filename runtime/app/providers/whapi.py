@@ -1,6 +1,10 @@
-# runtime/app/providers/whapi.py — Adaptador para Whapi.cloud.
+# runtime/app/providers/whapi.py — Adaptador Whapi.cloud.
+#
+# Whapi no firma los webhooks. Usamos un shared secret en query param (?s=...)
+# que se configura en la URL del webhook del tenant.
 
 import logging
+import hmac
 import httpx
 from fastapi import Request
 
@@ -8,37 +12,69 @@ from app.providers.base import MensajeEntrante, ProveedorWhatsApp
 
 logger = logging.getLogger("ordychat.providers.whapi")
 
+_http_client: httpx.AsyncClient | None = None
+
+
+def _get_http() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.AsyncClient(timeout=20.0)
+    return _http_client
+
 
 class ProveedorWhapi(ProveedorWhatsApp):
     URL_ENVIO = "https://gate.whapi.cloud/messages/text"
 
-    async def parsear_webhook(self, request: Request) -> list[MensajeEntrante]:
-        body = await request.json()
+    async def verificar_firma(self, request: Request, body_bytes: bytes) -> bool:
+        if not self.webhook_secret:
+            # Sin secret configurado: política strict → rechazar.
+            return False
+        provided = request.query_params.get("s", "")
+        return hmac.compare_digest(provided, self.webhook_secret)
+
+    async def parsear_webhook(self, request: Request, body_bytes: bytes) -> list[MensajeEntrante]:
+        import json
+        try:
+            body = json.loads(body_bytes.decode("utf-8")) if body_bytes else {}
+        except json.JSONDecodeError:
+            return []
+
         mensajes: list[MensajeEntrante] = []
         for msg in body.get("messages", []):
-            texto = (msg.get("text") or {}).get("body", "")
-            mensajes.append(MensajeEntrante(
-                telefono=msg.get("chat_id", ""),
-                texto=texto,
-                mensaje_id=msg.get("id", ""),
-                es_propio=bool(msg.get("from_me", False)),
-            ))
+            msg_type = msg.get("type") or "text"
+            mid = msg.get("id", "")
+            telefono = msg.get("chat_id", "")
+            propio = bool(msg.get("from_me", False))
+
+            if msg_type == "text":
+                texto = (msg.get("text") or {}).get("body", "")
+                mensajes.append(MensajeEntrante(
+                    telefono=telefono, texto=texto, mensaje_id=mid, es_propio=propio,
+                ))
+            elif msg_type in ("image", "audio", "voice", "video", "document", "sticker"):
+                mensajes.append(MensajeEntrante(
+                    telefono=telefono, texto="", mensaje_id=mid, es_propio=propio,
+                    tipo_no_texto=msg_type,
+                ))
         return mensajes
 
     async def enviar_mensaje(self, telefono: str, mensaje: str) -> bool:
         token = self.credentials.get("token", "")
         if not token:
-            logger.warning("Whapi token ausente — mensaje descartado")
+            logger.warning("whapi token ausente — mensaje descartado")
             return False
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            r = await client.post(
-                self.URL_ENVIO,
-                json={"to": telefono, "body": mensaje},
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json",
-                },
+        client = _get_http()
+        r = await client.post(
+            self.URL_ENVIO,
+            json={"to": telefono, "body": mensaje},
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+        )
+        if r.status_code != 200:
+            logger.error(
+                "whapi error envío",
+                extra={"event": "send_error", "provider": "whapi"},
             )
-            if r.status_code != 200:
-                logger.error("Whapi %d: %s", r.status_code, r.text[:300])
-            return r.status_code == 200
+        return r.status_code == 200

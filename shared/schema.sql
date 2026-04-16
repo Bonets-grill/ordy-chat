@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS agent_configs (
     knowledge JSONB NOT NULL DEFAULT '[]'::jsonb,
     paused BOOLEAN NOT NULL DEFAULT false,
     onboarding_completed BOOLEAN NOT NULL DEFAULT false,
+    max_messages_per_hour INTEGER NOT NULL DEFAULT 200,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -98,6 +99,7 @@ CREATE TABLE IF NOT EXISTS provider_credentials (
     provider TEXT NOT NULL CHECK (provider IN ('whapi', 'meta', 'twilio')),
     credentials_encrypted TEXT NOT NULL,
     phone_number TEXT,
+    webhook_secret TEXT,  -- shared secret para validar origen (query ?s=..., HMAC, etc.)
     webhook_verified BOOLEAN NOT NULL DEFAULT false,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -124,6 +126,7 @@ CREATE TABLE IF NOT EXISTS messages (
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
     content TEXT NOT NULL,
+    mensaje_id TEXT,   -- id del proveedor (para auditoría; dedupe vive en processed_messages)
     tokens_in INTEGER DEFAULT 0,
     tokens_out INTEGER DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -131,6 +134,18 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS idx_msg_conversation ON messages(conversation_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_msg_tenant ON messages(tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_messages_mensaje_id ON messages(tenant_id, mensaje_id) WHERE mensaje_id IS NOT NULL;
+
+-- ── Deduplicación de mensajes entrantes ────────────────────
+-- Un mismo proveedor puede reintentar el webhook. Esta tabla garantiza
+-- que cada mensaje_id se procesa una sola vez por tenant.
+CREATE TABLE IF NOT EXISTS processed_messages (
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    mensaje_id TEXT NOT NULL,
+    processed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, mensaje_id)
+);
+CREATE INDEX IF NOT EXISTS idx_processed_at ON processed_messages(processed_at);
 
 -- ── Settings globales (solo super admin) ───────────────────
 CREATE TABLE IF NOT EXISTS platform_settings (

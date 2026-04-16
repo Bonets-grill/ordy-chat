@@ -1,5 +1,6 @@
 // web/app/api/onboarding/route.ts — Crea tenant + agent_config + provider_credentials.
 
+import crypto from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
@@ -18,7 +19,6 @@ const schema = z.object({
   tone: z.enum(["professional", "friendly", "sales", "empathetic"]),
   schedule: z.string().min(3),
   knowledgeText: z.string().optional(),
-  anthropicKey: z.string().startsWith("sk-ant-"),
   provider: z.enum(["whapi", "meta", "twilio"]),
   providerCredentials: z.record(z.string(), z.string()),
 });
@@ -71,7 +71,7 @@ export async function POST(req: Request) {
     knowledgeText: data.knowledgeText,
   });
 
-  const credsPayload = { ...data.providerCredentials, anthropic_api_key: data.anthropicKey };
+  const credsPayload = { ...data.providerCredentials };
 
   const [tenant] = await db
     .insert(tenants)
@@ -100,11 +100,16 @@ export async function POST(req: Request) {
     onboardingCompleted: true,
   });
 
+  // Shared secret para validar origen del webhook (query param ?s=...).
+  // Lo usamos sobre todo con Whapi (no firma). Con Meta/Twilio hay verificación extra.
+  const webhookSecret = crypto.randomBytes(24).toString("base64url");
+
   await db.insert(providerCredentials).values({
     tenantId: tenant.id,
     provider: data.provider,
     credentialsEncrypted: cifrar(JSON.stringify(credsPayload)),
     phoneNumber: data.providerCredentials.phone_number ?? null,
+    webhookSecret,
   });
 
   return NextResponse.json({ slug, tenantId: tenant.id });

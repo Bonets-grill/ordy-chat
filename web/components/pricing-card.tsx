@@ -3,7 +3,8 @@ import Link from "next/link";
 import { Button } from "./ui/button";
 
 const INCLUYE = [
-  "1 agente de WhatsApp con IA (Claude Sonnet 4.6)",
+  "IA de última generación incluida — sin API keys ni complicaciones",
+  "1 agente de WhatsApp personalizado para tu negocio",
   "Conexión Whapi, Meta Cloud API o Twilio",
   "Historial ilimitado por cliente",
   "Edita el prompt cuando quieras",

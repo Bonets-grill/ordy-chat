@@ -13,7 +13,6 @@ logger = logging.getLogger("ordychat.tenants")
 
 @dataclass
 class TenantContext:
-    """Todo lo que el webhook necesita para procesar un mensaje de este tenant."""
     id: UUID
     slug: str
     name: str
@@ -22,8 +21,10 @@ class TenantContext:
     system_prompt: str
     fallback_message: str
     error_message: str
+    max_messages_per_hour: int
     provider: str
     credentials: dict
+    webhook_secret: str
 
 
 class TenantNotFound(Exception):
@@ -35,7 +36,6 @@ class TenantInactive(Exception):
 
 
 async def cargar_tenant_por_slug(slug: str) -> TenantContext:
-    """Lee tenant + agent_config + provider_credentials en una query."""
     pool = await inicializar_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -43,7 +43,8 @@ async def cargar_tenant_por_slug(slug: str) -> TenantContext:
             SELECT
                 t.id, t.slug, t.name, t.subscription_status,
                 ac.paused, ac.system_prompt, ac.fallback_message, ac.error_message,
-                pc.provider, pc.credentials_encrypted
+                ac.max_messages_per_hour,
+                pc.provider, pc.credentials_encrypted, pc.webhook_secret
             FROM tenants t
             LEFT JOIN agent_configs ac ON ac.tenant_id = t.id
             LEFT JOIN provider_credentials pc ON pc.tenant_id = t.id
@@ -68,7 +69,12 @@ async def cargar_tenant_por_slug(slug: str) -> TenantContext:
         try:
             credentials = json.loads(descifrar(row["credentials_encrypted"]))
         except Exception as e:
-            logger.error("Error descifrando credentials de %s: %s", slug, e)
+            logger.error(
+                "error descifrando credentials",
+                extra={"tenant_slug": slug, "event": "creds_decrypt_error"},
+                exc_info=e,
+            )
+            raise TenantInactive(f"Credenciales de {slug} no legibles") from e
 
     return TenantContext(
         id=row["id"],
@@ -79,22 +85,19 @@ async def cargar_tenant_por_slug(slug: str) -> TenantContext:
         system_prompt=row["system_prompt"],
         fallback_message=row["fallback_message"],
         error_message=row["error_message"],
+        max_messages_per_hour=row["max_messages_per_hour"] or 200,
         provider=row["provider"] or "whapi",
         credentials=credentials,
+        webhook_secret=row["webhook_secret"] or "",
     )
 
 
 async def obtener_anthropic_api_key(tenant_credentials: dict) -> str:
     """
-    Prioridad de keys:
-    1. El tenant trae su propia key en provider_credentials.anthropic_api_key
-    2. ENV ANTHROPIC_API_KEY
-    3. platform_settings.anthropic_api_key (cifrada)
+    Prioridad: env ANTHROPIC_API_KEY (master global) → platform_settings → tenant.
+    Para Ordy Chat el modelo por defecto es master key global.
     """
     import os
-
-    if tenant_credentials.get("anthropic_api_key"):
-        return tenant_credentials["anthropic_api_key"]
 
     env_key = os.getenv("ANTHROPIC_API_KEY", "")
     if env_key:
@@ -109,6 +112,15 @@ async def obtener_anthropic_api_key(tenant_credentials: dict) -> str:
         try:
             return descifrar(encrypted)
         except Exception as e:
-            logger.error("Error descifrando anthropic_api_key global: %s", e)
+            logger.error(
+                "error descifrando anthropic_api_key global",
+                extra={"event": "platform_key_decrypt_error"},
+                exc_info=e,
+            )
 
-    raise RuntimeError("No hay ANTHROPIC_API_KEY disponible (ni tenant, ni env, ni platform)")
+    # Último recurso: key por tenant (solo si alguien lo configuró manualmente).
+    per_tenant = tenant_credentials.get("anthropic_api_key")
+    if per_tenant:
+        return per_tenant
+
+    raise RuntimeError("No hay ANTHROPIC_API_KEY disponible (ni env, ni platform, ni tenant)")

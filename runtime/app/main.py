@@ -1,41 +1,50 @@
-# runtime/app/main.py — Servidor FastAPI multi-tenant.
+# runtime/app/main.py — Servidor FastAPI multi-tenant con procesamiento en background.
 #
-# Endpoint por tenant: POST /webhook/{provider}/{tenant_slug}
-# El tenant configura ESA URL en el dashboard de su proveedor de WhatsApp.
+# Endpoint: POST /webhook/{provider}/{tenant_slug}
+# El tenant configura ESA URL (con su webhook_secret) en el dashboard del proveedor.
+#
+# Flujo por request:
+#   1. Cargar tenant (rápido).
+#   2. Verificar firma del webhook (403 si falla).
+#   3. Parsear mensajes entrantes.
+#   4. Responder 200 INMEDIATAMENTE.
+#   5. Procesar cada mensaje en background (dedupe → rate limit → Claude → enviar).
 
 import logging
 import os
 from contextlib import asynccontextmanager
+from uuid import UUID
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
 from app.brain import generar_respuesta
-from app.memory import cerrar_pool, guardar_intercambio, inicializar_pool, obtener_historial
-from app.providers import obtener_proveedor
+from app.logging_config import configurar_logging
+from app.memory import cerrar_pool, guardar_intercambio, inicializar_pool, obtener_historial, ya_procesado
+from app.providers import MensajeEntrante, obtener_proveedor
+from app.rate_limit import limite_superado
 from app.tenants import (
+    TenantContext,
     TenantInactive,
     TenantNotFound,
     cargar_tenant_por_slug,
 )
 
 load_dotenv()
-
-log_level = logging.DEBUG if os.getenv("ENVIRONMENT") == "development" else logging.INFO
-logging.basicConfig(level=log_level, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-logger = logging.getLogger("ordychat")
+configurar_logging()
+logger = logging.getLogger("ordychat.main")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await inicializar_pool()
-    logger.info("Ordy Chat runtime listo")
+    logger.info("runtime listo", extra={"event": "startup"})
     yield
     await cerrar_pool()
 
 
-app = FastAPI(title="Ordy Chat Runtime", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Ordy Chat Runtime", version="1.1.0", lifespan=lifespan)
 
 
 @app.get("/")
@@ -45,7 +54,6 @@ async def health():
 
 @app.get("/webhook/{provider}/{tenant_slug}")
 async def webhook_get(provider: str, tenant_slug: str, request: Request):
-    """Verificación GET (Meta). Otros proveedores devuelven 200 simple."""
     try:
         tenant = await cargar_tenant_por_slug(tenant_slug)
     except TenantNotFound:
@@ -53,42 +61,121 @@ async def webhook_get(provider: str, tenant_slug: str, request: Request):
     except TenantInactive as e:
         raise HTTPException(status_code=402, detail=str(e))
 
-    adapter = obtener_proveedor(provider, tenant.credentials)
-    resultado = await adapter.validar_webhook(request)
+    adapter = obtener_proveedor(provider, tenant.credentials, tenant.webhook_secret)
+    resultado = await adapter.validar_webhook_get(request)
     if resultado is not None:
         return PlainTextResponse(str(resultado))
     return {"status": "ok"}
 
 
 @app.post("/webhook/{provider}/{tenant_slug}")
-async def webhook_post(provider: str, tenant_slug: str, request: Request):
-    """Recibe mensajes, genera respuesta y responde por el mismo proveedor."""
+async def webhook_post(
+    provider: str,
+    tenant_slug: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+):
     try:
         tenant = await cargar_tenant_por_slug(tenant_slug)
     except TenantNotFound:
         raise HTTPException(status_code=404, detail="tenant not found")
     except TenantInactive as e:
-        logger.warning("tenant inactivo: %s", e)
-        return {"status": "inactive"}
+        logger.warning(
+            "tenant inactivo",
+            extra={"tenant_slug": tenant_slug, "event": "tenant_inactive"},
+        )
+        # Devolver 200 para que el proveedor no retry agresivo.
+        return {"status": "inactive", "reason": str(e)}
 
     if tenant.paused:
         return {"status": "paused"}
 
-    adapter = obtener_proveedor(provider, tenant.credentials)
-    mensajes = await adapter.parsear_webhook(request)
+    body_bytes = await request.body()
+    adapter = obtener_proveedor(provider, tenant.credentials, tenant.webhook_secret)
+
+    if not await adapter.verificar_firma(request, body_bytes):
+        logger.warning(
+            "firma inválida",
+            extra={"tenant_slug": tenant_slug, "provider": provider, "event": "bad_signature"},
+        )
+        raise HTTPException(status_code=403, detail="invalid signature")
+
+    mensajes = await adapter.parsear_webhook(request, body_bytes)
 
     for msg in mensajes:
-        if msg.es_propio or not msg.texto:
+        if msg.es_propio:
             continue
-        try:
-            historial = await obtener_historial(tenant.id, msg.telefono)
-            respuesta, tin, tout = await generar_respuesta(tenant, msg.texto, historial)
-            await guardar_intercambio(
-                tenant.id, msg.telefono, msg.texto, respuesta, tin, tout
+        background_tasks.add_task(_procesar_mensaje, tenant, provider, msg)
+
+    return {"status": "ok", "queued": len(mensajes)}
+
+
+# ────────────────────────────────────────────────────────────
+# Procesamiento asíncrono de un mensaje individual.
+# ────────────────────────────────────────────────────────────
+
+async def _procesar_mensaje(tenant: TenantContext, provider: str, msg: MensajeEntrante) -> None:
+    from time import perf_counter
+    t0 = perf_counter()
+    log_extra = {
+        "tenant_slug": tenant.slug,
+        "phone": msg.telefono,
+        "mensaje_id": msg.mensaje_id,
+        "provider": provider,
+    }
+
+    try:
+        # Dedupe atómico por (tenant_id, mensaje_id).
+        if await ya_procesado(tenant.id, msg.mensaje_id):
+            logger.info("mensaje duplicado — skip", extra={**log_extra, "event": "dup_skip"})
+            return
+
+        # Recargar adapter con httpx client cacheado.
+        adapter = obtener_proveedor(provider, tenant.credentials, tenant.webhook_secret)
+
+        # Media no soportada → responder amablemente y registrar.
+        if msg.tipo_no_texto:
+            respuesta = (
+                f"Recibí tu {msg.tipo_no_texto}, pero por ahora solo sé leer mensajes de texto. "
+                "¿Podrías escribirme lo que necesitas?"
             )
             await adapter.enviar_mensaje(msg.telefono, respuesta)
-            logger.info("tenant=%s phone=%s ok", tenant.slug, msg.telefono)
-        except Exception as e:
-            logger.exception("tenant=%s error procesando: %s", tenant.slug, e)
+            logger.info("media no soportada", extra={**log_extra, "event": "media_skip"})
+            return
 
-    return {"status": "ok"}
+        if not msg.texto or len(msg.texto.strip()) < 1:
+            return
+
+        # Rate limit por tenant.
+        if await limite_superado(tenant.id, tenant.max_messages_per_hour):
+            logger.warning(
+                "rate limit superado",
+                extra={**log_extra, "event": "rate_limited"},
+            )
+            await adapter.enviar_mensaje(
+                msg.telefono,
+                "Estamos recibiendo muchos mensajes justo ahora. Dame un momento y te respondo.",
+            )
+            return
+
+        historial = await obtener_historial(tenant.id, msg.telefono)
+        respuesta, tin, tout = await generar_respuesta(tenant, msg.texto, historial)
+
+        await guardar_intercambio(
+            tenant.id, msg.telefono, msg.texto, respuesta,
+            mensaje_id=msg.mensaje_id, tokens_in=tin, tokens_out=tout,
+        )
+        await adapter.enviar_mensaje(msg.telefono, respuesta)
+
+        logger.info(
+            "mensaje procesado",
+            extra={
+                **log_extra,
+                "event": "msg_ok",
+                "tokens_in": tin,
+                "tokens_out": tout,
+                "duration_ms": int((perf_counter() - t0) * 1000),
+            },
+        )
+    except Exception:
+        logger.exception("error procesando mensaje", extra={**log_extra, "event": "msg_error"})

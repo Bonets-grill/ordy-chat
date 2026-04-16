@@ -1,8 +1,11 @@
+import { eq } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { auth } from "@/lib/auth";
+import { db } from "@/lib/db";
+import { providerCredentials } from "@/lib/db/schema";
 import { requireTenant } from "@/lib/tenant";
 import { AgentEditor } from "./editor";
 
@@ -12,7 +15,17 @@ export default async function AgentPage() {
   const bundle = await requireTenant();
   if (!bundle?.config) redirect("/onboarding");
 
-  const webhookUrl = `${process.env.RUNTIME_URL ?? "https://runtime.ordychat.com"}/webhook/{provider}/${bundle.tenant.slug}`;
+  const [creds] = await db
+    .select({ provider: providerCredentials.provider, webhookSecret: providerCredentials.webhookSecret })
+    .from(providerCredentials)
+    .where(eq(providerCredentials.tenantId, bundle.tenant.id))
+    .limit(1);
+
+  const runtimeBase = process.env.RUNTIME_URL ?? "https://runtime.ordychat.com";
+  const secret = creds?.webhookSecret ?? "";
+  const providerKey = creds?.provider ?? "whapi";
+  const secretQuery = secret ? `?s=${secret}` : "";
+  const webhookUrl = `${runtimeBase}/webhook/${providerKey}/${bundle.tenant.slug}${secretQuery}`;
 
   return (
     <AppShell session={session} subscriptionStatus={bundle.tenant.subscriptionStatus} trialDaysLeft={bundle.trialDaysLeft}>
@@ -30,16 +43,16 @@ export default async function AgentPage() {
         <CardHeader>
           <CardTitle>URL del webhook</CardTitle>
           <CardDescription>
-            Configura esta URL en tu proveedor de WhatsApp. Reemplaza {"{provider}"} por{" "}
-            <code className="rounded bg-neutral-100 px-1 text-xs">whapi</code>,{" "}
-            <code className="rounded bg-neutral-100 px-1 text-xs">meta</code> o{" "}
-            <code className="rounded bg-neutral-100 px-1 text-xs">twilio</code>.
+            Pega esta URL en el dashboard de tu proveedor de WhatsApp ({providerKey}). Incluye un token único que valida que los mensajes vienen de tu número.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <code className="block overflow-x-auto rounded-lg bg-neutral-900 p-4 text-sm text-emerald-400">
             {webhookUrl}
           </code>
+          <p className="mt-3 text-xs text-neutral-500">
+            Cualquier request sin el token <code className="rounded bg-neutral-100 px-1">?s=…</code> correcto se rechaza con 403.
+          </p>
         </CardContent>
       </Card>
 

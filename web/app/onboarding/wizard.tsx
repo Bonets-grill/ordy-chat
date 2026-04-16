@@ -37,12 +37,11 @@ type FormData = {
   tone: (typeof TONES)[number]["value"];
   schedule: string;
   knowledgeText: string;
-  anthropicKey: string;
   provider: (typeof PROVIDERS)[number]["value"];
   providerCredentials: Record<string, string>;
 };
 
-const STEPS = 10;
+const STEPS = 9;
 
 export function OnboardingWizard({ seed }: { seed: string }) {
   const router = useRouter();
@@ -57,7 +56,6 @@ export function OnboardingWizard({ seed }: { seed: string }) {
     tone: "friendly",
     schedule: "Lunes a Viernes 9:00 - 18:00",
     knowledgeText: "",
-    anthropicKey: "",
     provider: "whapi",
     providerCredentials: {},
   });
@@ -99,11 +97,10 @@ export function OnboardingWizard({ seed }: { seed: string }) {
       case 4: return !!data.tone;
       case 5: return data.schedule.trim().length >= 3;
       case 6: return true;
-      case 7: return data.anthropicKey.trim().startsWith("sk-ant-");
-      case 8: return !!data.provider;
-      case 9:
+      case 7: return !!data.provider;
+      case 8:
         if (data.provider === "whapi") return !!data.providerCredentials.token;
-        if (data.provider === "meta") return !!data.providerCredentials.access_token && !!data.providerCredentials.phone_number_id;
+        if (data.provider === "meta") return !!data.providerCredentials.access_token && !!data.providerCredentials.phone_number_id && !!data.providerCredentials.app_secret;
         if (data.provider === "twilio") return !!data.providerCredentials.account_sid && !!data.providerCredentials.auth_token && !!data.providerCredentials.phone_number;
         return false;
       default: return false;
@@ -187,13 +184,6 @@ export function OnboardingWizard({ seed }: { seed: string }) {
       )}
 
       {step === 7 && (
-        <Step title="Tu API key de Anthropic" hint={<>Consíguela en <a className="underline" href="https://platform.anthropic.com/settings/api-keys" target="_blank" rel="noreferrer">platform.anthropic.com</a>. Empieza por sk-ant-.</>}>
-          <Input value={data.anthropicKey} onChange={(e) => update("anthropicKey", e.target.value)} placeholder="sk-ant-..." />
-          <p className="mt-2 text-xs text-neutral-500">Se guarda cifrada y solo tu agente la usa.</p>
-        </Step>
-      )}
-
-      {step === 8 && (
         <Step title="¿Qué proveedor de WhatsApp vas a conectar?" hint="Cualquiera sirve. Whapi es el más rápido para empezar.">
           <div className="grid gap-2">
             {PROVIDERS.map((p) => (
@@ -214,7 +204,7 @@ export function OnboardingWizard({ seed }: { seed: string }) {
         </Step>
       )}
 
-      {step === 9 && (
+      {step === 8 && (
         <Step title="Pega las credenciales del proveedor" hint="Se cifran antes de guardarse.">
           {data.provider === "whapi" && (
             <div className="space-y-2">
@@ -231,6 +221,8 @@ export function OnboardingWizard({ seed }: { seed: string }) {
               <Field label="Meta Access Token" value={data.providerCredentials.access_token ?? ""} onChange={(v) => update("providerCredentials", { ...data.providerCredentials, access_token: v })} />
               <Field label="Phone Number ID" value={data.providerCredentials.phone_number_id ?? ""} onChange={(v) => update("providerCredentials", { ...data.providerCredentials, phone_number_id: v })} />
               <Field label="Verify Token (inventa uno)" value={data.providerCredentials.verify_token ?? ""} onChange={(v) => update("providerCredentials", { ...data.providerCredentials, verify_token: v })} />
+              <Field label="App Secret (de tu app Meta Developer)" value={data.providerCredentials.app_secret ?? ""} onChange={(v) => update("providerCredentials", { ...data.providerCredentials, app_secret: v })} />
+              <p className="text-xs text-neutral-500">El App Secret lo encuentras en Meta Developers → tu app → Settings → Basic. Se usa para validar que los webhooks son legítimos.</p>
             </div>
           )}
           {data.provider === "twilio" && (
