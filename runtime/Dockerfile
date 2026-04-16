@@ -14,4 +14,5 @@ COPY app ./app
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Shell form para que ${PORT} se expanda en runtime (Railway asigna puerto dinámico).
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}

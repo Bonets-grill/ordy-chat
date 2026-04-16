@@ -45,15 +45,16 @@ export async function scrapeBusinessUrl(input: string, maxPages = 12): Promise<S
     }
   }
 
-  // 5. Render los SPA internos en serie (máx 4 para mantener el scrape <2min).
-  //    Chromium es intensivo: en serie evita contención de CPU y memoria.
+  // 5. Render los SPA internos en serie (máx 4). Silencioso si Playwright
+  //    no está (serverless sin browser): esos sitios quedarán sin catálogo.
   for (const url of needsRenderList.slice(0, 4)) {
     try {
       const rendered = await renderPage(url, 20_000);
+      if (!rendered) break; // sin playwright no tiene sentido seguir intentando
       parsedAll.push(parseHtml(rendered.url, rendered.html));
       spaPagesRendered++;
     } catch {
-      // skip: mejor tener parcial que nada
+      // skip
     }
   }
 
@@ -82,12 +83,14 @@ async function getPageSmart(url: string): Promise<{ parsed: ParsedPage; rendered
   if (needsRender(flat.html, parsed.text.length)) {
     try {
       const rendered = await renderPage(flat.url, 25_000);
-      const reparsed = parseHtml(rendered.url, rendered.html);
-      if (reparsed.text.length > parsed.text.length * 1.5 || reparsed.links.length > parsed.links.length * 1.5) {
-        return { parsed: reparsed, rendered: true };
+      if (rendered) {
+        const reparsed = parseHtml(rendered.url, rendered.html);
+        if (reparsed.text.length > parsed.text.length * 1.5 || reparsed.links.length > parsed.links.length * 1.5) {
+          return { parsed: reparsed, rendered: true };
+        }
       }
     } catch {
-      // continúa con la versión plana si el render falla
+      // continúa con la versión plana si el render falla o Playwright no está
     }
   }
   return { parsed, rendered: false };

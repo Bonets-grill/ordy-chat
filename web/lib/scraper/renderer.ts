@@ -4,24 +4,42 @@
 // Nuxt/Next SPA sin SSR real). Renderiza con Chromium, espera networkidle,
 // scrollea para disparar lazy-load, y devuelve el HTML final.
 
-import type { Browser } from "playwright";
+// Import dinámico: playwright es devDependency. En prod (Vercel) no está
+// presente → el fallback SPA queda deshabilitado y devolvemos null.
+// El scraping plano sigue funcionando (Cheerio + JSON-LD + Claude).
+
+type BrowserLike = { newContext: (opts?: unknown) => Promise<unknown>; close: () => Promise<void> };
 
 const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 OrdyChatBot/1.0";
 
-let _browser: Browser | null = null;
-let _initPromise: Promise<Browser> | null = null;
+let _browser: BrowserLike | null = null;
+let _initPromise: Promise<BrowserLike | null> | null = null;
+let _playwrightAvailable: boolean | null = null;
 
-async function getBrowser(): Promise<Browser> {
+async function getBrowser(): Promise<BrowserLike | null> {
   if (_browser) return _browser;
+  if (_playwrightAvailable === false) return null;
   if (_initPromise) return _initPromise;
+
   _initPromise = (async () => {
-    const { chromium } = await import("playwright");
-    _browser = await chromium.launch({
-      headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
-    });
-    return _browser;
+    try {
+      const mod = await import("playwright").catch(() => null);
+      if (!mod) {
+        _playwrightAvailable = false;
+        return null;
+      }
+      _playwrightAvailable = true;
+      const b = await mod.chromium.launch({
+        headless: true,
+        args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+      });
+      _browser = b as unknown as BrowserLike;
+      return _browser;
+    } catch {
+      _playwrightAvailable = false;
+      return null;
+    }
   })();
   return _initPromise;
 }
@@ -44,10 +62,12 @@ export type RenderedResult = {
 /**
  * Renderiza una URL con Chromium headless. Espera networkidle + scroll completo.
  */
-export async function renderPage(url: string, timeoutMs = 25_000): Promise<RenderedResult> {
+export async function renderPage(url: string, timeoutMs = 25_000): Promise<RenderedResult | null> {
   const t0 = Date.now();
   const browser = await getBrowser();
-  const context = await browser.newContext({
+  if (!browser) return null;  // Playwright no disponible (prod serverless)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const context = await (browser as any).newContext({
     userAgent: USER_AGENT,
     locale: "es-ES",
     viewport: { width: 1440, height: 900 },
@@ -55,19 +75,20 @@ export async function renderPage(url: string, timeoutMs = 25_000): Promise<Rende
     ignoreHTTPSErrors: false,
   });
 
-  // Bloquea recursos pesados irrelevantes — ahorra 60-80% del tráfico.
-  await context.route("**/*", (route) => {
-    const type = route.request().resourceType();
-    if (["image", "media", "font", "stylesheet"].includes(type)) {
-      return route.abort();
-    }
-    return route.continue();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ctx = context as any;
+  await ctx.route("**/*", (route: unknown) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const r = route as any;
+    const type = r.request().resourceType();
+    if (["image", "media", "font", "stylesheet"].includes(type)) return r.abort();
+    return r.continue();
   });
 
-  const page = await context.newPage();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const page = await (ctx as any).newPage();
   try {
     await page.goto(url, { waitUntil: "networkidle", timeout: timeoutMs });
-    // Scroll para disparar lazy-load de catálogos largos.
     await page.evaluate(async () => {
       await new Promise<void>((resolve) => {
         let total = 0;
@@ -82,12 +103,11 @@ export async function renderPage(url: string, timeoutMs = 25_000): Promise<Rende
         }, 200);
       });
     });
-    // Pausa corta para que frameworks reactivos hidraten nuevos nodos.
     await page.waitForTimeout(1500);
     const html = await page.content();
     return { url: page.url(), html, durationMs: Date.now() - t0, renderer: "chromium" };
   } finally {
-    await context.close();
+    await ctx.close();
   }
 }
 
