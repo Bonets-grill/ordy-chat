@@ -4,6 +4,10 @@
 
 :root {
   color-scheme: light;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
 }
 
 html, body {
@@ -11,6 +15,28 @@ html, body {
   color: #0a0a0a;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+
+/* Ajustes cuando corremos dentro de Capacitor (iOS/Android). */
+html.cap-native body {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+html.cap-native input,
+html.cap-native textarea,
+html.cap-native [contenteditable="true"] {
+  user-select: text;
+  -webkit-user-select: text;
+}
+html.cap-native header {
+  padding-top: var(--safe-top);
+}
+html.cap-native footer,
+html.cap-native .cap-safe-bottom {
+  padding-bottom: var(--safe-bottom);
 }
 
 @layer base {
