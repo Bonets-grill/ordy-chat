@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
+import { ChevronLeft, ChevronRight, Globe, PencilLine, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
 import * as React from "react";
 import { Badge } from "@/components/ui/badge";
@@ -178,9 +178,10 @@ export function OnboardingWizard({ seed }: { seed: string }) {
       )}
 
       {step === 6 && (
-        <Step title="Pega información extra que quieras que sepa" hint="FAQ, menú, precios, políticas… (opcional)">
-          <Textarea rows={10} value={data.knowledgeText} onChange={(e) => update("knowledgeText", e.target.value)} placeholder="Copia y pega aquí lo que quieras. El agente tendrá este contexto en cada respuesta." />
-        </Step>
+        <KnowledgeStep
+          value={data.knowledgeText}
+          onChange={(v) => update("knowledgeText", v)}
+        />
       )}
 
       {step === 7 && (
@@ -274,5 +275,171 @@ function Field({ label, value, onChange }: { label: string; value: string; onCha
       <label className="text-sm font-medium text-neutral-700">{label}</label>
       <Input value={value} onChange={(e) => onChange(e.target.value)} />
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Paso 7 — Knowledge: dos modos (scrape por URL o manual)
+// ─────────────────────────────────────────────────────────────
+
+type ScrapeState =
+  | { phase: "idle" }
+  | { phase: "running"; url: string }
+  | { phase: "done"; url: string; pages: number; ms: number }
+  | { phase: "error"; url: string; message: string };
+
+function KnowledgeStep({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [mode, setMode] = React.useState<"choose" | "web" | "manual">(value ? "manual" : "choose");
+  const [url, setUrl] = React.useState("");
+  const [state, setState] = React.useState<ScrapeState>({ phase: "idle" });
+
+  async function onScrape() {
+    if (!url.trim()) return;
+    setState({ phase: "running", url });
+    const r = await fetch("/api/scrape", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || !data.ok) {
+      setState({ phase: "error", url, message: data.error ?? "Error desconocido" });
+      return;
+    }
+    onChange(data.text as string);
+    setState({ phase: "done", url, pages: data.pages as number, ms: data.durationMs as number });
+  }
+
+  if (mode === "choose") {
+    return (
+      <Step title="¿De dónde sacamos la información del negocio?" hint="Elige cómo quieres alimentar al agente.">
+        <div className="grid gap-3 md:grid-cols-2">
+          <button
+            type="button"
+            onClick={() => setMode("web")}
+            className="rounded-xl border border-neutral-200 bg-white p-5 text-left transition hover:border-brand-500 hover:shadow-sm"
+          >
+            <div className="flex items-center gap-3">
+              <span className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-brand-50 text-brand-600">
+                <Globe className="h-5 w-5" />
+              </span>
+              <div>
+                <div className="font-semibold text-neutral-900">Desde mi web</div>
+                <div className="text-xs text-neutral-500">Recomendado</div>
+              </div>
+            </div>
+            <p className="mt-3 text-sm text-neutral-600">
+              Pongo la URL y el sistema escanea todo: productos, categorías, precios,
+              horarios, contacto, alérgenos, FAQs. Tardo 10–30s.
+            </p>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setMode("manual")}
+            className="rounded-xl border border-neutral-200 bg-white p-5 text-left transition hover:border-brand-500 hover:shadow-sm"
+          >
+            <div className="flex items-center gap-3">
+              <span className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-neutral-100 text-neutral-700">
+                <PencilLine className="h-5 w-5" />
+              </span>
+              <div>
+                <div className="font-semibold text-neutral-900">Pegarlo manualmente</div>
+                <div className="text-xs text-neutral-500">Opcional</div>
+              </div>
+            </div>
+            <p className="mt-3 text-sm text-neutral-600">
+              Copia y pega textos, menús, precios o lo que quieras que sepa tu agente.
+              Perfecto si no tienes web o quieres control total.
+            </p>
+          </button>
+        </div>
+      </Step>
+    );
+  }
+
+  if (mode === "web") {
+    return (
+      <Step title="Introduce la URL de tu web" hint="Ejemplo: www.minegocio.com">
+        <div className="space-y-3">
+          <div className="flex gap-2">
+            <Input
+              placeholder="https://minegocio.com"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              disabled={state.phase === "running"}
+              autoFocus
+            />
+            <Button
+              variant="brand"
+              onClick={onScrape}
+              disabled={state.phase === "running" || !url.trim()}
+            >
+              {state.phase === "running" ? "Escaneando…" : "Escanear"}
+            </Button>
+          </div>
+
+          {state.phase === "running" && (
+            <div className="flex items-center gap-3 rounded-lg border border-brand-200 bg-brand-50 p-4 text-sm text-brand-700">
+              <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10" opacity="0.3" />
+                <path d="M12 2a10 10 0 0 1 10 10" />
+              </svg>
+              Visitando páginas, leyendo productos y extrayendo información del negocio…
+            </div>
+          )}
+
+          {state.phase === "error" && (
+            <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+              No pude escanear la web: <span className="font-mono">{state.message}</span>
+            </div>
+          )}
+
+          {state.phase === "done" && (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
+              ✓ Escaneé <strong>{state.pages}</strong> páginas en {(state.ms / 1000).toFixed(1)}s.
+              Revisa el resultado abajo y edita lo que quieras antes de continuar.
+            </div>
+          )}
+
+          <div>
+            <div className="mb-2 flex items-center justify-between">
+              <label className="text-sm font-medium text-neutral-700">Contenido extraído (editable)</label>
+              <button type="button" onClick={() => setMode("choose")} className="text-xs text-neutral-500 hover:text-neutral-900 underline">
+                cambiar de método
+              </button>
+            </div>
+            <Textarea
+              rows={14}
+              value={value}
+              onChange={(e) => onChange(e.target.value)}
+              placeholder="Aquí aparecerá lo que el escáner encuentre. También puedes escribir aquí directamente."
+              className="font-mono text-xs"
+            />
+          </div>
+        </div>
+      </Step>
+    );
+  }
+
+  return (
+    <Step
+      title="Pega información extra que quieras que sepa"
+      hint={
+        <span>
+          FAQ, menú, precios, políticas… (opcional).{" "}
+          <button type="button" onClick={() => setMode("choose")} className="underline">
+            ¿Prefieres escanear tu web?
+          </button>
+        </span>
+      }
+    >
+      <Textarea
+        rows={10}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Copia y pega aquí lo que quieras. El agente tendrá este contexto en cada respuesta."
+      />
+    </Step>
   );
 }
