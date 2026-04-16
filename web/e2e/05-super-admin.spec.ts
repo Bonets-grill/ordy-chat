@@ -1,10 +1,11 @@
 import { expect, test } from "@playwright/test";
 import { loginDev } from "./helpers";
 
+const SUPER_ADMIN_EMAIL = process.env.SUPER_ADMIN_EMAIL ?? "mtmbdeals@gmail.com";
+
 test.describe("Super admin", () => {
   test("el SUPER_ADMIN_EMAIL accede a /admin y ve panel global", async ({ page }) => {
-    // Usamos el email fijo configurado en .env.local → SUPER_ADMIN_EMAIL
-    await loginDev(page, "mtmbdeals@gmail.com", "/admin");
+    await loginDev(page, SUPER_ADMIN_EMAIL, "/admin");
     await expect(page.getByRole("heading", { name: "Super Admin" })).toBeVisible();
     await expect(page.getByText(/Tenants totales/i)).toBeVisible();
   });

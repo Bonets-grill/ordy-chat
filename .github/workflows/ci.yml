@@ -66,4 +66,68 @@ jobs:
           DATABASE_URL: postgresql://stub:stub@stub.example.com/stub?sslmode=require
           ENCRYPTION_KEY: 0000000000000000000000000000000000000000000=
           ANTHROPIC_API_KEY: sk-ant-stub
-        run: python -c "from app import main, brain, memory, tenants, crypto; from app.providers import whapi, meta, twilio; print('imports ok')"
+        run: python -c "from app import main, brain, memory, tenants, crypto, rate_limit, logging_config; from app.providers import whapi, meta, twilio; print('imports ok')"
+
+  e2e:
+    name: e2e — playwright
+    runs-on: ubuntu-latest
+    needs: [web]
+    # Sólo corre si los secrets están configurados (evita fallar el PR en forks)
+    if: ${{ github.event_name == 'push' || github.repository_owner == 'Bonets-grill' }}
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('web/pnpm-lock.yaml') }}
+
+      - name: Install Chromium
+        run: pnpm exec playwright install chromium --with-deps
+
+      - name: Run Playwright tests
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
+          AUTH_URL: http://localhost:3000
+          AUTH_RESEND_KEY: ""
+          AUTH_EMAIL_FROM: noreply@ci.local
+          ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
+          RUNTIME_URL: http://localhost:8000
+          RUNTIME_INTERNAL_SECRET: ci-internal
+          NEXT_PUBLIC_APP_URL: http://localhost:3000
+          ALLOW_DEV_LOGIN: "1"
+          SUPER_ADMIN_EMAIL: e2e-admin@ci.ordychat.local
+        run: pnpm test:e2e
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: web/playwright-report/
+          retention-days: 7
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: web/test-results/
+          retention-days: 7
