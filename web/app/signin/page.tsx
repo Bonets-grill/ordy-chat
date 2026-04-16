@@ -13,10 +13,13 @@ function SignInForm() {
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
 
+  const devMode =
+    process.env.NODE_ENV === "development" || process.env.NEXT_PUBLIC_ALLOW_DEV_LOGIN === "1";
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
-    const provider = process.env.NODE_ENV === "development" ? "dev" : "resend";
+    const provider = devMode ? "dev" : "resend";
     await signIn(provider, { email, callbackUrl: from });
   }
 
@@ -24,8 +27,15 @@ function SignInForm() {
     <form onSubmit={onSubmit} className="w-full max-w-sm space-y-4 rounded-2xl border border-neutral-200 bg-white p-8 shadow-sm">
       <div>
         <h1 className="text-2xl font-semibold text-neutral-900">Entra a Ordy Chat</h1>
-        <p className="mt-1 text-sm text-neutral-500">Te mandamos un enlace mágico a tu email.</p>
+        <p className="mt-1 text-sm text-neutral-500">
+          {devMode ? "Accede con tu email — modo demo sin verificación." : "Te mandamos un enlace mágico a tu email."}
+        </p>
       </div>
+      {devMode && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
+          🚧 <strong>Modo demo.</strong> Entra con cualquier email — no se envía correo. El envío real se activa cuando se configure Resend.
+        </div>
+      )}
       <Input
         type="email"
         required
@@ -34,7 +44,7 @@ function SignInForm() {
         onChange={(e) => setEmail(e.target.value)}
       />
       <Button type="submit" variant="brand" size="lg" className="w-full" disabled={loading}>
-        {loading ? "Enviando…" : "Enviar enlace"}
+        {loading ? "Entrando…" : devMode ? "Entrar" : "Enviar enlace"}
       </Button>
       <p className="text-center text-xs text-neutral-500">
         Al entrar aceptas los <Link href="/terms" className="underline">términos</Link> y la{" "}

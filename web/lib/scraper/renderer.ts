@@ -4,9 +4,10 @@
 // Nuxt/Next SPA sin SSR real). Renderiza con Chromium, espera networkidle,
 // scrollea para disparar lazy-load, y devuelve el HTML final.
 
-// Import dinámico: playwright es devDependency. En prod (Vercel) no está
-// presente → el fallback SPA queda deshabilitado y devolvemos null.
-// El scraping plano sigue funcionando (Cheerio + JSON-LD + Claude).
+// Renderizado SPA en 3 modos:
+// 1. En dev: Playwright local si está instalado (devDependency).
+// 2. En prod: proxy al runtime Python (Railway) vía /render, que sí tiene Chromium.
+// 3. Fallback: null → scraper degrada a fetch plano.
 
 type BrowserLike = { newContext: (opts?: unknown) => Promise<unknown>; close: () => Promise<void> };
 
@@ -63,9 +64,29 @@ export type RenderedResult = {
  * Renderiza una URL con Chromium headless. Espera networkidle + scroll completo.
  */
 export async function renderPage(url: string, timeoutMs = 25_000): Promise<RenderedResult | null> {
+  // En prod: delega al runtime Python que tiene Chromium en su Docker.
+  const runtimeUrl = process.env.RUNTIME_URL;
+  const internalSecret = process.env.RUNTIME_INTERNAL_SECRET;
+  if (runtimeUrl && internalSecret && process.env.NODE_ENV === "production") {
+    try {
+      const r = await fetch(`${runtimeUrl}/render`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-internal-secret": internalSecret },
+        body: JSON.stringify({ url, timeoutMs }),
+        signal: AbortSignal.timeout(timeoutMs + 10_000),
+      });
+      if (r.ok) {
+        const data = (await r.json()) as { url: string; html: string; durationMs: number };
+        return { ...data, renderer: "chromium" };
+      }
+    } catch {
+      // silent fallback
+    }
+  }
+
   const t0 = Date.now();
   const browser = await getBrowser();
-  if (!browser) return null;  // Playwright no disponible (prod serverless)
+  if (!browser) return null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const context = await (browser as any).newContext({
     userAgent: USER_AGENT,

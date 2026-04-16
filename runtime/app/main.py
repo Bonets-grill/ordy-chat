@@ -24,6 +24,7 @@ from app.logging_config import configurar_logging
 from app.memory import cerrar_pool, guardar_intercambio, inicializar_pool, obtener_historial, ya_procesado
 from app.providers import MensajeEntrante, obtener_proveedor
 from app.rate_limit import limite_superado
+from app.renderer import cerrar_browser, renderizar
 from app.tenants import (
     TenantContext,
     TenantInactive,
@@ -41,6 +42,7 @@ async def lifespan(app: FastAPI):
     await inicializar_pool()
     logger.info("runtime listo", extra={"event": "startup"})
     yield
+    await cerrar_browser()
     await cerrar_pool()
 
 
@@ -50,6 +52,32 @@ app = FastAPI(title="Ordy Chat Runtime", version="1.1.0", lifespan=lifespan)
 @app.get("/")
 async def health():
     return {"service": "ordy-chat-runtime", "status": "ok"}
+
+
+# ────────────────────────────────────────────────────────────
+# /render — Playwright headless para SPAs. Usado por el scraper del web.
+# Autenticación por header compartido RUNTIME_INTERNAL_SECRET.
+# ────────────────────────────────────────────────────────────
+
+@app.post("/render")
+async def render_endpoint(request: Request):
+    shared_secret = os.getenv("RUNTIME_INTERNAL_SECRET", "")
+    provided = request.headers.get("x-internal-secret", "")
+    if not shared_secret or provided != shared_secret:
+        raise HTTPException(status_code=403, detail="invalid internal secret")
+
+    body = await request.json()
+    url = (body or {}).get("url", "")
+    timeout_ms = int((body or {}).get("timeoutMs") or 25_000)
+    if not url or not url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="invalid url")
+
+    try:
+        result = await renderizar(url, timeout_ms)
+        return {"ok": True, **result}
+    except Exception as e:
+        logger.exception("render failed: %s", url)
+        raise HTTPException(status_code=502, detail=f"render_error: {e}") from e
 
 
 @app.get("/webhook/{provider}/{tenant_slug}")
