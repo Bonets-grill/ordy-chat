@@ -6,7 +6,8 @@ import { auth } from "@/lib/auth";
 import { scrapeBusinessUrl } from "@/lib/scraper";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+// Playwright via runtime proxy puede tardar 60-120s. Requiere Vercel Pro (180s).
+export const maxDuration = 180;
 
 const schema = z.object({
   url: z.string().min(4).max(300),
@@ -23,8 +24,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "bad_input" }, { status: 400 });
   }
 
+  const url = parsed.data.url;
+  console.log(`[scrape] start url=${url}`);
+  const t0 = Date.now();
+
   try {
-    const result = await scrapeBusinessUrl(parsed.data.url);
+    const result = await scrapeBusinessUrl(url);
+    console.log(`[scrape] ok url=${url} pages=${result.pages} spa=${result.spaPagesRendered} ms=${result.durationMs}`);
     return NextResponse.json({
       ok: true,
       rootUrl: result.rootUrl,
@@ -35,7 +41,13 @@ export async function POST(req: Request) {
       durationMs: result.durationMs,
     });
   } catch (e) {
-    const msg = (e as Error).message ?? "error";
-    return NextResponse.json({ ok: false, error: msg }, { status: 422 });
+    const err = e as Error;
+    const elapsedMs = Date.now() - t0;
+    const msg = err.message || err.name || "error";
+    console.error(`[scrape] fail url=${url} ms=${elapsedMs} err=${msg}\n${err.stack ?? ""}`);
+    return NextResponse.json(
+      { ok: false, error: msg, elapsedMs },
+      { status: 422 },
+    );
   }
 }
