@@ -18,7 +18,6 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 CREATE TABLE IF NOT EXISTS accounts (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     type TEXT NOT NULL,
     provider TEXT NOT NULL,
@@ -30,12 +29,11 @@ CREATE TABLE IF NOT EXISTS accounts (
     scope TEXT,
     session_state TEXT,
     token_type TEXT,
-    UNIQUE(provider, provider_account_id)
+    PRIMARY KEY (provider, provider_account_id)
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    session_token TEXT UNIQUE NOT NULL,
+    session_token TEXT PRIMARY KEY,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     expires TIMESTAMPTZ NOT NULL
 );
