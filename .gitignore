@@ -1,12 +1,20 @@
-# Secretos — NUNCA subir a GitHub
+# ── Secretos ───────────────────────────────────────────────
 .env
+.env.local
+.env.*.local
+*.pem
 
-# Base de datos local
-*.db
-*.sqlite
-*.sqlite3
+# ── Node / Next.js ─────────────────────────────────────────
+node_modules/
+.next/
+.turbo/
+.vercel/
+out/
+dist/
+*.tsbuildinfo
+.pnpm-store/
 
-# Python
+# ── Python / Runtime ───────────────────────────────────────
 __pycache__/
 *.py[cod]
 *.pyo
@@ -14,37 +22,39 @@ __pycache__/
 venv/
 env/
 *.egg-info/
-dist/
-build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
-# Knowledge (archivos privados del negocio)
+# ── Base de datos local ────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+
+# ── Knowledge (archivos privados de cada tenant en dev) ────
 knowledge/*
 !knowledge/.gitkeep
 
-# Archivos generados por Claude Code durante onboarding
-agent/
-config/
-tests/
-requirements.txt
-Dockerfile
-docker-compose.yml
+# ── Coverage / Tests ───────────────────────────────────────
+coverage/
+.coverage
+htmlcov/
 
-# Session state
-config/session.yaml
-
-# OS
+# ── OS / IDE ───────────────────────────────────────────────
 .DS_Store
 Thumbs.db
-
-# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
-# Docker
-.dockerignore
+# ── Logs ───────────────────────────────────────────────────
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
-# Node (si se usa para Claude Code)
-node_modules/
+# ── Railway / Vercel metadata ──────────────────────────────
+.railway/
