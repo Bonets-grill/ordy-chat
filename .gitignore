@@ -3,6 +3,7 @@
 .env.local
 .env.*.local
 *.pem
+SECRETS-GENERATED.txt
 
 # ── Node / Next.js ─────────────────────────────────────────
 node_modules/

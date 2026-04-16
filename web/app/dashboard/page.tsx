@@ -102,6 +102,9 @@ export default async function DashboardPage() {
           <Button asChild variant="secondary">
             <Link href="/agent">Editar mi agente</Link>
           </Button>
+          <Button asChild variant="ghost">
+            <a href="/api/conversations/export" download>Exportar CSV</a>
+          </Button>
         </div>
       </div>
     </AppShell>

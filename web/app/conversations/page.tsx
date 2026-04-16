@@ -1,6 +1,8 @@
 import { desc, eq } from "drizzle-orm";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
@@ -34,8 +36,15 @@ export default async function ConversationsPage() {
 
   return (
     <AppShell session={session} subscriptionStatus={bundle.tenant.subscriptionStatus} trialDaysLeft={bundle.trialDaysLeft}>
-      <h1 className="text-3xl font-semibold text-neutral-900">Conversaciones</h1>
-      <p className="mt-1 text-neutral-500">Últimas 50 conversaciones de tu agente.</p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-3xl font-semibold text-neutral-900">Conversaciones</h1>
+          <p className="mt-1 text-neutral-500">Últimas 50 conversaciones de tu agente.</p>
+        </div>
+        <Button asChild variant="secondary">
+          <a href="/api/conversations/export" download>Exportar CSV</a>
+        </Button>
+      </div>
 
       <Card className="mt-6">
         <CardHeader>
@@ -48,11 +57,13 @@ export default async function ConversationsPage() {
             <ul className="divide-y divide-neutral-100">
               {lastMsgs.map(({ conv, last }) => (
                 <li key={conv.id} className="py-3">
-                  <div className="flex items-center justify-between">
-                    <div className="font-medium text-neutral-900">{conv.customerName ?? conv.phone}</div>
-                    <div className="text-xs text-neutral-500">{new Date(conv.lastMessageAt).toLocaleString("es-ES")}</div>
-                  </div>
-                  {last && <div className="mt-1 line-clamp-2 text-sm text-neutral-600">{last.role === "assistant" ? "🤖 " : "👤 "}{last.content}</div>}
+                  <Link href={`/conversations/${conv.id}`} className="group block rounded-lg -mx-2 px-2 py-1 hover:bg-neutral-50">
+                    <div className="flex items-center justify-between">
+                      <div className="font-medium text-neutral-900 group-hover:text-brand-600">{conv.customerName ?? conv.phone}</div>
+                      <div className="text-xs text-neutral-500">{new Date(conv.lastMessageAt).toLocaleString("es-ES")}</div>
+                    </div>
+                    {last && <div className="mt-1 line-clamp-2 text-sm text-neutral-600">{last.role === "assistant" ? "🤖 " : "👤 "}{last.content}</div>}
+                  </Link>
                 </li>
               ))}
             </ul>
