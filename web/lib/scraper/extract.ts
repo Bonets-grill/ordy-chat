@@ -82,28 +82,34 @@ REGLAS:
 
 export async function extractWithClaude(consolidatedText: string): Promise<ExtractedData> {
   const apiKey = await resolveApiKey();
-  const client = new Anthropic({ apiKey, maxRetries: 2, timeout: 60_000 });
+  const client = new Anthropic({ apiKey, maxRetries: 2, timeout: 180_000 });
 
-  // Trunca a ~150k chars para no rebasar ventana; Claude Sonnet 4.6 maneja mucho más pero cuesta.
-  const input = consolidatedText.length > 150_000
-    ? consolidatedText.slice(0, 150_000) + "\n\n[truncated]"
+  // Cap conservador: 80k chars ≈ 20k tokens, rango sano para Claude y extracción rápida.
+  const input = consolidatedText.length > 80_000
+    ? consolidatedText.slice(0, 80_000) + "\n\n[truncated]"
     : consolidatedText;
 
   const resp = await client.messages.create({
     model: "claude-sonnet-4-6",
-    max_tokens: 4096,
+    max_tokens: 8192,
     system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
     messages: [
       {
         role: "user",
-        content: `Extrae datos estructurados del siguiente contenido scrappeado. Responde SOLO con el JSON:\n\n${input}`,
+        content: `Extrae datos estructurados del siguiente contenido scrappeado.
+Responde EXCLUSIVAMENTE con el JSON — sin texto antes, sin markdown, sin \`\`\`. Empieza con { y termina con }. Si el JSON es largo asegúrate de cerrarlo correctamente con todas las llaves balanceadas.
+
+${input}`,
       },
     ],
   });
 
   const text = resp.content[0]?.type === "text" ? resp.content[0].text : "";
   const json = extractJsonFromText(text);
-  if (!json) throw new Error("Claude no devolvió JSON válido");
+  if (!json) {
+    const preview = text.slice(0, 400).replace(/\n/g, " ");
+    throw new Error(`Claude no devolvió JSON válido. Preview: ${preview}`);
+  }
   return normalize(json);
 }
 

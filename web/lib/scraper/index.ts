@@ -1,17 +1,19 @@
-// lib/scraper/index.ts — Pipeline completo de scraping.
+// lib/scraper/index.ts — Pipeline completo de scraping con fallback SPA.
 
 import { extractWithClaude, type ExtractedData } from "./extract";
 import { fetchAll, fetchHtml } from "./fetcher";
 import { formatForAgent } from "./format";
 import { discoverRelevant } from "./discover";
-import { parseHtml } from "./parser";
+import { parseHtml, type ParsedPage } from "./parser";
+import { needsRender, renderPage } from "./renderer";
 
 export type ScrapeResult = {
   rootUrl: string;
   visitedUrls: string[];
   extracted: ExtractedData;
-  text: string;         // texto formateado para pegar al system_prompt
+  text: string;
   pages: number;
+  spaPagesRendered: number;
   durationMs: number;
 };
 
@@ -19,17 +21,40 @@ export async function scrapeBusinessUrl(input: string, maxPages = 12): Promise<S
   const t0 = Date.now();
   const rootUrl = normalizeInputUrl(input);
 
-  const root = await fetchHtml(rootUrl);
-  const rootParsed = parseHtml(root.url, root.html);
+  // 1. Home — fetch plano. Si es shell SPA, renderiza con Chromium.
+  const { parsed: rootParsed, rendered: rootRendered } = await getPageSmart(rootUrl);
+  let spaPagesRendered = rootRendered ? 1 : 0;
 
-  const candidates = discoverRelevant(root.url, rootParsed.links, maxPages);
-  const pagesHtml = await fetchAll(candidates, 5);
+  // 2. Descubre candidatos en el HTML (renderizado si aplicó).
+  const candidates = discoverRelevant(rootParsed.url, rootParsed.links, maxPages);
 
-  const parsedAll = [rootParsed];
-  for (let i = 0; i < pagesHtml.length; i++) {
-    const r = pagesHtml[i];
+  // 3. Fetch plano paralelo de los candidatos.
+  const flatResults = await fetchAll(candidates, 5);
+
+  // 4. Parse + detectar cuáles necesitan render (SPA con navegación cliente).
+  const parsedAll: ParsedPage[] = [rootParsed];
+  const needsRenderList: string[] = [];
+  for (let i = 0; i < flatResults.length; i++) {
+    const r = flatResults[i];
     if (!r) continue;
-    parsedAll.push(parseHtml(r.url, r.html));
+    const parsed = parseHtml(r.url, r.html);
+    if (needsRender(r.html, parsed.text.length)) {
+      needsRenderList.push(r.url);
+    } else {
+      parsedAll.push(parsed);
+    }
+  }
+
+  // 5. Render los SPA internos en serie (máx 4 para mantener el scrape <2min).
+  //    Chromium es intensivo: en serie evita contención de CPU y memoria.
+  for (const url of needsRenderList.slice(0, 4)) {
+    try {
+      const rendered = await renderPage(url, 20_000);
+      parsedAll.push(parseHtml(rendered.url, rendered.html));
+      spaPagesRendered++;
+    } catch {
+      // skip: mejor tener parcial que nada
+    }
   }
 
   const consolidated = consolidate(parsedAll);
@@ -37,13 +62,35 @@ export async function scrapeBusinessUrl(input: string, maxPages = 12): Promise<S
   const text = formatForAgent(extracted);
 
   return {
-    rootUrl: root.url,
+    rootUrl: rootParsed.url,
     visitedUrls: parsedAll.map((p) => p.url),
     extracted,
     text,
     pages: parsedAll.length,
+    spaPagesRendered,
     durationMs: Date.now() - t0,
   };
+}
+
+/**
+ * Fetch plano + fallback Chromium si detectamos shell SPA sin contenido.
+ */
+async function getPageSmart(url: string): Promise<{ parsed: ParsedPage; rendered: boolean }> {
+  const flat = await fetchHtml(url);
+  const parsed = parseHtml(flat.url, flat.html);
+
+  if (needsRender(flat.html, parsed.text.length)) {
+    try {
+      const rendered = await renderPage(flat.url, 25_000);
+      const reparsed = parseHtml(rendered.url, rendered.html);
+      if (reparsed.text.length > parsed.text.length * 1.5 || reparsed.links.length > parsed.links.length * 1.5) {
+        return { parsed: reparsed, rendered: true };
+      }
+    } catch {
+      // continúa con la versión plana si el render falla
+    }
+  }
+  return { parsed, rendered: false };
 }
 
 function normalizeInputUrl(raw: string): string {
@@ -56,33 +103,32 @@ function normalizeInputUrl(raw: string): string {
 function consolidate(pages: ReturnType<typeof parseHtml>[]): string {
   const parts: string[] = [];
 
-  // Bloque 1: metadata por página
+  // Bloque 1: metadata + texto por página, caps agresivos (total ~80k).
   for (const p of pages) {
     parts.push(`---PAGE ${p.url}---`);
     if (p.title) parts.push(`TITLE: ${p.title}`);
     if (p.description) parts.push(`DESC: ${p.description}`);
     if (Object.keys(p.openGraph).length > 0) {
-      parts.push(`OG: ${JSON.stringify(p.openGraph)}`);
+      parts.push(`OG: ${JSON.stringify(p.openGraph).slice(0, 1500)}`);
     }
     if (p.text) {
-      // Limita cada página a 15k chars para evitar explosión.
-      parts.push(p.text.slice(0, 15_000));
+      parts.push(p.text.slice(0, 8_000));
     }
     parts.push("");
   }
 
-  // Bloque 2: JSON-LD (suele tener lo más estructurado: Restaurant, Menu, MenuItem)
+  // Bloque 2: JSON-LD (Restaurant / Menu / MenuItem estructurados).
   const allJsonLd = pages.flatMap((p) => p.jsonLd);
   if (allJsonLd.length > 0) {
     parts.push("---JSON-LD---");
-    parts.push(JSON.stringify(allJsonLd, null, 0).slice(0, 40_000));
+    parts.push(JSON.stringify(allJsonLd).slice(0, 20_000));
   }
 
-  // Bloque 3: Microdata
+  // Bloque 3: Microdata.
   const allMicrodata = pages.flatMap((p) => p.microdata);
   if (allMicrodata.length > 0) {
     parts.push("---MICRODATA---");
-    parts.push(JSON.stringify(allMicrodata, null, 0).slice(0, 15_000));
+    parts.push(JSON.stringify(allMicrodata).slice(0, 8_000));
   }
 
   return parts.join("\n");
