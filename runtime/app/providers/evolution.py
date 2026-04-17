@@ -32,7 +32,13 @@ class ProveedorEvolution(ProveedorWhatsApp):
     async def verificar_firma(self, request: Request, body_bytes: bytes) -> bool:
         if not self.webhook_secret:
             return False
-        provided = request.query_params.get("s", "")
+        # Header es preferible (no aparece en access logs). Query param como
+        # fallback legacy para instancias creadas antes del cambio.
+        provided = (
+            request.headers.get("x-ordy-signature")
+            or request.headers.get("x-webhook-secret")
+            or request.query_params.get("s", "")
+        )
         return hmac.compare_digest(provided, self.webhook_secret)
 
     async def parsear_webhook(self, request: Request, body_bytes: bytes) -> list[MensajeEntrante]:

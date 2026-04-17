@@ -29,7 +29,13 @@ class ProveedorWhapi(ProveedorWhatsApp):
         if not self.webhook_secret:
             # Sin secret configurado: política strict → rechazar.
             return False
-        provided = request.query_params.get("s", "")
+        # Preferimos header (no filtra en access logs). Fallback al query param
+        # para backward compat con webhooks configurados en Whapi antes del cambio.
+        provided = (
+            request.headers.get("x-ordy-signature")
+            or request.headers.get("x-webhook-secret")
+            or request.query_params.get("s", "")
+        )
         return hmac.compare_digest(provided, self.webhook_secret)
 
     async def parsear_webhook(self, request: Request, body_bytes: bytes) -> list[MensajeEntrante]:

@@ -1,0 +1,66 @@
+// web/lib/rate-limit.ts — Rate limiting con Upstash Redis.
+//
+// Si UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN están configurados,
+// aplica rate limit. Si no, es no-op (permitir todo). Esto evita romper dev
+// local y el primer deploy sin Upstash configurado.
+//
+// Dos presets:
+//   - global(ip):  100 req/min por IP sobre /api/*
+//   - perTenant(tenant_id): 1000 req/min por tenant (anti-abuse dashboard)
+//   - whatsapp(phone): 1 msg/seg por teléfono origen (anti-ban WhatsApp)
+
+import { Ratelimit } from "@upstash/ratelimit";
+import { Redis } from "@upstash/redis";
+
+let _redis: Redis | null = null;
+
+function getRedis(): Redis | null {
+  if (_redis) return _redis;
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return null;
+  _redis = new Redis({ url, token });
+  return _redis;
+}
+
+const _cache: Record<string, Ratelimit> = {};
+
+function limiter(name: string, limit: number, window: Parameters<typeof Ratelimit.slidingWindow>[1]): Ratelimit | null {
+  if (_cache[name]) return _cache[name];
+  const redis = getRedis();
+  if (!redis) return null;
+  _cache[name] = new Ratelimit({
+    redis,
+    limiter: Ratelimit.slidingWindow(limit, window),
+    prefix: `ordy:rl:${name}`,
+    analytics: false,
+  });
+  return _cache[name];
+}
+
+export async function limitByIp(ip: string): Promise<{ ok: true } | { ok: false; reset: number }> {
+  const rl = limiter("ip", 100, "1 m");
+  if (!rl) return { ok: true };
+  const r = await rl.limit(ip);
+  return r.success ? { ok: true } : { ok: false, reset: r.reset };
+}
+
+export async function limitByTenant(tenantId: string): Promise<{ ok: true } | { ok: false; reset: number }> {
+  const rl = limiter("tenant", 1000, "1 m");
+  if (!rl) return { ok: true };
+  const r = await rl.limit(tenantId);
+  return r.success ? { ok: true } : { ok: false, reset: r.reset };
+}
+
+export async function limitByWhatsappSender(phone: string): Promise<{ ok: true } | { ok: false; reset: number }> {
+  // Anti-ban WhatsApp: 1 msg/seg por número origen. Upstash atómico.
+  const rl = limiter("wa", 1, "1 s");
+  if (!rl) return { ok: true };
+  const r = await rl.limit(phone);
+  return r.success ? { ok: true } : { ok: false, reset: r.reset };
+}
+
+/** Devuelve true si Upstash está configurado (útil para logs/health). */
+export function rateLimitConfigured(): boolean {
+  return Boolean(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);
+}

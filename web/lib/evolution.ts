@@ -40,13 +40,18 @@ async function evoFetch(path: string, init: RequestInit = {}) {
 }
 
 // ── Instance lifecycle ────────────────────────────────────────
-export async function createInstance(instanceName: string, webhookUrl: string, events: string[] = [
-  "CONNECTION_UPDATE",
-  "MESSAGES_UPSERT",
-  "QRCODE_UPDATED",
-]) {
-  // Creamos la instancia y seteamos el webhook en la misma llamada si el
-  // servidor lo soporta; si no, caemos al fallback setWebhook().
+/**
+ * `webhookSecret`, si se pasa, se envía como header `X-Ordy-Signature` en vez
+ * de en el query string, lo que evita que aparezca en access logs. El runtime
+ * valida header O query param (backward compat con instancias antiguas).
+ */
+export async function createInstance(
+  instanceName: string,
+  webhookUrl: string,
+  opts: { events?: string[]; webhookSecret?: string } = {},
+) {
+  const events = opts.events ?? ["CONNECTION_UPDATE", "MESSAGES_UPSERT", "QRCODE_UPDATED"];
+  const headers = opts.webhookSecret ? { "X-Ordy-Signature": opts.webhookSecret } : undefined;
   try {
     return await evoFetch("/instance/create", {
       method: "POST",
@@ -54,26 +59,33 @@ export async function createInstance(instanceName: string, webhookUrl: string, e
         instanceName,
         integration: "WHATSAPP-BAILEYS",
         qrcode: true,
-        webhook: { url: webhookUrl, byEvents: true, events },
+        webhook: { url: webhookUrl, byEvents: true, events, ...(headers ? { headers } : {}) },
       }),
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (!/already in use|already exists/i.test(msg)) throw err;
-    // Ya existe → solo aseguramos el webhook.
-    await setWebhook(instanceName, webhookUrl, events);
+    await setWebhook(instanceName, webhookUrl, { events, webhookSecret: opts.webhookSecret });
     return { alreadyExists: true };
   }
 }
 
-export async function setWebhook(instanceName: string, webhookUrl: string, events: string[] = [
-  "CONNECTION_UPDATE",
-  "MESSAGES_UPSERT",
-  "QRCODE_UPDATED",
-]) {
+export async function setWebhook(
+  instanceName: string,
+  webhookUrl: string,
+  opts: { events?: string[]; webhookSecret?: string } = {},
+) {
+  const events = opts.events ?? ["CONNECTION_UPDATE", "MESSAGES_UPSERT", "QRCODE_UPDATED"];
+  const headers = opts.webhookSecret ? { "X-Ordy-Signature": opts.webhookSecret } : undefined;
   return evoFetch(`/webhook/set/${instanceName}`, {
     method: "POST",
-    body: JSON.stringify({ enabled: true, url: webhookUrl, webhookByEvents: true, events }),
+    body: JSON.stringify({
+      enabled: true,
+      url: webhookUrl,
+      webhookByEvents: true,
+      events,
+      ...(headers ? { headers } : {}),
+    }),
   });
 }
 

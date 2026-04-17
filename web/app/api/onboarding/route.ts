@@ -120,9 +120,11 @@ export async function POST(req: Request) {
     if (!runtimeUrl) {
       return NextResponse.json({ error: "RUNTIME_URL no configurada" }, { status: 503 });
     }
-    const webhookUrl = `${runtimeUrl}/webhook/evolution/${slug}?s=${webhookSecret}`;
+    // Secret va en header X-Ordy-Signature (evita filtrar en access logs).
+    // El runtime también acepta ?s= como fallback legacy.
+    const webhookUrl = `${runtimeUrl}/webhook/evolution/${slug}`;
     try {
-      await createInstance(instanceName, webhookUrl);
+      await createInstance(instanceName, webhookUrl, { webhookSecret });
     } catch (err) {
       console.error("[onboarding] evolution createInstance fail:", err);
       return NextResponse.json(
