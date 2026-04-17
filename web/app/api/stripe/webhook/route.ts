@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import type Stripe from "stripe";
 import { db } from "@/lib/db";
 import { auditLog, tenants } from "@/lib/db/schema";
+import { markOrderPaidBySession } from "@/lib/orders";
 import { stripeClient, stripeWebhookSecret } from "@/lib/stripe";
 
 export const runtime = "nodejs";
@@ -36,6 +37,9 @@ export async function POST(req: Request) {
       case "checkout.session.completed": {
         const sess = event.data.object as Stripe.Checkout.Session;
         const tenantId = sess.metadata?.tenant_id;
+        const orderId = sess.metadata?.order_id;
+
+        // Flow A: suscripción del tenant (€19.90/mes).
         if (tenantId && sess.subscription) {
           const subId = typeof sess.subscription === "string" ? sess.subscription : sess.subscription.id;
           const sub = await stripe.subscriptions.retrieve(subId);
@@ -47,6 +51,13 @@ export async function POST(req: Request) {
               updatedAt: new Date(),
             })
             .where(eq(tenants.id, tenantId));
+        }
+
+        // Flow B: pedido del comensal (mesero digital).
+        if (orderId && sess.mode === "payment") {
+          const pi = typeof sess.payment_intent === "string" ? sess.payment_intent : sess.payment_intent?.id;
+          await markOrderPaidBySession(sess.id, pi);
+          // TODO(fase 5): disparar generación de receipt + email al comensal.
         }
         break;
       }
