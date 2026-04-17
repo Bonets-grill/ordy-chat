@@ -39,6 +39,10 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             async authorize(creds) {
               const email = String(creds?.email ?? "").toLowerCase().trim();
               if (!email || !email.includes("@")) return null;
+              // Mientras Resend no esté configurado, el dev login solo acepta el email del
+              // super admin. Cierra la puerta abierta en prod hasta que exista magic link real.
+              const superEmail = process.env.SUPER_ADMIN_EMAIL?.toLowerCase().trim();
+              if (!superEmail || email !== superEmail) return null;
               const { eq } = await import("drizzle-orm");
               const existing = await db.select().from(users).where(eq(users.email, email)).limit(1);
               if (existing[0]) return existing[0];

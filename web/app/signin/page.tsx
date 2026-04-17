@@ -33,7 +33,7 @@ function SignInForm() {
       </div>
       {devMode && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
-          🚧 <strong>Modo demo.</strong> Entra con cualquier email — no se envía correo. El envío real se activa cuando se configure Resend.
+          🚧 <strong>Modo demo restringido.</strong> Solo el email del super admin puede entrar mientras se configura el envío de magic link.
         </div>
       )}
       <Input
