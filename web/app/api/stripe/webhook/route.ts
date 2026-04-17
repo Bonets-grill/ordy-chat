@@ -1,8 +1,8 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import type Stripe from "stripe";
 import { db } from "@/lib/db";
-import { auditLog, tenants } from "@/lib/db/schema";
+import { auditLog, stripeEvents, tenants } from "@/lib/db/schema";
 import { markOrderPaidBySession } from "@/lib/orders";
 import { generateAndSendReceipt } from "@/lib/receipts";
 import { stripeClient, stripeWebhookSecret } from "@/lib/stripe";
@@ -32,6 +32,25 @@ export async function POST(req: Request) {
   } catch (e) {
     return NextResponse.json({ error: `invalid signature: ${(e as Error).message}` }, { status: 400 });
   }
+
+  // Idempotencia: INSERT ... ON CONFLICT DO NOTHING. Si el evento ya existe,
+  // devolvemos 200 sin reprocesar — Stripe dejará de reintentar.
+  try {
+    const inserted = await db
+      .insert(stripeEvents)
+      .values({ eventId: event.id, eventType: event.type })
+      .onConflictDoNothing()
+      .returning({ eventId: stripeEvents.eventId });
+    if (inserted.length === 0) {
+      return NextResponse.json({ received: true, duplicate: true });
+    }
+  } catch (e) {
+    console.error(`[stripe] dedupe insert failed: ${(e as Error).message}`);
+    // Seguimos procesando — mejor procesar dos veces que romper la cadena.
+  }
+
+  // `sql` import usado si algún día queremos UPSERT más complejo.
+  void sql;
 
   try {
     switch (event.type) {

@@ -166,6 +166,16 @@ export const platformSettings = pgTable("platform_settings", {
   updatedBy: uuid("updated_by").references(() => users.id),
 });
 
+// ── Stripe events dedupe (migración 004) ────────────────────
+// Si Stripe reintenta un webhook, un INSERT ... ON CONFLICT DO NOTHING
+// en esta tabla hace el handler idempotente: si devuelve 0 filas insertadas,
+// saltamos el procesamiento.
+export const stripeEvents = pgTable("stripe_events", {
+  eventId: text("event_id").primaryKey(),
+  eventType: text("event_type").notNull(),
+  processedAt: timestamp("processed_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // ── Audit log ───────────────────────────────────────────────
 export const auditLog = pgTable("audit_log", {
   id: bigserial("id", { mode: "number" }).primaryKey(),
