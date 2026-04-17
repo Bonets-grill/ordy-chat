@@ -187,7 +187,7 @@ async def _procesar_mensaje(tenant: TenantContext, provider: str, msg: MensajeEn
             return
 
         historial = await obtener_historial(tenant.id, msg.telefono)
-        respuesta, tin, tout = await generar_respuesta(tenant, msg.texto, historial)
+        respuesta, tin, tout = await generar_respuesta(tenant, msg.texto, historial, customer_phone=msg.telefono)
 
         await guardar_intercambio(
             tenant.id, msg.telefono, msg.texto, respuesta,

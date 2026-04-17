@@ -66,7 +66,7 @@ jobs:
           DATABASE_URL: postgresql://stub:stub@stub.example.com/stub?sslmode=require
           ENCRYPTION_KEY: 0000000000000000000000000000000000000000000=
           ANTHROPIC_API_KEY: sk-ant-stub
-        run: python -c "from app import main, brain, memory, tenants, crypto, rate_limit, logging_config, renderer; from app.providers import whapi, meta, twilio, evolution; print('imports ok')"
+        run: python -c "from app import main, brain, memory, tenants, crypto, rate_limit, logging_config, renderer, ordering; from app.providers import whapi, meta, twilio, evolution; print('imports ok')"
 
   e2e:
     name: e2e — playwright
