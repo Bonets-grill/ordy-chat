@@ -24,7 +24,8 @@ const USE_CASES = [
 ];
 
 const PROVIDERS = [
-  { value: "whapi", label: "Whapi.cloud", tag: "Recomendado", desc: "El más fácil, sandbox gratis." },
+  { value: "evolution", label: "WhatsApp propio (QR)", tag: "Recomendado", desc: "Sin cuenta externa. Escanea el QR después. Gratis." },
+  { value: "whapi", label: "Whapi.cloud", tag: "Alternativa", desc: "Requiere cuenta Whapi + token." },
   { value: "meta", label: "Meta Cloud API", tag: "Oficial", desc: "Requiere cuenta Business verificada." },
   { value: "twilio", label: "Twilio", tag: "Robusto", desc: "Confiable pero más caro." },
 ] as const;
@@ -56,7 +57,7 @@ export function OnboardingWizard({ seed }: { seed: string }) {
     tone: "friendly",
     schedule: "Lunes a Viernes 9:00 - 18:00",
     knowledgeText: "",
-    provider: "whapi",
+    provider: "evolution",
     providerCredentials: {},
   });
 
@@ -99,6 +100,7 @@ export function OnboardingWizard({ seed }: { seed: string }) {
       case 6: return true;
       case 7: return !!data.provider;
       case 8:
+        if (data.provider === "evolution") return true; // sin credenciales — la plataforma crea la instancia
         if (data.provider === "whapi") return !!data.providerCredentials.token;
         if (data.provider === "meta") return !!data.providerCredentials.access_token && !!data.providerCredentials.phone_number_id && !!data.providerCredentials.app_secret;
         if (data.provider === "twilio") return !!data.providerCredentials.account_sid && !!data.providerCredentials.auth_token && !!data.providerCredentials.phone_number;
@@ -206,7 +208,22 @@ export function OnboardingWizard({ seed }: { seed: string }) {
       )}
 
       {step === 8 && (
-        <Step title="Pega las credenciales del proveedor" hint="Se cifran antes de guardarse.">
+        <Step title={data.provider === "evolution" ? "Tu WhatsApp, listo en un minuto" : "Pega las credenciales del proveedor"} hint={data.provider === "evolution" ? "Creamos tu instancia automáticamente. Al terminar, escaneas el QR desde tu WhatsApp." : "Se cifran antes de guardarse."}>
+          {data.provider === "evolution" && (
+            <div className="space-y-3">
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+                <div className="font-medium">Sin cuenta externa, sin tokens.</div>
+                <div className="mt-1 text-emerald-700">
+                  Al pulsar <strong>Crear agente</strong>, la plataforma crea tu instancia privada de WhatsApp. En el siguiente paso verás un QR para vincular tu número.
+                </div>
+              </div>
+              <ul className="space-y-1 text-sm text-neutral-600">
+                <li>• Instancia aislada por negocio (multi-tenant)</li>
+                <li>• Compatible con cualquier número de WhatsApp personal o Business</li>
+                <li>• Desvincular o resetear en un clic desde tu dashboard</li>
+              </ul>
+            </div>
+          )}
           {data.provider === "whapi" && (
             <div className="space-y-2">
               <label className="text-sm font-medium text-neutral-700">Whapi Token</label>

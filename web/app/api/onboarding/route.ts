@@ -8,6 +8,7 @@ import { auth } from "@/lib/auth";
 import { cifrar } from "@/lib/crypto";
 import { db } from "@/lib/db";
 import { agentConfigs, providerCredentials, tenantMembers, tenants } from "@/lib/db/schema";
+import { createInstance, evolutionConfigured, evolutionInstanceName } from "@/lib/evolution";
 import { buildSystemPrompt } from "@/lib/prompt-builder";
 import { slugify } from "@/lib/utils";
 
@@ -19,8 +20,8 @@ const schema = z.object({
   tone: z.enum(["professional", "friendly", "sales", "empathetic"]),
   schedule: z.string().min(3),
   knowledgeText: z.string().optional(),
-  provider: z.enum(["whapi", "meta", "twilio"]),
-  providerCredentials: z.record(z.string(), z.string()),
+  provider: z.enum(["whapi", "meta", "twilio", "evolution"]),
+  providerCredentials: z.record(z.string(), z.string()).optional().default({}),
 });
 
 async function uniqueSlug(base: string): Promise<string> {
@@ -71,7 +72,15 @@ export async function POST(req: Request) {
     knowledgeText: data.knowledgeText,
   });
 
-  const credsPayload = { ...data.providerCredentials };
+  // Validación de credenciales por proveedor.
+  // Evolution no pide nada al usuario: la plataforma crea la instancia.
+  if (data.provider === "evolution" && !evolutionConfigured()) {
+    return NextResponse.json(
+      { error: "Evolution no está configurado en la plataforma. Contacta al administrador." },
+      { status: 503 },
+    );
+  }
+  const credsPayload: Record<string, string> = { ...data.providerCredentials };
 
   const [tenant] = await db
     .insert(tenants)
@@ -101,8 +110,28 @@ export async function POST(req: Request) {
   });
 
   // Shared secret para validar origen del webhook (query param ?s=...).
-  // Lo usamos sobre todo con Whapi (no firma). Con Meta/Twilio hay verificación extra.
+  // Lo usamos sobre todo con Whapi/Evolution (no firman). Meta/Twilio firman.
   const webhookSecret = crypto.randomBytes(24).toString("base64url");
+
+  // Auto-provisioning para Evolution: crear instancia + setear webhook apuntando al runtime.
+  if (data.provider === "evolution") {
+    const instanceName = evolutionInstanceName(slug);
+    const runtimeUrl = (process.env.RUNTIME_URL || "").replace(/\/$/, "");
+    if (!runtimeUrl) {
+      return NextResponse.json({ error: "RUNTIME_URL no configurada" }, { status: 503 });
+    }
+    const webhookUrl = `${runtimeUrl}/webhook/evolution/${slug}?s=${webhookSecret}`;
+    try {
+      await createInstance(instanceName, webhookUrl);
+    } catch (err) {
+      console.error("[onboarding] evolution createInstance fail:", err);
+      return NextResponse.json(
+        { error: `No se pudo crear la instancia de WhatsApp: ${err instanceof Error ? err.message : String(err)}` },
+        { status: 502 },
+      );
+    }
+    credsPayload.instance_name = instanceName;
+  }
 
   await db.insert(providerCredentials).values({
     tenantId: tenant.id,

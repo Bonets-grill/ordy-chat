@@ -4,9 +4,10 @@ import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { WhatsappConnection } from "@/components/whatsapp-connection";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { conversations, messages } from "@/lib/db/schema";
+import { conversations, messages, providerCredentials } from "@/lib/db/schema";
 import { requireTenant } from "@/lib/tenant";
 
 export default async function DashboardPage() {
@@ -37,6 +38,13 @@ export default async function DashboardPage() {
     .orderBy(desc(conversations.lastMessageAt))
     .limit(5);
 
+  const [creds] = await db
+    .select({ provider: providerCredentials.provider })
+    .from(providerCredentials)
+    .where(eq(providerCredentials.tenantId, bundle.tenant.id))
+    .limit(1);
+  const usesEvolution = creds?.provider === "evolution";
+
   return (
     <AppShell session={session} subscriptionStatus={bundle.tenant.subscriptionStatus} trialDaysLeft={bundle.trialDaysLeft}>
       <div className="space-y-8">
@@ -65,6 +73,8 @@ export default async function DashboardPage() {
             </CardHeader>
           </Card>
         </div>
+
+        {usesEvolution && <WhatsappConnection />}
 
         <Card>
           <CardHeader>

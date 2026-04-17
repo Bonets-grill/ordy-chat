@@ -15,6 +15,9 @@ def obtener_proveedor(nombre: str, credentials: dict, webhook_secret: str = "") 
     if nombre == "twilio":
         from app.providers.twilio import ProveedorTwilio
         return ProveedorTwilio(credentials, webhook_secret)
+    if nombre == "evolution":
+        from app.providers.evolution import ProveedorEvolution
+        return ProveedorEvolution(credentials, webhook_secret)
     raise ValueError(f"Proveedor no soportado: {nombre}")
 
 

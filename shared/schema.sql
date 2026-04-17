@@ -94,7 +94,7 @@ CREATE TABLE IF NOT EXISTS agent_configs (
 -- ── Credenciales de proveedor (cifradas AES-256-GCM) ───────
 CREATE TABLE IF NOT EXISTS provider_credentials (
     tenant_id UUID PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
-    provider TEXT NOT NULL CHECK (provider IN ('whapi', 'meta', 'twilio')),
+    provider TEXT NOT NULL CHECK (provider IN ('whapi', 'meta', 'twilio', 'evolution')),
     credentials_encrypted TEXT NOT NULL,
     phone_number TEXT,
     webhook_secret TEXT,  -- shared secret para validar origen (query ?s=..., HMAC, etc.)
