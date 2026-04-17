@@ -1,14 +1,17 @@
 // web/lib/db/schema.ts — Schema Drizzle (espejo de shared/schema.sql)
 
 import {
+  bigint,
   bigserial,
   boolean,
   integer,
   jsonb,
+  numeric,
   pgTable,
   primaryKey,
   text,
   timestamp,
+  unique,
   uuid,
 } from "drizzle-orm/pg-core";
 
@@ -67,6 +70,16 @@ export const tenants = pgTable("tenants", {
   stripeCustomerId: text("stripe_customer_id").unique(),
   stripeSubscriptionId: text("stripe_subscription_id").unique(),
   trialEndsAt: timestamp("trial_ends_at", { withTimezone: true }).notNull(),
+  // Datos fiscales + branding (migración 003).
+  legalName: text("legal_name"),
+  taxId: text("tax_id"),
+  billingAddress: text("billing_address"),
+  billingPostalCode: text("billing_postal_code"),
+  billingCity: text("billing_city"),
+  billingCountry: text("billing_country").notNull().default("ES"),
+  brandColor: text("brand_color").notNull().default("#7c3aed"),
+  brandLogoUrl: text("brand_logo_url"),
+  defaultVatRate: numeric("default_vat_rate", { precision: 5, scale: 2 }).notNull().default("10.00"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -165,9 +178,86 @@ export const auditLog = pgTable("audit_log", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// ── Fiscal config + Verifactu (migración 003) ─────────────
+export const tenantFiscalConfig = pgTable("tenant_fiscal_config", {
+  tenantId: uuid("tenant_id").primaryKey().references(() => tenants.id, { onDelete: "cascade" }),
+  verifactuEnabled: boolean("verifactu_enabled").notNull().default(false),
+  verifactuEnvironment: text("verifactu_environment").notNull().default("sandbox"),
+  certificateEncrypted: text("certificate_encrypted"),
+  certificatePasswordEncrypted: text("certificate_password_encrypted"),
+  certificateFilename: text("certificate_filename"),
+  certificateUploadedAt: timestamp("certificate_uploaded_at", { withTimezone: true }),
+  certificateExpiresAt: timestamp("certificate_expires_at", { withTimezone: true }),
+  invoiceSeries: text("invoice_series").notNull().default("A"),
+  invoiceCounter: bigint("invoice_counter", { mode: "number" }).notNull().default(0),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ── Pedidos + recibos (mesero digital) ─────────────────────
+export const orders = pgTable(
+  "orders",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    customerPhone: text("customer_phone"),
+    customerName: text("customer_name"),
+    tableNumber: text("table_number"),
+    status: text("status").notNull().default("pending"),
+    currency: text("currency").notNull().default("EUR"),
+    subtotalCents: integer("subtotal_cents").notNull().default(0),
+    vatCents: integer("vat_cents").notNull().default(0),
+    totalCents: integer("total_cents").notNull().default(0),
+    stripePaymentLinkUrl: text("stripe_payment_link_url"),
+    stripePaymentIntentId: text("stripe_payment_intent_id").unique(),
+    stripeCheckoutSessionId: text("stripe_checkout_session_id").unique(),
+    notes: text("notes"),
+    metadata: jsonb("metadata").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    paidAt: timestamp("paid_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+);
+
+export const orderItems = pgTable("order_items", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orderId: uuid("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  quantity: integer("quantity").notNull().default(1),
+  unitPriceCents: integer("unit_price_cents").notNull(),
+  vatRate: numeric("vat_rate", { precision: 5, scale: 2 }).notNull().default("10.00"),
+  lineTotalCents: integer("line_total_cents").notNull(),
+  notes: text("notes"),
+});
+
+export const receipts = pgTable(
+  "receipts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orderId: uuid("order_id").unique().notNull().references(() => orders.id, { onDelete: "cascade" }),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    invoiceSeries: text("invoice_series").notNull(),
+    invoiceNumber: bigint("invoice_number", { mode: "number" }).notNull(),
+    verifactuStatus: text("verifactu_status").notNull().default("skipped"),
+    verifactuSubmittedAt: timestamp("verifactu_submitted_at", { withTimezone: true }),
+    verifactuResponse: jsonb("verifactu_response"),
+    verifactuQrData: text("verifactu_qr_data"),
+    verifactuHash: text("verifactu_hash"),
+    pdfUrl: text("pdf_url"),
+    sentEmail: text("sent_email"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({ uniqNumber: unique().on(t.tenantId, t.invoiceSeries, t.invoiceNumber) }),
+);
+
 export type User = typeof users.$inferSelect;
 export type Tenant = typeof tenants.$inferSelect;
 export type AgentConfig = typeof agentConfigs.$inferSelect;
 export type ProviderCredentials = typeof providerCredentials.$inferSelect;
 export type Conversation = typeof conversations.$inferSelect;
 export type Message = typeof messages.$inferSelect;
+export type TenantFiscalConfig = typeof tenantFiscalConfig.$inferSelect;
+export type Order = typeof orders.$inferSelect;
+export type OrderItem = typeof orderItems.$inferSelect;
+export type Receipt = typeof receipts.$inferSelect;
