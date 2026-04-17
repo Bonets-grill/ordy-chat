@@ -1,4 +1,4 @@
-import { Bot, CreditCard, LayoutDashboard, MessageSquareText, Settings } from "lucide-react";
+import { Bot, CreditCard, FileText, LayoutDashboard, MessageSquareText, Settings } from "lucide-react";
 import Link from "next/link";
 import type { Session } from "next-auth";
 import { Badge } from "./ui/badge";
@@ -9,6 +9,7 @@ const NAV: NavItem[] = [
   { href: "/dashboard", label: "Resumen", icon: LayoutDashboard },
   { href: "/conversations", label: "Conversaciones", icon: MessageSquareText },
   { href: "/agent", label: "Mi agente", icon: Bot },
+  { href: "/agent/fiscal", label: "Datos fiscales", icon: FileText },
   { href: "/billing", label: "Facturación", icon: CreditCard },
 ];
 
