@@ -7,11 +7,19 @@
 // configura branding desde Stripe Dashboard → Settings → Branding (logo,
 // accent color #7c3aed, business name). Ver docs/STRIPE_BRANDING.md.
 
-const BRAND = "#7c3aed";
-const BRAND_DARK = "#6d28d9";
-const ACCENT = "#ec4899";
+const DEFAULT_BRAND = "#7c3aed";
+const DEFAULT_ACCENT = "#ec4899";
 
 type ButtonSpec = { label: string; href: string };
+
+export type BrandOverride = {
+  /** Color primario del card (CTA + banda + logo). Fallback al violeta Ordy. */
+  primary?: string;
+  /** Texto de la marca en el header. */
+  name?: string;
+  /** Logo URL (si se pasa, reemplaza el cuadrado "O"). */
+  logoUrl?: string;
+};
 
 export type BrandedEmailOptions = {
   /** Pre-header / título grande dentro del card. */
@@ -20,10 +28,16 @@ export type BrandedEmailOptions = {
   paragraphs: string[];
   /** CTA principal (opcional). */
   button?: ButtonSpec;
+  /** HTML extra (tabla de líneas, QR Verifactu, etc). Va ANTES del CTA. */
+  extraHtml?: string;
   /** Texto pequeño bajo el CTA (ej. "¿No fuiste tú? Ignora este correo"). */
   footerNote?: string;
   /** Email destino — se muestra en el footer. */
   recipient?: string;
+  /** Override de colores/logo por tenant (para recibos de comensal). */
+  brand?: BrandOverride;
+  /** Nota extra al pie (razón social + NIF del emisor, por ej.). */
+  legalFooter?: string;
 };
 
 export type SendBrandedEmailInput = BrandedEmailOptions & {
@@ -39,7 +53,11 @@ export type SendBrandedEmailInput = BrandedEmailOptions & {
  * Pattern table-based — funciona en Gmail, Outlook, Apple Mail.
  */
 export function renderBrandedEmail(opts: BrandedEmailOptions): string {
-  const { title, paragraphs, button, footerNote, recipient } = opts;
+  const { title, paragraphs, button, extraHtml, footerNote, recipient, legalFooter } = opts;
+  const brand = opts.brand?.primary ?? DEFAULT_BRAND;
+  const brandDark = darken(brand);
+  const brandName = opts.brand?.name ?? "Ordy Chat";
+  const logoUrl = opts.brand?.logoUrl;
 
   const bodyHtml = paragraphs
     .map(
@@ -54,8 +72,8 @@ export function renderBrandedEmail(opts: BrandedEmailOptions): string {
           <td align="left" style="padding:8px 40px 8px 40px;">
             <table role="presentation" cellpadding="0" cellspacing="0" border="0">
               <tr>
-                <td align="center" bgcolor="${BRAND}" style="background-color:${BRAND};border-radius:10px;">
-                  <a href="${button.href}" target="_blank" style="display:inline-block;padding:14px 32px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:10px;border:1px solid ${BRAND_DARK};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;mso-padding-alt:0;">
+                <td align="center" bgcolor="${brand}" style="background-color:${brand};border-radius:10px;">
+                  <a href="${button.href}" target="_blank" style="display:inline-block;padding:14px 32px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:10px;border:1px solid ${brandDark};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;mso-padding-alt:0;">
                     <!--[if mso]>&nbsp;&nbsp;&nbsp;&nbsp;<![endif]-->${button.label}<!--[if mso]>&nbsp;&nbsp;&nbsp;&nbsp;<![endif]-->
                   </a>
                 </td>
@@ -66,9 +84,14 @@ export function renderBrandedEmail(opts: BrandedEmailOptions): string {
         <tr>
           <td style="padding:20px 40px 8px 40px;">
             <p style="margin:0 0 8px 0;font-size:13px;line-height:1.5;color:#6b7280;">¿El botón no funciona? Copia y pega este enlace en tu navegador:</p>
-            <p style="margin:0;font-size:12px;line-height:1.5;color:${BRAND};word-break:break-all;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;">${button.href}</p>
+            <p style="margin:0;font-size:12px;line-height:1.5;color:${brand};word-break:break-all;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;">${button.href}</p>
           </td>
         </tr>`
+    : "";
+
+  const extraHtmlRow = extraHtml ? `<tr><td style="padding:0 40px 16px 40px;">${extraHtml}</td></tr>` : "";
+  const legalFooterHtml = legalFooter
+    ? `<p style="margin:8px 0 0 0;font-size:11px;line-height:1.4;color:#9ca3af;">${legalFooter}</p>`
     : "";
 
   const noteHtml = footerNote
@@ -78,6 +101,11 @@ export function renderBrandedEmail(opts: BrandedEmailOptions): string {
   const recipientHtml = recipient
     ? `<p style="margin:20px 0 0 0;font-size:12px;line-height:1.5;color:#9ca3af;">Enviado a <strong style="color:#6b7280;font-weight:600;">${recipient}</strong>. Si no esperabas este correo, puedes ignorarlo.</p>`
     : "";
+
+  const logoCell = logoUrl
+    ? `<td><img src="${logoUrl}" alt="${escapeHtml(brandName)}" style="max-height:40px;max-width:120px;display:block"></td>`
+    : `<td style="background-color:${brand};width:40px;height:40px;border-radius:10px;text-align:center;vertical-align:middle;color:#ffffff;font-size:20px;font-weight:700;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">${escapeHtml(brandName.charAt(0).toUpperCase() || "O")}</td>
+                  <td style="padding-left:12px;font-size:18px;font-weight:600;color:#111827;">${escapeHtml(brandName)}</td>`;
 
   return `<!doctype html>
 <html lang="es">
@@ -93,15 +121,12 @@ export function renderBrandedEmail(opts: BrandedEmailOptions): string {
       <td align="center" style="padding:40px 16px;">
         <table role="presentation" width="520" cellpadding="0" cellspacing="0" border="0" style="max-width:520px;width:100%;background-color:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 20px rgba(15,23,42,0.06);">
           <tr>
-            <td style="height:6px;background-color:${BRAND};background-image:linear-gradient(90deg,${BRAND},${ACCENT});mso-line-height-rule:exactly;line-height:6px;font-size:0;">&nbsp;</td>
+            <td style="height:6px;background-color:${brand};background-image:linear-gradient(90deg,${brand},${DEFAULT_ACCENT});mso-line-height-rule:exactly;line-height:6px;font-size:0;">&nbsp;</td>
           </tr>
           <tr>
             <td style="padding:32px 40px 0 40px;">
               <table role="presentation" cellpadding="0" cellspacing="0" border="0">
-                <tr>
-                  <td style="background-color:${BRAND};width:40px;height:40px;border-radius:10px;text-align:center;vertical-align:middle;color:#ffffff;font-size:20px;font-weight:700;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">O</td>
-                  <td style="padding-left:12px;font-size:18px;font-weight:600;color:#111827;">Ordy Chat</td>
-                </tr>
+                <tr>${logoCell}</tr>
               </table>
             </td>
           </tr>
@@ -111,22 +136,35 @@ export function renderBrandedEmail(opts: BrandedEmailOptions): string {
               ${bodyHtml}
             </td>
           </tr>
+          ${extraHtmlRow}
           ${buttonHtml}
           <tr>
             <td style="padding:${button ? "0" : "8"}px 40px 32px 40px;border-top:1px solid #f1f1f4;margin-top:24px;">
               <div style="padding-top:20px;">
                 ${noteHtml}
                 ${recipientHtml}
+                ${legalFooterHtml}
               </div>
             </td>
           </tr>
         </table>
-        <p style="margin:20px 0 0 0;font-size:12px;color:#9ca3af;">Ordy Chat — Tu agente de WhatsApp con IA</p>
+        <p style="margin:20px 0 0 0;font-size:12px;color:#9ca3af;">Enviado con Ordy Chat</p>
       </td>
     </tr>
   </table>
 </body>
 </html>`;
+}
+
+/** Oscurece un color hex (#RRGGBB) en ~15% para el borde del CTA. */
+function darken(hex: string): string {
+  const m = /^#([0-9a-fA-F]{6})$/.exec(hex);
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  const r = Math.max(0, ((n >> 16) & 0xff) - 30);
+  const g = Math.max(0, ((n >> 8) & 0xff) - 30);
+  const b = Math.max(0, (n & 0xff) - 30);
+  return `#${[r, g, b].map((x) => x.toString(16).padStart(2, "0")).join("")}`;
 }
 
 /** Versión texto plano — fallback para clientes que rechazan HTML. */

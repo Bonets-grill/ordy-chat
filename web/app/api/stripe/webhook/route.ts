@@ -4,6 +4,7 @@ import type Stripe from "stripe";
 import { db } from "@/lib/db";
 import { auditLog, tenants } from "@/lib/db/schema";
 import { markOrderPaidBySession } from "@/lib/orders";
+import { generateAndSendReceipt } from "@/lib/receipts";
 import { stripeClient, stripeWebhookSecret } from "@/lib/stripe";
 
 export const runtime = "nodejs";
@@ -56,8 +57,18 @@ export async function POST(req: Request) {
         // Flow B: pedido del comensal (mesero digital).
         if (orderId && sess.mode === "payment") {
           const pi = typeof sess.payment_intent === "string" ? sess.payment_intent : sess.payment_intent?.id;
-          await markOrderPaidBySession(sess.id, pi);
-          // TODO(fase 5): disparar generación de receipt + email al comensal.
+          const updated = await markOrderPaidBySession(sess.id, pi);
+          if (updated) {
+            const customerEmail = sess.customer_details?.email ?? sess.customer_email ?? null;
+            try {
+              await generateAndSendReceipt(updated.id, customerEmail);
+            } catch (err) {
+              console.error("[receipt] generate failed:", err);
+              // Nunca bloqueamos el webhook: Stripe no debe reintentarlo por un
+              // fallo en la capa de recibos. El receipt queda en DB con status
+              // 'error' para remediation manual desde el dashboard del tenant.
+            }
+          }
         }
         break;
       }
