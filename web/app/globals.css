@@ -39,6 +39,22 @@ html.cap-native .cap-safe-bottom {
   padding-bottom: var(--safe-bottom);
 }
 
+/* Sprint 5 F5.1 — Safe-area utilities (PWA iOS notch + Capacitor).
+   Funciona siempre con env(safe-area-inset-*). En desktop = 0. */
+.pt-safe { padding-top: var(--safe-top); }
+.pb-safe { padding-bottom: var(--safe-bottom); }
+.pl-safe { padding-left: var(--safe-left); }
+.pr-safe { padding-right: var(--safe-right); }
+.mt-safe { margin-top: var(--safe-top); }
+.mb-safe { margin-bottom: var(--safe-bottom); }
+.min-h-safe { min-height: calc(100vh - var(--safe-top) - var(--safe-bottom)); }
+
+@media (display-mode: standalone) {
+  :root {
+    --safe-top: max(env(safe-area-inset-top, 0px), 12px);
+  }
+}
+
 @layer base {
   * {
     @apply border-border;
