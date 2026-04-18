@@ -22,6 +22,7 @@ from fastapi.responses import PlainTextResponse
 from app.brain import generar_respuesta
 from app.logging_config import configurar_logging
 from app.memory import cerrar_pool, guardar_intercambio, inicializar_pool, obtener_historial, ya_procesado
+from app.outbound_throttle import esperar_turno
 from app.providers import MensajeEntrante, obtener_proveedor
 from app.rate_limit import limite_superado
 from app.renderer import cerrar_browser, renderizar
@@ -193,6 +194,13 @@ async def _procesar_mensaje(tenant: TenantContext, provider: str, msg: MensajeEn
             tenant.id, msg.telefono, msg.texto, respuesta,
             mensaje_id=msg.mensaje_id, tokens_in=tin, tokens_out=tout,
         )
+        # Anti-ban: WhatsApp banea si mandamos varios msgs al mismo número en <1s.
+        waited = await esperar_turno(msg.telefono)
+        if waited > 0:
+            logger.debug(
+                "outbound throttled",
+                extra={**log_extra, "event": "outbound_wait", "waited_ms": int(waited * 1000)},
+            )
         await adapter.enviar_mensaje(msg.telefono, respuesta)
 
         logger.info(
