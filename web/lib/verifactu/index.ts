@@ -18,7 +18,7 @@ import { submitRegistroFactura } from "@/lib/verifactu/submit";
 import { buildRegistroFacturaXml } from "@/lib/verifactu/xml";
 
 export type ProcessResult = {
-  status: "skipped" | "submitted" | "accepted" | "rejected" | "error";
+  status: "skipped" | "not_applicable" | "submitted" | "accepted" | "rejected" | "error";
   receiptId?: string;
   verifactuQrData?: string;
   verifactuHash?: string;
@@ -54,14 +54,19 @@ export async function processReceiptForOrder(orderId: string): Promise<ProcessRe
     .where(eq(tenantFiscalConfig.tenantId, order.tenantId))
     .limit(1);
 
-  const verifactuOn = Boolean(config?.verifactuEnabled && config?.certificateEncrypted);
+  // Gate por régimen fiscal: Verifactu SOLO aplica a tenants con IVA (península + Baleares).
+  // Canarias (IGIC) tiene su propio SII ante la ATC (módulo futuro); el resto genera
+  // recibo normal sin envío fiscal digital.
+  const taxSystemIsVerifactu = (tenant.taxSystem ?? "IVA") === "IVA";
+  const verifactuOn = taxSystemIsVerifactu && Boolean(config?.verifactuEnabled && config?.certificateEncrypted);
 
   // Siguiente número de factura (idempotente vía UNIQUE(tenant_id, series, number)).
   const invoiceSeries = config?.invoiceSeries ?? "A";
   const nextNumber = (config?.invoiceCounter ?? 0) + 1;
 
   if (!verifactuOn) {
-    // Verifactu desactivado: solo guardamos el recibo sin firma ni envío.
+    // Distinguimos "not_applicable" (régimen ≠ IVA) de "skipped" (IVA pero toggle off).
+    const status: "skipped" | "not_applicable" = taxSystemIsVerifactu ? "skipped" : "not_applicable";
     const [created] = await db
       .insert(receipts)
       .values({
@@ -69,7 +74,7 @@ export async function processReceiptForOrder(orderId: string): Promise<ProcessRe
         tenantId: order.tenantId,
         invoiceSeries,
         invoiceNumber: nextNumber,
-        verifactuStatus: "skipped",
+        verifactuStatus: status,
       })
       .returning();
     if (config) {
@@ -78,7 +83,7 @@ export async function processReceiptForOrder(orderId: string): Promise<ProcessRe
         .set({ invoiceCounter: nextNumber, updatedAt: new Date() })
         .where(eq(tenantFiscalConfig.tenantId, order.tenantId));
     }
-    return { status: "skipped", receiptId: created.id };
+    return { status, receiptId: created.id };
   }
 
   // Verifactu ON: construir cadena + XML + submit.
@@ -123,11 +128,22 @@ export async function processReceiptForOrder(orderId: string): Promise<ProcessRe
     fechaExpedicion,
     tipoFactura: "F2",
     descripcion: `Consumición mesa ${order.tableNumber ?? ""}`.trim(),
-    lineas: items.map((it) => ({
-      baseImponible: it.lineTotalCents / 100,
-      tipoImpositivo: parseFloat(it.vatRate),
-      cuotaIva: Math.round(it.lineTotalCents * (parseFloat(it.vatRate) / 100)) / 100,
-    })),
+    lineas: items.map((it) => {
+      // Respeta pricesIncludeTax del tenant: si PVP ya incluye IVA, extraemos hacia
+      // atrás para obtener base imponible + cuota correctas para AEAT.
+      const rate = parseFloat((it as { taxRate?: string; vatRate: string }).taxRate ?? it.vatRate);
+      const lineGross = it.lineTotalCents;
+      const includesTax = tenant.pricesIncludeTax ?? true;
+      const cuotaCents = includesTax
+        ? Math.round((lineGross * rate) / (100 + rate))
+        : Math.round(lineGross * rate / 100);
+      const baseCents = includesTax ? lineGross - cuotaCents : lineGross;
+      return {
+        baseImponible: baseCents / 100,
+        tipoImpositivo: rate,
+        cuotaIva: cuotaCents / 100,
+      };
+    }),
     importeTotal: totalEur,
     cuotaTotalIva: cuotaTotalEur,
     huellaActual,
