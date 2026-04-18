@@ -123,6 +123,10 @@ export const agentConfigs = pgTable("agent_configs", {
   paymentMethods: text("payment_methods").array().notNull().default(_sqlTag`ARRAY['on_pickup','cash']::text[]`),
   acceptOnlinePayment: boolean("accept_online_payment").notNull().default(false),
   paymentNotes: text("payment_notes"),
+  // Sprint 3 validador-ui (migración 011): override del validation_mode por tenant.
+  // NULL → usa flag global platform_settings.validation_mode_default.
+  // 'auto'|'manual'|'skip' → override explícito para este tenant.
+  validationMode: text("validation_mode"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -398,6 +402,11 @@ export const validatorMessages = pgTable("validator_messages", {
   tokensIn: integer("tokens_in").default(0),
   tokensOut: integer("tokens_out").default(0),
   durationMs: integer("duration_ms"),
+  // Sprint 3 validador-ui (migración 011): decisión admin en modo manual/review.
+  adminDecision: text("admin_decision"), // CHECK: approved|rejected|edited
+  adminDecidedAt: timestamp("admin_decided_at", { withTimezone: true }),
+  adminDecidedBy: uuid("admin_decided_by").references(() => users.id, { onDelete: "set null" }),
+  adminEditedResponse: text("admin_edited_response"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
