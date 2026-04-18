@@ -1,7 +1,11 @@
-"use server";
-
 // web/lib/reseller/create.ts
-// Server action para crear un reseller desde /admin/resellers/new.
+// Helper library para crear un reseller. Invocado desde la server action
+// /admin/resellers/new/actions.ts (que sí lleva "use server").
+//
+// IMPORTANT: este archivo NO debe tener "use server" porque exporta tipos,
+// clases y la función helper createReseller() — Next.js App Router rechaza
+// todo export no-función en módulos marcados "use server" (Turbopack
+// devuelve "module has no exports at all" y rompe el build).
 //
 // Transaccional: user resolve/create + role update + reseller INSERT + audit
 // van todos o ninguno. Nota: @neondatabase/serverless HTTP driver no soporta
