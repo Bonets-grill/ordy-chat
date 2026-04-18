@@ -363,3 +363,45 @@ export const onboardingJobs = pgTable("onboarding_jobs", {
 
 export type OnboardingJob = typeof onboardingJobs.$inferSelect;
 export type NewOnboardingJob = typeof onboardingJobs.$inferInsert;
+
+// ── Validator runs + messages (migración 010) ───────────────
+// Sprint 2 validador-core. Se pobla solo desde runtime. RLS activa con
+// current_tenant_id() helper. Super admin ve vía SET app.current_tenant_id.
+export const validatorRuns = pgTable("validator_runs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  triggeredBy: text("triggered_by").notNull(), // CHECK: onboarding_auto|admin_manual|autopatch_retry
+  nicho: text("nicho").notNull(), // universal_only|restaurante|clinica|hotel|servicios
+  status: text("status").notNull(), // CHECK: running|pass|review|fail|error
+  summaryJson: jsonb("summary_json"),
+  autopatchAttempts: integer("autopatch_attempts").notNull().default(0),
+  autopatchAppliedAt: timestamp("autopatch_applied_at", { withTimezone: true }),
+  previousSystemPrompt: text("previous_system_prompt"),
+  pausedByThisRun: boolean("paused_by_this_run").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+});
+
+export const validatorMessages = pgTable("validator_messages", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  runId: uuid("run_id").notNull().references(() => validatorRuns.id, { onDelete: "cascade" }),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  seedId: text("seed_id").notNull(),
+  seedText: text("seed_text").notNull(),
+  seedExpectedAction: text("seed_expected_action"),
+  responseText: text("response_text").notNull(),
+  toolsCalled: jsonb("tools_called"),
+  assertsResult: jsonb("asserts_result"),
+  judgeScores: jsonb("judge_scores"),
+  judgeNotes: text("judge_notes"),
+  verdict: text("verdict").notNull(), // CHECK: pass|review|fail
+  tokensIn: integer("tokens_in").default(0),
+  tokensOut: integer("tokens_out").default(0),
+  durationMs: integer("duration_ms"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type ValidatorRun = typeof validatorRuns.$inferSelect;
+export type NewValidatorRun = typeof validatorRuns.$inferInsert;
+export type ValidatorMessage = typeof validatorMessages.$inferSelect;
+export type NewValidatorMessage = typeof validatorMessages.$inferInsert;
