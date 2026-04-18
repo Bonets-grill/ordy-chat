@@ -7,6 +7,7 @@ from typing import Any
 from anthropic import AsyncAnthropic, APIStatusError, APIConnectionError
 
 from app.agent_tools import crear_cita, crear_handoff, listar_citas_del_cliente
+from app.memory import actualizar_nombre_cliente, obtener_contexto_cliente
 from app.ordering import crear_pedido, obtener_link_pago
 from app.tenants import TenantContext, obtener_anthropic_api_key
 
@@ -27,6 +28,45 @@ def _get_client(api_key: str) -> AsyncAnthropic:
     client = AsyncAnthropic(api_key=api_key, max_retries=3, timeout=60.0)
     _client_cache[api_key] = client
     return client
+
+
+def _render_contexto_cliente(ctx: dict[str, Any]) -> str | None:
+    """Serializa el contexto persistente a texto que Claude leerá como system block."""
+    if not ctx:
+        return None
+    lineas: list[str] = ["<cliente_conocido>"]
+    nombre = ctx.get("customer_name")
+    if nombre:
+        lineas.append(f"Nombre: {nombre}")
+        lineas.append(
+            "Instrucción: saluda al cliente por su nombre de forma natural al responder, "
+            "sin anunciar que lo has recordado."
+        )
+    pedido = ctx.get("ultimo_pedido")
+    if pedido:
+        items_str = ", ".join(
+            f"{it['qty']}x {it['name']}" for it in pedido.get("items", [])
+        )
+        lineas.append(
+            f"Último pedido pagado ({pedido['fecha']}): {items_str} — "
+            f"total {pedido['total_eur']} {pedido.get('currency', 'EUR')}."
+        )
+        lineas.append(
+            "Instrucción: si el cliente pide 'lo de siempre', 'lo mismo', o duda qué quiere, "
+            "ofrécele repetir ese pedido literalmente (mismos productos y cantidades), "
+            "y confirma antes de pasar a crear_pedido."
+        )
+    cita = ctx.get("proxima_cita")
+    if cita:
+        lineas.append(f"Próxima cita: {cita['fecha_iso']} — {cita['title']}.")
+        lineas.append(
+            "Instrucción: si el cliente pregunta por 'su cita' o quiere cambiarla, "
+            "usa este dato antes de llamar a mis_citas."
+        )
+    if len(lineas) == 1:
+        return None
+    lineas.append("</cliente_conocido>")
+    return "\n".join(lineas)
 
 
 # ── Tools expuestas a Claude ───────────────────────────────────────
@@ -121,6 +161,27 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "recordar_cliente",
+        "description": (
+            "Guarda el nombre del cliente en la memoria persistente. ÚSALO en cuanto el "
+            "cliente te diga cómo se llama ('soy Mario', 'me llamo Ana', 'Pedro al habla'). "
+            "Guardarlo permite saludarle por nombre en futuras conversaciones aunque pase el "
+            "tiempo y salga del historial reciente. NO inventes nombres: solo guarda lo que "
+            "el cliente haya declarado explícitamente. Tras llamar esta tool, sigue la "
+            "conversación con normalidad — no confirmes 'he guardado tu nombre', es ruido."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["nombre"],
+            "properties": {
+                "nombre": {
+                    "type": "string",
+                    "description": "Nombre (o nombre + apellido) tal como el cliente lo declaró",
+                },
+            },
+        },
+    },
+    {
         "name": "solicitar_humano",
         "description": (
             "Escala la conversación a un humano del negocio. ÚSALO cuando: (a) el cliente lo "
@@ -154,7 +215,25 @@ async def _ejecutar_tool(
     tenant: TenantContext, tool_name: str, tool_input: dict[str, Any], customer_phone: str
 ) -> str:
     """Ejecuta una tool solicitada por Claude y devuelve el resultado serializable."""
+    # Persistencia oportunista del nombre: cualquier tool que lo reciba lo guarda.
+    # Si la tool falla después, el nombre ya quedó — es info barata que no conviene perder.
+    nombre_oportunista = tool_input.get("customer_name") or (
+        tool_input.get("nombre") if tool_name == "recordar_cliente" else None
+    )
+    if nombre_oportunista and customer_phone:
+        try:
+            await actualizar_nombre_cliente(tenant.id, customer_phone, nombre_oportunista)
+        except Exception:
+            logger.exception(
+                "no se pudo persistir customer_name",
+                extra={"tenant_slug": tenant.slug, "event": "name_persist_error"},
+            )
+
     try:
+        if tool_name == "recordar_cliente":
+            # El UPDATE ya lo hizo el bloque oportunista. Devolvemos ok para Claude.
+            return json.dumps({"ok": True, "saved": bool(nombre_oportunista)})
+
         if tool_name == "crear_pedido":
             order = await crear_pedido(
                 tenant_slug=tenant.slug,
@@ -261,6 +340,20 @@ async def generar_respuesta(
 
     client = _get_client(api_key)
 
+    # Contexto persistente del cliente (nombre + último pedido + próxima cita).
+    # Va como SEGUNDO bloque del system para no invalidar el cache del primero
+    # (que sí es estable por tenant). Si falla, seguimos sin contexto — no bloquea.
+    contexto_bloque: str | None = None
+    if customer_phone:
+        try:
+            ctx = await obtener_contexto_cliente(tenant.id, customer_phone)
+            contexto_bloque = _render_contexto_cliente(ctx)
+        except Exception:
+            logger.exception(
+                "no se pudo cargar contexto persistente del cliente",
+                extra={"tenant_slug": tenant.slug, "event": "ctx_load_error"},
+            )
+
     # El historial ya viene normalizado (role/content). Anthropic content blocks
     # legacy (strings) siguen siendo válidos — aquí los dejamos como user/assistant
     # de texto puro para mantener compatibilidad.
@@ -278,18 +371,23 @@ async def generar_respuesta(
     total_in = 0
     total_out = 0
 
+    system_blocks: list[dict[str, Any]] = [
+        {
+            "type": "text",
+            "text": tenant.system_prompt,
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
+    if contexto_bloque:
+        # Bloque NO cacheado: cambia por usuario y tras cada pedido/cita.
+        system_blocks.append({"type": "text", "text": contexto_bloque})
+
     try:
         for _ in range(MAX_TOOL_ITERATIONS):
             resp = await client.messages.create(
                 model=MODEL_ID,
                 max_tokens=MAX_TOKENS,
-                system=[
-                    {
-                        "type": "text",
-                        "text": tenant.system_prompt,
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ],
+                system=system_blocks,
                 messages=messages,
                 tools=TOOLS,
             )

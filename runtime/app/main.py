@@ -47,7 +47,7 @@ async def lifespan(app: FastAPI):
     await cerrar_pool()
 
 
-app = FastAPI(title="Ordy Chat Runtime", version="1.1.0", lifespan=lifespan)
+app = FastAPI(title="Ordy Chat Runtime", version="1.2.0", lifespan=lifespan)
 
 
 @app.get("/")

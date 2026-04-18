@@ -2,6 +2,7 @@
 
 import os
 import logging
+from typing import Any
 from uuid import UUID
 import asyncpg
 
@@ -95,6 +96,100 @@ async def ya_procesado(tenant_id: UUID, mensaje_id: str) -> bool:
             tenant_id, mensaje_id,
         )
     return inserted is None
+
+
+async def actualizar_nombre_cliente(
+    tenant_id: UUID,
+    phone: str,
+    customer_name: str | None,
+) -> None:
+    """
+    Persiste el nombre del cliente en conversations.customer_name.
+    COALESCE: si ya había un nombre guardado y llega NULL/vacío, NO sobreescribe.
+    Crea la fila si no existe.
+    """
+    if customer_name is not None:
+        customer_name = customer_name.strip()
+        if not customer_name or len(customer_name) > 120:
+            return
+    if not customer_name:
+        return
+    pool = await inicializar_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO conversations (tenant_id, phone, customer_name, last_message_at)
+            VALUES ($1, $2, $3, now())
+            ON CONFLICT (tenant_id, phone)
+            DO UPDATE SET customer_name = COALESCE(EXCLUDED.customer_name, conversations.customer_name)
+            """,
+            tenant_id, phone, customer_name,
+        )
+
+
+async def obtener_contexto_cliente(
+    tenant_id: UUID,
+    phone: str,
+) -> dict[str, Any]:
+    """
+    Devuelve contexto persistente que se inyecta al system prompt:
+      - customer_name: str | None
+      - ultimo_pedido: {fecha, items:[{name,qty}], total_eur} | None (orders pagados últimos 60 días)
+      - proxima_cita: {fecha_iso, title} | None (appointments futuras)
+    Vacío si no hay datos. Barato: 3 queries indexadas.
+    """
+    pool = await inicializar_pool()
+    async with pool.acquire() as conn:
+        nombre_row = await conn.fetchrow(
+            "SELECT customer_name FROM conversations WHERE tenant_id=$1 AND phone=$2",
+            tenant_id, phone,
+        )
+        pedido_row = await conn.fetchrow(
+            """
+            SELECT id, paid_at, total_cents, currency
+            FROM orders
+            WHERE tenant_id=$1 AND customer_phone=$2 AND status='paid'
+              AND paid_at > now() - interval '60 days'
+            ORDER BY paid_at DESC
+            LIMIT 1
+            """,
+            tenant_id, phone,
+        )
+        items: list[dict[str, Any]] = []
+        if pedido_row is not None:
+            item_rows = await conn.fetch(
+                "SELECT name, quantity FROM order_items WHERE order_id=$1 ORDER BY id",
+                pedido_row["id"],
+            )
+            items = [{"name": r["name"], "qty": r["quantity"]} for r in item_rows]
+        cita_row = await conn.fetchrow(
+            """
+            SELECT starts_at, title
+            FROM appointments
+            WHERE tenant_id=$1 AND customer_phone=$2
+              AND status IN ('pending', 'confirmed') AND starts_at > now()
+            ORDER BY starts_at ASC
+            LIMIT 1
+            """,
+            tenant_id, phone,
+        )
+
+    ctx: dict[str, Any] = {}
+    if nombre_row and nombre_row["customer_name"]:
+        ctx["customer_name"] = nombre_row["customer_name"]
+    if pedido_row is not None and items:
+        ctx["ultimo_pedido"] = {
+            "fecha": pedido_row["paid_at"].date().isoformat(),
+            "items": items,
+            "total_eur": round(pedido_row["total_cents"] / 100, 2),
+            "currency": pedido_row["currency"],
+        }
+    if cita_row is not None:
+        ctx["proxima_cita"] = {
+            "fecha_iso": cita_row["starts_at"].isoformat(),
+            "title": cita_row["title"],
+        }
+    return ctx
 
 
 async def guardar_intercambio(
