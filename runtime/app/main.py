@@ -31,6 +31,7 @@ from app.memory import (
     ya_procesado,
 )
 from app.onboarding_scraper import ejecutar_scrape
+from app.validator.runner import ejecutar_validator
 from app.outbound_throttle import esperar_con_warmup, esperar_turno
 from app.providers import MensajeEntrante, obtener_proveedor
 from app.rate_limit import limite_superado
@@ -122,6 +123,72 @@ async def onboarding_scrape_endpoint(request: Request):
     # y que el scrape (~30s) sobreviva aunque el cliente cierre la conexión.
     asyncio.create_task(ejecutar_scrape(job_id, urls))
     return {"status": "accepted", "job_id": str(job_id)}
+
+
+# ────────────────────────────────────────────────────────────
+# /internal/validator/run-seeds — dispara el validador de agentes.
+# Rate-limit 3/hora/tenant solo para triggered_by='admin_manual'.
+# onboarding_auto y autopatch_retry son triggers sistema, sin limit.
+# ────────────────────────────────────────────────────────────
+
+_VALIDATOR_TRIGGERS = {"onboarding_auto", "admin_manual", "autopatch_retry"}
+
+
+@app.post("/internal/validator/run-seeds", status_code=202)
+async def internal_validator_run_seeds(request: Request):
+    _check_internal_secret(request)
+
+    body = await request.json()
+    tenant_id_raw = (body or {}).get("tenant_id")
+    triggered_by = (body or {}).get("triggered_by", "admin_manual")
+
+    if not tenant_id_raw:
+        raise HTTPException(status_code=400, detail="tenant_id requerido")
+    try:
+        tenant_id = UUID(str(tenant_id_raw))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="tenant_id no es UUID")
+    if triggered_by not in _VALIDATOR_TRIGGERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"triggered_by inválido. Permitidos: {sorted(_VALIDATOR_TRIGGERS)}",
+        )
+
+    # Rate-limit SOLO para admin_manual (onboarding_auto/autopatch_retry son sistema).
+    if triggered_by == "admin_manual":
+        pool = await inicializar_pool()
+        async with pool.acquire() as conn:
+            recent = await conn.fetchval(
+                """
+                SELECT count(*)::int
+                FROM validator_runs
+                WHERE tenant_id = $1
+                  AND triggered_by = 'admin_manual'
+                  AND created_at > now() - interval '1 hour'
+                """,
+                tenant_id,
+            )
+        if (recent or 0) >= 3:
+            logger.warning(
+                "validator rate limit",
+                extra={
+                    "event": "validator_rate_limit",
+                    "tenant_id": str(tenant_id),
+                    "recent_manual_runs": recent,
+                },
+            )
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "error": "rate_limit",
+                    "message": "Máximo 3 runs manuales por hora por tenant.",
+                    "retry_after_seconds": 3600,
+                },
+            )
+
+    # Fire-and-forget: el run toma ~40s, no bloquear al caller.
+    asyncio.create_task(ejecutar_validator(tenant_id, triggered_by))
+    return {"status": "accepted", "tenant_id": str(tenant_id), "triggered_by": triggered_by}
 
 
 # ────────────────────────────────────────────────────────────

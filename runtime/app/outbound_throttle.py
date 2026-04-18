@@ -71,12 +71,19 @@ async def esperar_con_warmup(tenant_id: UUID, phone: str) -> dict:
     """
     Wrapper que combina cap diario de warmup + throttle por teléfono.
     Devuelve:
-      - {blocked: False, waited: float}  si paso
+      - {blocked: False, waited: float, tier: str}  si paso
       - {blocked: True, reason: str, cap: int, sent_today: int, tier: str}
         si el warmup bloqueó. El caller decide qué decirle al cliente.
 
     Import diferido para evitar ciclos (warmup → memory → ...).
     """
+    # Validator phone: skip total ANTES de chequear_warmup. El validator usa
+    # brain.generar_respuesta directo sin enviar por WhatsApp, pero si en
+    # algún path llega acá con este phone, no debe bloquear por cap diario
+    # (fixtures controlados, no PII real).
+    if phone.startswith("+00000VALIDATOR"):
+        return {"blocked": False, "waited": 0.0, "tier": "mature"}
+
     from app.warmup import chequear_warmup
     estado = await chequear_warmup(tenant_id)
     if estado["blocked"]:
