@@ -1,0 +1,4 @@
+# Dev dependencies (no deploy a Railway). Instalar con:
+#   source .venv/bin/activate && pip install -r requirements-dev.txt
+pytest>=8.3.0
+pytest-asyncio>=0.24.0
