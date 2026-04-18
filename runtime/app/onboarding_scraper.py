@@ -17,14 +17,61 @@ import os
 from typing import Any
 from uuid import UUID
 
+import httpx
+
 from app.memory import inicializar_pool
 from app.renderer import renderizar
 from app.url_safety import es_url_publica
 
 logger = logging.getLogger("ordychat.onboarding_scraper")
 
-DEFAULT_TIMEOUT_SEC = int(os.getenv("ONBOARDING_SCRAPE_MAX_SEC", "45"))
-PER_URL_TIMEOUT_MS = 25_000
+DEFAULT_TIMEOUT_SEC = int(os.getenv("ONBOARDING_SCRAPE_MAX_SEC", "60"))
+PER_URL_TIMEOUT_MS = 35_000
+
+# Shorteners comunes que hacen 1-N redirects a una URL SPA real.
+# Resolvemos con httpx HEAD antes de Playwright para evitar que el
+# navegador headless reintente cada redirect con networkidle (falla).
+SHORTLINK_HOSTS = (
+    "share.google",
+    "goo.gl",
+    "maps.app.goo.gl",
+    "bit.ly",
+    "t.co",
+    "tinyurl.com",
+    "ow.ly",
+    "lnkd.in",
+    "fb.me",
+    "amzn.to",
+    "wa.me",
+)
+
+
+async def _expandir_shortlink(url: str) -> str:
+    """Sigue redirects HTTP (hasta 5) para resolver URL final sin Playwright.
+
+    No lanza — si falla, devuelve la URL original y Playwright lo intentará.
+    """
+    try:
+        from urllib.parse import urlparse
+
+        host = (urlparse(url).hostname or "").lower()
+        if not any(host == h or host.endswith("." + h) for h in SHORTLINK_HOSTS):
+            return url
+        async with httpx.AsyncClient(follow_redirects=True, timeout=6.0) as client:
+            r = await client.head(url, headers={"User-Agent": "OrdyChatBot/1.0"})
+            final = str(r.url)
+            if final and final != url:
+                logger.info(
+                    "shortlink expandido",
+                    extra={"event": "scrape_shortlink", "from": url, "to": final[:200]},
+                )
+                return final
+    except Exception as e:
+        logger.warning(
+            "expand shortlink fallido, caemos a original",
+            extra={"event": "scrape_shortlink_fail", "url": url, "reason": str(e)[:120]},
+        )
+    return url
 
 
 async def ejecutar_scrape(job_id: UUID, urls: dict[str, str | None]) -> None:
@@ -119,7 +166,10 @@ async def _scrape_paralelo(urls: dict[str, str | None]) -> list[dict[str, Any]]:
 
 async def _scrape_una(origin: str, url: str) -> dict[str, Any]:
     """Scrape individual. Nunca lanza — captura toda excepción como source.ok=False."""
-    ok, reason = await es_url_publica(url)
+    # Expande shortlinks (share.google, bit.ly, etc.) antes de Playwright.
+    url_real = await _expandir_shortlink(url)
+
+    ok, reason = await es_url_publica(url_real)
     if not ok:
         logger.warning(
             "url rechazada por SSRF guard",
@@ -128,13 +178,13 @@ async def _scrape_una(origin: str, url: str) -> dict[str, Any]:
         return {"origin": origin, "url": url, "ok": False, "error": f"ssrf_blocked: {reason}"}
 
     try:
-        result = await renderizar(url, PER_URL_TIMEOUT_MS)
+        result = await renderizar(url_real, PER_URL_TIMEOUT_MS)
         return {
             "origin": origin,
             "url": url,
             "ok": True,
             "html": result.get("html", ""),
-            "final_url": result.get("url", url),
+            "final_url": result.get("url", url_real),
         }
     except Exception as e:
         return {

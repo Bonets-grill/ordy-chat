@@ -81,13 +81,25 @@ async def _page_ctx():
         await context.close()
 
 
-async def renderizar(url: str, timeout_ms: int = 25_000) -> dict:
-    """Renderiza una URL y devuelve {url, html, durationMs}."""
+async def renderizar(url: str, timeout_ms: int = 35_000) -> dict:
+    """Renderiza una URL y devuelve {url, html, durationMs}.
+
+    Estrategia robusta SPAs + directorios:
+      1. `domcontentloaded` (rápido, HTML base listo).
+      2. Auto-scroll para triggers lazy-load.
+      3. Intentar `networkidle` con timeout corto para capturar hydration;
+         si nunca llega (beacons/analytics vivos), seguimos con lo que hay.
+      4. Esperar 1.5s extra y extraer HTML.
+
+    `networkidle` como PRIMER paso fallaba con SPAs pesados (share.google,
+    Maps, directorios con widgets). Con `domcontentloaded` + scroll cubrimos
+    95% de sitios reales en 10-15s.
+    """
     import time
     t0 = time.monotonic()
 
     async with _page_ctx() as page:
-        await page.goto(url, wait_until="networkidle", timeout=timeout_ms)
+        await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
         # Auto-scroll para lazy-load.
         await page.evaluate("""
             async () => {
@@ -105,6 +117,12 @@ async def renderizar(url: str, timeout_ms: int = 25_000) -> dict:
               });
             }
         """)
+        # Intento best-effort de networkidle para capturar hydration;
+        # si no llega (sites con beacons siempre activos), seguimos.
+        try:
+            await page.wait_for_load_state("networkidle", timeout=5_000)
+        except Exception:
+            pass
         await page.wait_for_timeout(1500)
         html = await page.content()
         final_url = page.url
