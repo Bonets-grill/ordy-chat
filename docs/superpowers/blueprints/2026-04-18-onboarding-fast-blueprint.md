@@ -59,10 +59,10 @@ web/app/onboarding/fast/components/url-input.tsx
 web/app/onboarding/fast/components/scraping-spinner.tsx
 web/app/onboarding/fast/components/conflict-resolver.tsx
 web/app/onboarding/fast/components/qr-display.tsx
-web/tests/onboarding-fast/canonical.test.ts
-web/tests/onboarding-fast/sanitize.test.ts
-web/tests/onboarding-fast/merger.test.ts
-web/tests/onboarding-fast/provision.test.ts
+web/tests/unit/onboarding-fast/canonical.test.ts
+web/tests/unit/onboarding-fast/sanitize.test.ts
+web/tests/unit/onboarding-fast/merger.test.ts
+web/tests/unit/onboarding-fast/provision.test.ts
 web/promptfoo/merger.eval.yaml
 web/e2e/onboarding-fast.spec.ts
 runtime/app/onboarding_scraper.py
@@ -70,8 +70,8 @@ runtime/app/warmup.py
 runtime/app/url_safety.py
 runtime/tests/test_warmup.py
 runtime/tests/test_url_safety.py
-web/tests/onboarding-fast/scrapers.test.ts
-web/tests/onboarding-fast/routes.test.ts
+web/tests/unit/onboarding-fast/scrapers.test.ts
+web/tests/unit/onboarding-fast/routes.test.ts
 web/app/api/cron/evolution-health/route.ts
 ```
 
@@ -224,16 +224,16 @@ phase_contract:
   - Trunc a `maxChars`.
   - Regex strip: `/ignore\s+(all|previous|the above)/gi`, `/system\s*:/gi`, `/you\s+are\s+now/gi`, `/<\|[^|]*\|>/g`, `/\[INST\]/gi`, `/```[\s\S]*?```/g` (code fences).
   - Log a `audit_log(action='prompt_injection_blocked', metadata={pattern, snippet})` cuando detecta.
-- `web/tests/onboarding-fast/canonical.test.ts` — roundtrip Zod + casos inválidos.
-- `web/tests/onboarding-fast/sanitize.test.ts` — 15 fixtures prompt injection.
+- `web/tests/unit/onboarding-fast/canonical.test.ts` — roundtrip Zod + casos inválidos.
+- `web/tests/unit/onboarding-fast/sanitize.test.ts` — 15 fixtures prompt injection.
 
 ```yaml
 phase_contract:
   id: fase-2-canonical-sanitize
   asserts:
-    - "cd web && pnpm vitest run tests/onboarding-fast/canonical.test.ts tests/onboarding-fast/sanitize.test.ts"
+    - "cd web && pnpm vitest run tests/unit/onboarding-fast/canonical.test.ts tests/unit/onboarding-fast/sanitize.test.ts"
     - "cd web && pnpm typecheck"
-  rollback: "rm -rf web/lib/onboarding-fast web/tests/onboarding-fast"
+  rollback: "rm -rf web/lib/onboarding-fast web/tests/unit/onboarding-fast"
 ```
 
 ---
@@ -267,7 +267,7 @@ export async function createTenantFromCanonical(input: ProvisionInput): Promise<
 phase_contract:
   id: fase-3-provision-refactor
   asserts:
-    - "cd web && pnpm vitest run tests/onboarding-fast/provision.test.ts"
+    - "cd web && pnpm vitest run tests/unit/onboarding-fast/provision.test.ts"
     - "cd web && pnpm typecheck"
     - "cd web && pnpm test:e2e --grep 'onboarding tradicional sigue funcionando' || echo 'skip si no hay e2e aún'"
   rollback: "git checkout HEAD -- web/app/api/onboarding/route.ts web/lib/onboarding-fast/provision.ts"
@@ -342,7 +342,7 @@ async def ejecutar_scrape(job_id: UUID, urls: dict[str, str]) -> None:
 phase_contract:
   id: fase-4-scrapers-google-tripadvisor
   asserts:
-    - "cd web && pnpm vitest run tests/onboarding-fast/scrapers.test.ts"
+    - "cd web && pnpm vitest run tests/unit/onboarding-fast/scrapers.test.ts"
     - "cd web && pnpm typecheck"
     - "cd runtime && source .venv/bin/activate && pytest tests/test_url_safety.py -v"
     - "cd runtime && source .venv/bin/activate && python -c 'from app.url_safety import es_url_publica; import asyncio; assert asyncio.run(es_url_publica(\"http://169.254.169.254/\"))[0] is False, \"SSRF guard rota\"'"
@@ -385,7 +385,7 @@ export async function mergeFuentes(input: MergerInput): Promise<MergerOutput>;
 phase_contract:
   id: fase-5-merger-llm
   asserts:
-    - "cd web && pnpm vitest run tests/onboarding-fast/merger.test.ts"
+    - "cd web && pnpm vitest run tests/unit/onboarding-fast/merger.test.ts"
     - "cd web && npx promptfoo eval -c promptfoo/merger.eval.yaml --pass-threshold 0.9"
     - "cd web && pnpm typecheck"
   rollback: "rm web/lib/onboarding-fast/merger.ts web/promptfoo/merger.eval.yaml"
@@ -442,7 +442,7 @@ phase_contract:
   id: fase-6-api-routes
   asserts:
     - "cd web && pnpm typecheck"
-    - "cd web && pnpm vitest run tests/onboarding-fast/routes.test.ts"
+    - "cd web && pnpm vitest run tests/unit/onboarding-fast/routes.test.ts"
     - "cd web && pnpm dev & sleep 8 && curl -s -X POST localhost:3000/api/onboarding/fast/start -H 'Content-Type: application/json' -d '{\"urls\":{\"website\":\"https://example.com\"}}' | jq -e '.job_id' && pkill -f 'next dev'"
     - "cd runtime && source .venv/bin/activate && uvicorn app.main:app --port 8001 & sleep 5 && curl -s -X POST localhost:8001/onboarding/scrape -H 'x-internal-secret: test' -d '{}' -w '%{http_code}' | grep -E '(403|400)' && pkill -f uvicorn"
   rollback: "git checkout HEAD -- web/app/api/onboarding/fast runtime/app/onboarding_scraper.py runtime/app/main.py"
