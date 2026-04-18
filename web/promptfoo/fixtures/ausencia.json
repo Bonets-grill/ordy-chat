@@ -1,0 +1,14 @@
+[
+  {
+    "origen": "website",
+    "datos": { "name": "Clínica Sonrisa", "phone": "+34 911 222 333" }
+  },
+  {
+    "origen": "google",
+    "datos": { "name": "Clínica Sonrisa", "rating": 4.8 }
+  },
+  {
+    "origen": "tripadvisor",
+    "datos": { "name": "Clínica Sonrisa" }
+  }
+]

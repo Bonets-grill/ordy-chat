@@ -1,0 +1,10 @@
+[
+  {
+    "origen": "website",
+    "datos": { "name": "Restaurante El Mar", "phone": "+34 912 345 678", "email": "info@elmar.es" }
+  },
+  {
+    "origen": "google",
+    "datos": { "name": "Restaurante El Mar", "phone": "+34912345678", "email": "INFO@ELMAR.ES" }
+  }
+]

@@ -1,0 +1,20 @@
+[
+  {
+    "origen": "website",
+    "datos": {
+      "name": "La Taberna del Puerto",
+      "phone": "+34 912 345 678",
+      "hours": "L-V 12:00-23:00"
+    }
+  },
+  {
+    "origen": "google",
+    "datos": {
+      "name": "La Taberna del Puerto",
+      "phone": "+34 912 345 678",
+      "hours": "L-V 12:00-23:00",
+      "rating": 4.6,
+      "reviews_count": 1234
+    }
+  }
+]

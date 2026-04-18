@@ -1,0 +1,10 @@
+[
+  {
+    "origen": "website",
+    "datos": { "name": "Bar Sol", "hours": "L-V 9:00-18:00" }
+  },
+  {
+    "origen": "google",
+    "datos": { "name": "Bar Sol", "hours": "L-D 10:00-22:00" }
+  }
+]
