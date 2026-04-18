@@ -10,6 +10,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { agentConfigs, orderItems, orders, tenants } from "@/lib/db/schema";
 import { stripeClient } from "@/lib/stripe";
+import { computeTotals as computeTotalsImpl } from "@/lib/tax/compute";
 
 export type OrderItemInput = {
   name: string;
@@ -37,33 +38,36 @@ export type OrderTotals = {
 };
 
 /**
- * Calcula subtotal, IVA y total a partir de las líneas. Todos los cents.
- * IVA por línea, pero se reporta como total agregado.
+ * @deprecated wrapper legacy. Usa `lib/tax/compute.computeTotals` directamente.
+ * Mantengo esta firma para no romper callers externos, pero ahora delega al
+ * nuevo motor que respeta `pricesIncludeTax`. Asume PVP (tax-inclusive).
  */
-export function computeTotals(items: OrderItemInput[], defaultVatRate: number): OrderTotals {
-  let subtotal = 0;
-  let vat = 0;
-  for (const item of items) {
-    const lineTotal = item.quantity * item.unitPriceCents;
-    const rate = (item.vatRate ?? defaultVatRate) / 100;
-    const lineVat = Math.round(lineTotal * rate);
-    subtotal += lineTotal;
-    vat += lineVat;
-  }
-  return { subtotalCents: subtotal, vatCents: vat, totalCents: subtotal + vat };
+export function computeTotals(items: OrderItemInput[], defaultTaxRate: number): OrderTotals {
+  const r = computeTotalsImpl(
+    items.map((i) => ({ quantity: i.quantity, unitPriceCents: i.unitPriceCents, taxRate: i.vatRate })),
+    { pricesIncludeTax: true, defaultRate: defaultTaxRate },
+  );
+  return { subtotalCents: r.subtotalCents, vatCents: r.taxCents, totalCents: r.totalCents };
 }
 
 /** Crea un pedido en estado `pending` con sus líneas. Transaccional. */
 export async function createOrder(input: CreateOrderInput) {
   const [tenant] = await db
-    .select({ defaultVatRate: tenants.defaultVatRate, currency: tenants.billingCountry })
+    .select({
+      taxRateStandard: tenants.taxRateStandard,
+      pricesIncludeTax: tenants.pricesIncludeTax,
+      taxLabel: tenants.taxLabel,
+    })
     .from(tenants)
     .where(eq(tenants.id, input.tenantId))
     .limit(1);
   if (!tenant) throw new Error("tenant_not_found");
 
-  const defaultVat = parseFloat(tenant.defaultVatRate ?? "10.00");
-  const totals = computeTotals(input.items, defaultVat);
+  const defaultRate = parseFloat(tenant.taxRateStandard ?? "10.00");
+  const totals = computeTotalsImpl(
+    input.items.map((i) => ({ quantity: i.quantity, unitPriceCents: i.unitPriceCents, taxRate: i.vatRate })),
+    { pricesIncludeTax: tenant.pricesIncludeTax ?? true, defaultRate },
+  );
 
   const [order] = await db
     .insert(orders)
@@ -74,7 +78,9 @@ export async function createOrder(input: CreateOrderInput) {
       tableNumber: input.tableNumber,
       notes: input.notes,
       subtotalCents: totals.subtotalCents,
-      vatCents: totals.vatCents,
+      // Durante la ventana de transición escribimos ambos iguales. vat_cents queda DEPRECATED.
+      vatCents: totals.taxCents,
+      taxCents: totals.taxCents,
       totalCents: totals.totalCents,
       currency: "EUR",
     })
@@ -84,13 +90,18 @@ export async function createOrder(input: CreateOrderInput) {
     await db.insert(orderItems).values(
       input.items.map((it) => {
         const lineTotal = it.quantity * it.unitPriceCents;
+        const rateStr = String((it.vatRate ?? defaultRate).toFixed(2));
         return {
           orderId: order.id,
           tenantId: input.tenantId,
           name: it.name,
           quantity: it.quantity,
           unitPriceCents: it.unitPriceCents,
-          vatRate: String((it.vatRate ?? defaultVat).toFixed(2)),
+          // Doble escritura durante transición. Cuando droppemos vat_rate (migración 010+),
+          // quedará solo taxRate.
+          vatRate: rateStr,
+          taxRate: rateStr,
+          taxLabel: tenant.taxLabel ?? "IVA",
           lineTotalCents: lineTotal,
           notes: it.notes,
         };
@@ -162,20 +173,19 @@ export async function createPaymentLink(orderId: string, baseUrl: string): Promi
     session = await stripe.checkout.sessions.create({
     mode: "payment",
     payment_method_types: ["card"],
-    line_items: lines.map((ln) => {
-      const unitWithVat = Math.round(ln.unitPriceCents * (1 + parseFloat(ln.vatRate) / 100));
-      return {
-        price_data: {
-          currency: order.currency.toLowerCase(),
-          product_data: {
-            name: ln.name,
-            ...(ln.notes ? { description: ln.notes } : {}),
-          },
-          unit_amount: unitWithVat,
+    line_items: lines.map((ln) => ({
+      // unitPriceCents ya es el PVP final al cliente (con tax si el tenant tiene
+      // pricesIncludeTax=true). NO añadimos tax encima — eso causaría double-tax.
+      price_data: {
+        currency: order.currency.toLowerCase(),
+        product_data: {
+          name: ln.name,
+          ...(ln.notes ? { description: ln.notes } : {}),
         },
-        quantity: ln.quantity,
-      };
-    }),
+        unit_amount: ln.unitPriceCents,
+      },
+      quantity: ln.quantity,
+    })),
     success_url: `${baseUrl}/pay/thanks?order=${order.id}`,
     cancel_url: `${baseUrl}/pay/canceled?order=${order.id}`,
     metadata: {
