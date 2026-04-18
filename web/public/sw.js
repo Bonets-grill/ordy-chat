@@ -1,28 +1,140 @@
-// web/public/sw.js — kill-switch stub.
+// web/public/sw.js — Service Worker v1 (Sprint 4 F4.1).
 //
-// Cualquier service worker legacy cacheado en iPhones/PWAs antiguos busca
-// /sw.js y se queda en bucle si devolvemos 404. Este stub se activa una sola
-// vez, se auto-desinstala, y fuerza reload de todas las pestañas abiertas.
-// Sprint 4 (Capacitor + PWA) lo reemplazará por un SW real con cache v1+.
+// Estrategias por tipo de request:
+//   - Shell HTML (/, /signin, /dashboard…):  cache-first con Stale-While-Revalidate.
+//   - Assets _next/static + /icon-*.png:     cache-first largo.
+//   - APIs (/api/*):                          network-only (nunca cachear).
+//   - SSE / streaming (accept: text/event-stream): bypass total.
+//   - Otras (POST, PATCH, DELETE):            network-only.
 //
-// No cachea nada, no intercepta fetch — es solo una pieza de "limpieza".
+// CACHE_VERSION cambia cada deploy (string versionada). Cuando se activa una
+// versión nueva, se barren los caches con prefijo "ordy-" que no coincidan.
+// skipWaiting + clients.claim permite update inmediato sin que el usuario
+// tenga que cerrar pestañas.
 
-self.addEventListener("install", () => {
-  self.skipWaiting();
+const CACHE_VERSION = "ordy-v1-2026-04-18";
+const SHELL_CACHE = `${CACHE_VERSION}-shell`;
+const ASSETS_CACHE = `${CACHE_VERSION}-assets`;
+
+const SHELL_URLS = ["/", "/signin", "/pricing", "/privacy", "/terms"];
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    (async () => {
+      const cache = await caches.open(SHELL_CACHE);
+      try {
+        await cache.addAll(SHELL_URLS);
+      } catch {
+        // Si alguna URL falla en install, no bloquear. Se cacheará on-fetch.
+      }
+      await self.skipWaiting();
+    })(),
+  );
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
-      await self.registration.unregister();
-      const clients = await self.clients.matchAll({ type: "window" });
-      for (const client of clients) {
-        try {
-          client.navigate(client.url);
-        } catch {
-          // Ignora navegación bloqueada por CSP/COOP.
-        }
-      }
+      // Limpia caches viejos (cualquier "ordy-" que no sea la versión actual).
+      const keys = await caches.keys();
+      await Promise.all(
+        keys
+          .filter((k) => k.startsWith("ordy-") && !k.startsWith(CACHE_VERSION))
+          .map((k) => caches.delete(k)),
+      );
+      await self.clients.claim();
     })(),
   );
+});
+
+function isAssetRequest(url) {
+  return (
+    url.pathname.startsWith("/_next/static/") ||
+    url.pathname.startsWith("/icons/") ||
+    /^\/(icon|apple-touch-icon)[-_a-z0-9]*\.(png|ico|svg)$/i.test(url.pathname)
+  );
+}
+
+function isApiRequest(url) {
+  return url.pathname.startsWith("/api/");
+}
+
+function isHtmlRequest(request, url) {
+  const accept = request.headers.get("accept") ?? "";
+  return (
+    request.mode === "navigate" ||
+    (accept.includes("text/html") && url.origin === self.location.origin)
+  );
+}
+
+async function staleWhileRevalidate(request, cacheName) {
+  const cache = await caches.open(cacheName);
+  const cached = await cache.match(request);
+  const networkPromise = fetch(request)
+    .then((res) => {
+      if (res && res.ok && res.type !== "opaque") {
+        cache.put(request, res.clone()).catch(() => {});
+      }
+      return res;
+    })
+    .catch(() => null);
+  return cached || (await networkPromise) || new Response("offline", { status: 503 });
+}
+
+self.addEventListener("fetch", (event) => {
+  const { request } = event;
+  const url = new URL(request.url);
+
+  // Solo mismo origen. Third-party (fonts CDN, etc.) pasa sin tocar.
+  if (url.origin !== self.location.origin) return;
+
+  // Nunca cachear streaming (SSE/chat en tiempo real).
+  const accept = request.headers.get("accept") ?? "";
+  if (accept.includes("text/event-stream")) return;
+
+  // Mutaciones: network-only (POST/PUT/PATCH/DELETE).
+  if (request.method !== "GET") return;
+
+  // APIs: network-only.
+  if (isApiRequest(url)) return;
+
+  // Assets estáticos: cache-first largo.
+  if (isAssetRequest(url)) {
+    event.respondWith(
+      (async () => {
+        const cache = await caches.open(ASSETS_CACHE);
+        const cached = await cache.match(request);
+        if (cached) return cached;
+        try {
+          const res = await fetch(request);
+          if (res && res.ok) cache.put(request, res.clone()).catch(() => {});
+          return res;
+        } catch {
+          return new Response("offline", { status: 503 });
+        }
+      })(),
+    );
+    return;
+  }
+
+  // Shell HTML: stale-while-revalidate.
+  if (isHtmlRequest(request, url)) {
+    event.respondWith(staleWhileRevalidate(request, SHELL_CACHE));
+    return;
+  }
+
+  // Resto: network con cache fallback.
+  event.respondWith(
+    fetch(request).catch(async () => {
+      const cache = await caches.open(SHELL_CACHE);
+      return (await cache.match(request)) || new Response("offline", { status: 503 });
+    }),
+  );
+});
+
+// Canal update: cliente puede mandar {type:"SKIP_WAITING"} para forzar takeover.
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
 });
