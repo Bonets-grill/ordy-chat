@@ -5,6 +5,11 @@
   "installCommand": "pnpm install --frozen-lockfile",
   "outputDirectory": ".next",
   "regions": ["fra1"],
+  "crons": [
+    { "path": "/api/cron/evolution-health", "schedule": "*/10 * * * *" },
+    { "path": "/api/cron/onboarding-reap", "schedule": "* * * * *" },
+    { "path": "/api/cron/onboarding-purge", "schedule": "0 3 * * *" }
+  ],
   "headers": [
     {
       "source": "/(.*)",

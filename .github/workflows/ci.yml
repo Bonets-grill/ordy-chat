@@ -33,6 +33,9 @@ jobs:
 
       - run: pnpm typecheck
 
+      - name: Unit tests (vitest)
+        run: pnpm test:unit
+
       - run: pnpm build
         env:
           DATABASE_URL: postgresql://stub:stub@stub.example.com/stub?sslmode=require
@@ -56,7 +59,7 @@ jobs:
           cache: pip
           cache-dependency-path: runtime/requirements.txt
 
-      - run: pip install -r requirements.txt
+      - run: pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Syntax check
         run: python -c "import ast, pathlib; [ast.parse(p.read_text()) for p in pathlib.Path('app').rglob('*.py')]"
@@ -66,7 +69,10 @@ jobs:
           DATABASE_URL: postgresql://stub:stub@stub.example.com/stub?sslmode=require
           ENCRYPTION_KEY: 0000000000000000000000000000000000000000000=
           ANTHROPIC_API_KEY: sk-ant-stub
-        run: python -c "from app import main, brain, memory, tenants, crypto, rate_limit, logging_config, renderer, ordering, outbound_throttle, agent_tools; from app.providers import whapi, meta, twilio, evolution; print('imports ok')"
+        run: python -c "from app import main, brain, memory, tenants, crypto, rate_limit, logging_config, renderer, ordering, outbound_throttle, agent_tools, url_safety, warmup, onboarding_scraper; from app.providers import whapi, meta, twilio, evolution; print('imports ok')"
+
+      - name: Unit tests (pytest)
+        run: pytest tests/ -v
 
   e2e:
     name: e2e — playwright

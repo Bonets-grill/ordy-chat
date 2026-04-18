@@ -151,6 +151,28 @@ async def internal_jobs_reap(request: Request):
 
 
 # ────────────────────────────────────────────────────────────
+# /internal/jobs/purge-results — retention RGPD. Vercel Cron diario.
+# Limpia result_json de onboarding_jobs > 30 días para minimizar PII.
+# ────────────────────────────────────────────────────────────
+
+@app.get("/internal/jobs/purge-results")
+async def internal_jobs_purge_results(request: Request):
+    _check_internal_secret(request)
+
+    pool = await inicializar_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            """
+            UPDATE onboarding_jobs
+            SET result_json = NULL, updated_at = now()
+            WHERE result_json IS NOT NULL
+              AND created_at < now() - interval '30 days'
+            """
+        )
+    return {"status": "ok", "purged": result}
+
+
+# ────────────────────────────────────────────────────────────
 # /internal/health/evolution-all — healthcheck de instancias Evolution.
 # Llamado cada 10 min desde Vercel Cron. Marca burned=true las que caen.
 # ────────────────────────────────────────────────────────────
