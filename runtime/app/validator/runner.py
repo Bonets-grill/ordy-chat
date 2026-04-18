@@ -19,7 +19,7 @@ import logging
 import os
 import time
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 import httpx
@@ -55,6 +55,46 @@ async def _resolver_slug(tenant_id: UUID) -> str | None:
         return await conn.fetchval(
             "SELECT slug FROM tenants WHERE id = $1", tenant_id,
         )
+
+
+async def _resolver_validation_mode(
+    tenant_id: UUID,
+) -> Literal["auto", "manual", "skip"]:
+    """Resuelve modo efectivo de validación. Sprint 3 validador-ui F6.
+
+    Orden de precedencia:
+      1. agent_configs.validation_mode (override por tenant).
+      2. platform_settings 'flag.validation_mode_default' (flag global).
+      3. Fallback 'skip' (seguro por defecto).
+    """
+    pool = await inicializar_pool()
+    async with pool.acquire() as conn:
+        override = await conn.fetchval(
+            "SELECT validation_mode FROM agent_configs WHERE tenant_id = $1",
+            tenant_id,
+        )
+    if override in ("auto", "manual", "skip"):
+        return override  # type: ignore[return-value]
+
+    # Flag global cifrada en platform_settings.
+    async with pool.acquire() as conn:
+        raw = await conn.fetchval(
+            "SELECT value_encrypted FROM platform_settings "
+            "WHERE key = 'flag.validation_mode_default'",
+        )
+    if raw:
+        try:
+            from app.crypto import descifrar  # import diferido
+
+            parsed = json.loads(descifrar(raw))
+            if parsed in ("auto", "manual", "skip"):
+                return parsed  # type: ignore[return-value]
+        except Exception:
+            logger.warning(
+                "flag validation_mode_default corrupta, fallback skip",
+                extra={"event": "validator_flag_corrupt"},
+            )
+    return "skip"
 
 
 def _evaluar_verdict(asserts_result: dict[str, bool], scores: dict[str, int]) -> str:
@@ -288,6 +328,21 @@ async def ejecutar_validator(
             )
             return None
 
+        # 1bis. Resolver validation_mode efectivo (Sprint 3 F6).
+        # 'skip' corta al inicio salvo que el admin lo haya disparado a mano.
+        effective_mode = await _resolver_validation_mode(tenant_id)
+        if effective_mode == "skip" and triggered_by != "admin_manual":
+            logger.info(
+                "validator skip por modo efectivo",
+                extra={
+                    "event": "validator_mode_skip",
+                    "tenant_id": str(tenant_id),
+                    "tenant_slug": slug,
+                    "triggered_by": triggered_by,
+                },
+            )
+            return None
+
         tenant = await cargar_tenant_por_slug(slug)
         api_key = await obtener_anthropic_api_key(tenant.credentials)
 
@@ -330,7 +385,15 @@ async def ejecutar_validator(
         previous_prompt = None
         paused_by_this_run = False
 
-        if status == "fail" and triggered_by != "autopatch_retry":
+        # Gate F6: autopatch SOLO en modo 'auto'. 'manual' nunca dispara
+        # autopatch (humano decide) y 'admin_manual' en modo manual tampoco.
+        autopatch_allowed = effective_mode == "auto"
+
+        if (
+            autopatch_allowed
+            and status == "fail"
+            and triggered_by != "autopatch_retry"
+        ):
             fails_for_patch = [
                 {
                     "seed_text": r["seed_text"],
@@ -374,7 +437,23 @@ async def ejecutar_validator(
                 # Recursive run con triggered_by='autopatch_retry'
                 return await ejecutar_validator(tenant_id, triggered_by="autopatch_retry")
 
-        # 7. Si es autopatch_retry y sigue fail → pause + notify
+        # 6bis. GATE F6: en modo 'manual', cualquier fail se degrada a 'review'
+        # para bloquear el pause + notify-fail + autopatch del paso 7. El
+        # humano decide desde la UI admin. Aplicar ANTES de cualquier efecto
+        # lateral (pause/notify) que el bloque 7 pudiera causar.
+        if effective_mode == "manual" and status == "fail":
+            logger.info(
+                "gate manual: fail → review",
+                extra={
+                    "event": "validator_manual_gate_downgrade",
+                    "run_id": str(run_id),
+                    "tenant_id": str(tenant_id),
+                },
+            )
+            status = "review"
+
+        # 7. Si es autopatch_retry y sigue fail → pause + notify.
+        # El gate F6 ya garantiza que 'manual' NUNCA llega aquí como 'fail'.
         if status == "fail" and triggered_by == "autopatch_retry":
             await marcar_agente_pausado(tenant_id, razon="validator_fail_post_autopatch")
             paused_by_this_run = True
