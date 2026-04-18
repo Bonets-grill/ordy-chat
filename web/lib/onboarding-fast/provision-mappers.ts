@@ -18,6 +18,13 @@ export type ProvisionInput = {
   knowledgeText?: string;
   agentName?: string;
   schedule?: string;
+  /** Contexto para resolver atribución reseller (migración 012). Si ausente → venta directa. */
+  attributionContext?: {
+    refCookieValue: string | null;
+    ipHash: string | null;
+    userAgent: string | null;
+    signupEmail: string;
+  };
 };
 
 export type ProvisionResult = {

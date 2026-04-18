@@ -1,5 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { CapacitorBridge } from "@/components/capacitor-bridge";
+import { CookieConsent } from "@/components/cookie-consent";
+import { RefTracker } from "@/components/ref-tracker";
 import { RegisterSW } from "@/components/register-sw";
 import "./globals.css";
 import { Providers } from "./providers";
@@ -43,6 +45,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <CapacitorBridge />
         <RegisterSW />
         <Providers>{children}</Providers>
+        <CookieConsent />
+        <RefTracker />
       </body>
     </html>
   );
