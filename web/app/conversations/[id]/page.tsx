@@ -42,11 +42,11 @@ export default async function ConversationDetailPage({ params }: { params: Promi
         <Badge tone="muted">Inicio: {new Date(conv.createdAt).toLocaleDateString("es-ES")}</Badge>
       </div>
 
-      <Card>
-        <CardHeader>
+      <Card className="flex flex-col overflow-hidden" style={{ height: "calc(100vh - 16rem)" }}>
+        <CardHeader className="flex-shrink-0 border-b border-neutral-100">
           <CardTitle>Historial</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="flex-1 overflow-y-auto overscroll-contain p-4">
           <div className="space-y-3">
             {msgs.map((m) => (
               <div key={m.id} className={`flex ${m.role === "assistant" ? "justify-start" : "justify-end"}`}>
