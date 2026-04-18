@@ -69,6 +69,18 @@ export async function limitByUserOnboarding(userId: string): Promise<{ ok: true 
   return r.success ? { ok: true } : { ok: false, reset: r.reset };
 }
 
+export async function limitByTenantValidatorManual(
+  tenantId: string,
+): Promise<{ ok: true } | { ok: false; reset: number }> {
+  // Sprint 3 validador-ui F5: 3 runs manuales por hora por tenant.
+  // Defensa en profundidad: el runtime Sprint 2 F8 ya rechaza 429, pero
+  // evitamos el round-trip inútil desde server action.
+  const rl = limiter("validator-manual", 3, "1 h");
+  if (!rl) return { ok: true };
+  const r = await rl.limit(tenantId);
+  return r.success ? { ok: true } : { ok: false, reset: r.reset };
+}
+
 /** Devuelve true si Upstash está configurado (útil para logs/health). */
 export function rateLimitConfigured(): boolean {
   return Boolean(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);
