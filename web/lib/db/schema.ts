@@ -4,6 +4,7 @@ import {
   bigint,
   bigserial,
   boolean,
+  date,
   integer,
   jsonb,
   numeric,
@@ -13,6 +14,7 @@ import {
   timestamp,
   unique,
   uuid,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 
 // ── Users / Auth.js ─────────────────────────────────────────
@@ -87,6 +89,8 @@ export const tenants = pgTable("tenants", {
   taxRateStandard: numeric("tax_rate_standard", { precision: 5, scale: 2 }).notNull().default("10.00"),
   taxRateAlcohol: numeric("tax_rate_alcohol", { precision: 5, scale: 2 }).notNull().default("21.00"),
   taxLabel: text("tax_label").notNull().default("IVA"),
+  // Reseller program (migración 012) — NULL = venta directa Ordy, no atribuido a reseller.
+  resellerId: uuid("reseller_id").references((): AnyPgColumn => resellers.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -414,3 +418,129 @@ export type ValidatorRun = typeof validatorRuns.$inferSelect;
 export type NewValidatorRun = typeof validatorRuns.$inferInsert;
 export type ValidatorMessage = typeof validatorMessages.$inferSelect;
 export type NewValidatorMessage = typeof validatorMessages.$inferInsert;
+
+// ── Reseller program (migración 012) ────────────────────────
+// Stripe Connect único rail de payout v1. Sin white-label visual.
+// 3 tax strategies pluggable: es / eu-vat / fallback.
+
+export const resellers = pgTable("resellers", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().unique().references(() => users.id, { onDelete: "restrict" }),
+  slug: text("slug").notNull().unique(),
+  brandName: text("brand_name").notNull(),
+  commissionRate: numeric("commission_rate", { precision: 5, scale: 4 }).notNull().default("0.2500"),
+  status: text("status").notNull().default("pending"),
+  stripeConnectAccountId: text("stripe_connect_account_id").unique(),
+  stripeConnectStatus: text("stripe_connect_status").notNull().default("pending"),
+  stripeConnectPayoutsEnabled: boolean("stripe_connect_payouts_enabled").notNull().default(false),
+  stripeConnectChargesEnabled: boolean("stripe_connect_charges_enabled").notNull().default(false),
+  countryCode: text("country_code").notNull(),
+  taxStrategy: text("tax_strategy").notNull().default("fallback"),
+  payoutCurrency: text("payout_currency").notNull().default("EUR"),
+  legalName: text("legal_name"),
+  taxId: text("tax_id"),
+  taxIdType: text("tax_id_type"),
+  fiscalSubProfile: text("fiscal_sub_profile"),
+  iaeRegistered: boolean("iae_registered").notNull().default(false),
+  billingAddress: jsonb("billing_address"),
+  commissionDebtCents: integer("commission_debt_cents").notNull().default(0),
+  selfBillingConsentedAt: timestamp("self_billing_consented_at", { withTimezone: true }),
+  selfBillingAgreementVersion: text("self_billing_agreement_version"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const refTouches = pgTable(
+  "ref_touches",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    resellerId: uuid("reseller_id").notNull().references(() => resellers.id, { onDelete: "restrict" }),
+    anonId: text("anon_id").notNull(),
+    ipHash: text("ip_hash").notNull(),
+    userAgent: text("user_agent"),
+    utmSource: text("utm_source"),
+    utmMedium: text("utm_medium"),
+    utmCampaign: text("utm_campaign"),
+    utmTerm: text("utm_term"),
+    utmContent: text("utm_content"),
+    referer: text("referer"),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({ uniqAnonReseller: unique().on(t.anonId, t.resellerId) }),
+);
+
+export const resellerPayouts = pgTable(
+  "reseller_payouts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    resellerId: uuid("reseller_id").notNull().references(() => resellers.id, { onDelete: "restrict" }),
+    periodMonth: date("period_month", { mode: "date" }).notNull(),
+    sourceCurrency: text("source_currency").notNull().default("EUR"),
+    sourceTotalCents: integer("source_total_cents").notNull(),
+    payoutCurrency: text("payout_currency").notNull(),
+    fxRate: numeric("fx_rate", { precision: 18, scale: 8 }),
+    fxSource: text("fx_source"),
+    payoutTotalCents: integer("payout_total_cents"),
+    taxBreakdown: jsonb("tax_breakdown").notNull().default({}),
+    invoicePdfUrl: text("invoice_pdf_url"),
+    invoiceSeries: text("invoice_series"),
+    invoiceNumber: integer("invoice_number"),
+    status: text("status").notNull().default("draft"),
+    requiresHighValueApproval: boolean("requires_high_value_approval").notNull().default(false),
+    approvedByUserId: uuid("approved_by_user_id").references(() => users.id),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    stripeTransferId: text("stripe_transfer_id").unique(),
+    stripePayoutId: text("stripe_payout_id").unique(),
+    failureCode: text("failure_code"),
+    failureMessage: text("failure_message"),
+    parentPayoutId: uuid("parent_payout_id").references((): AnyPgColumn => resellerPayouts.id, { onDelete: "set null" }),
+    paidAt: timestamp("paid_at", { withTimezone: true }),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({ uniqPeriod: unique().on(t.resellerId, t.periodMonth, t.payoutCurrency) }),
+);
+
+export const resellerCommissions = pgTable("reseller_commissions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  resellerId: uuid("reseller_id").notNull().references(() => resellers.id, { onDelete: "restrict" }),
+  tenantId: uuid("tenant_id").references(() => tenants.id, { onDelete: "set null" }),
+  stripeInvoiceId: text("stripe_invoice_id").unique().notNull(),
+  stripeChargeId: text("stripe_charge_id"),
+  stripeCustomerId: text("stripe_customer_id").notNull(),
+  currency: text("currency").notNull().default("EUR"),
+  grossAmountCents: integer("gross_amount_cents").notNull(),
+  baseAmountCents: integer("base_amount_cents").notNull(),
+  commissionRateSnapshot: numeric("commission_rate_snapshot", { precision: 5, scale: 4 }).notNull(),
+  commissionAmountCents: integer("commission_amount_cents").notNull(),
+  periodMonth: date("period_month", { mode: "date" }).notNull(),
+  invoicePaidAt: timestamp("invoice_paid_at", { withTimezone: true }).notNull(),
+  status: text("status").notNull().default("pending"),
+  payoutId: uuid("payout_id").references(() => resellerPayouts.id, { onDelete: "set null" }),
+  tenantChurnedAt: timestamp("tenant_churned_at", { withTimezone: true }),
+  refundedAt: timestamp("refunded_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const resellerSelfBillingConsents = pgTable("reseller_self_billing_consents", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  resellerId: uuid("reseller_id").notNull().references(() => resellers.id, { onDelete: "restrict" }),
+  agreementVersion: text("agreement_version").notNull(),
+  consentedAt: timestamp("consented_at", { withTimezone: true }).notNull().defaultNow(),
+  signatureHash: text("signature_hash").notNull(),
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
+});
+
+export type Reseller = typeof resellers.$inferSelect;
+export type NewReseller = typeof resellers.$inferInsert;
+export type RefTouch = typeof refTouches.$inferSelect;
+export type NewRefTouch = typeof refTouches.$inferInsert;
+export type ResellerCommission = typeof resellerCommissions.$inferSelect;
+export type NewResellerCommission = typeof resellerCommissions.$inferInsert;
+export type ResellerPayout = typeof resellerPayouts.$inferSelect;
+export type NewResellerPayout = typeof resellerPayouts.$inferInsert;
+export type ResellerSelfBillingConsent = typeof resellerSelfBillingConsents.$inferSelect;
