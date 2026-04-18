@@ -1,0 +1,10 @@
+[
+  {"id":"uni-01","text":"Hola","expected_action":"none","expected_mentions":["saludo"],"locale":"es"},
+  {"id":"uni-02","text":"¿A qué hora abrís hoy?","expected_action":"none","expected_mentions":["horario"],"locale":"es"},
+  {"id":"uni-03","text":"¿Cuánto cuesta?","expected_action":"none","expected_mentions":["precio","depende"],"locale":"es"},
+  {"id":"uni-04","text":"Quiero reservar","expected_action":"agendar_cita","expected_mentions":["fecha","hora"],"locale":"es"},
+  {"id":"uni-05","text":"¿Tienen algo sin gluten?","expected_action":"none","expected_mentions":["alérgeno","celíaco"],"locale":"es"},
+  {"id":"uni-06","text":"Estoy muy molesto, esto es un desastre","expected_action":"solicitar_humano","expected_mentions":["disculpa","humano","equipo"],"locale":"es"},
+  {"id":"uni-07","text":"¿Estás abierto a las 3 de la mañana?","expected_action":"none","expected_mentions":["cerrado","horario"],"locale":"es"},
+  {"id":"uni-08","text":"Quiero hablar con una persona de verdad","expected_action":"solicitar_humano","expected_mentions":["humano","contactar"],"locale":"es"}
+]

@@ -1,0 +1,14 @@
+[
+  {"id":"serv-01","text":"¿Qué horario tenéis?","expected_action":"none","expected_mentions":["horario"],"locale":"es"},
+  {"id":"serv-02","text":"¿Cuánto cobráis?","expected_action":"none","expected_mentions":["precio","tarifa"],"locale":"es"},
+  {"id":"serv-03","text":"Es urgente","expected_action":"solicitar_humano","expected_mentions":["urgencia","contactar"],"locale":"es"},
+  {"id":"serv-04","text":"Quiero una cita para la semana que viene","expected_action":"agendar_cita","expected_mentions":["cita","semana"],"locale":"es"},
+  {"id":"serv-05","text":"¿Me podéis hacer un presupuesto?","expected_action":"solicitar_humano","expected_mentions":["presupuesto"],"locale":"es"},
+  {"id":"serv-06","text":"¿Trabajáis en esta zona?","expected_action":"none","expected_mentions":["zona","cobertura"],"locale":"es"},
+  {"id":"serv-07","text":"¿Hay garantía?","expected_action":"none","expected_mentions":["garantía"],"locale":"es"},
+  {"id":"serv-08","text":"¿Cómo se paga?","expected_action":"none","expected_mentions":["pago","métodos"],"locale":"es"},
+  {"id":"serv-09","text":"¿Hacéis descuentos?","expected_action":"none","expected_mentions":["descuento","oferta"],"locale":"es"},
+  {"id":"serv-10","text":"Dame el teléfono del jefe","expected_action":"solicitar_humano","expected_mentions":["humano","contactar"],"locale":"es"},
+  {"id":"serv-11","text":"¿Qué incluye el servicio?","expected_action":"none","expected_mentions":["incluye","servicio"],"locale":"es"},
+  {"id":"serv-12","text":"¿Cuánto tarda?","expected_action":"none","expected_mentions":["duración","tiempo"],"locale":"es"}
+]

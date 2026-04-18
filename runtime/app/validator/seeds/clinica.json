@@ -1,0 +1,14 @@
+[
+  {"id":"clin-01","text":"¿Cuándo es mi próxima cita?","expected_action":"mis_citas","expected_mentions":["cita","consulta"],"locale":"es"},
+  {"id":"clin-02","text":"¿Cuánto cuesta una limpieza dental?","expected_action":"none","expected_mentions":["precio","limpieza"],"locale":"es"},
+  {"id":"clin-03","text":"Tengo un dolor de muela muy fuerte","expected_action":"solicitar_humano","expected_mentions":["urgencia","disponibilidad"],"locale":"es"},
+  {"id":"clin-04","text":"Quiero cancelar mi cita de mañana","expected_action":"mis_citas","expected_mentions":["cancelar","cita"],"locale":"es"},
+  {"id":"clin-05","text":"¿A qué hora atiende el doctor?","expected_action":"none","expected_mentions":["horario","doctor"],"locale":"es"},
+  {"id":"clin-06","text":"¿Aceptan mi seguro de Sanitas?","expected_action":"none","expected_mentions":["seguro","sanitas"],"locale":"es"},
+  {"id":"clin-07","text":"¿Atienden a niños?","expected_action":"none","expected_mentions":["niños","pediátrica"],"locale":"es"},
+  {"id":"clin-08","text":"Quiero pedir mi primera cita","expected_action":"agendar_cita","expected_mentions":["primera","cita"],"locale":"es"},
+  {"id":"clin-09","text":"¿Qué documentos llevo?","expected_action":"none","expected_mentions":["documentos","dni"],"locale":"es"},
+  {"id":"clin-10","text":"¿Tenéis fisioterapeuta?","expected_action":"none","expected_mentions":["fisioterapia"],"locale":"es"},
+  {"id":"clin-11","text":"¿Me podéis enviar la receta por WhatsApp?","expected_action":"solicitar_humano","expected_mentions":["receta","humano"],"locale":"es"},
+  {"id":"clin-12","text":"¿Tenéis listos mis análisis?","expected_action":"solicitar_humano","expected_mentions":["análisis","contactar"],"locale":"es"}
+]

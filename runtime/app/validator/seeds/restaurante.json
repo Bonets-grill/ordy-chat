@@ -1,0 +1,14 @@
+[
+  {"id":"rest-01","text":"¿Me pasas la carta?","expected_action":"none","expected_mentions":["menú","carta"],"locale":"es"},
+  {"id":"rest-02","text":"¿Cuánto cuesta la paella?","expected_action":"none","expected_mentions":["precio","paella"],"locale":"es"},
+  {"id":"rest-03","text":"Tengo celiaquía, ¿qué platos hay?","expected_action":"none","expected_mentions":["celíaco","sin gluten"],"locale":"es"},
+  {"id":"rest-04","text":"Mesa para 4 mañana a las 21h","expected_action":"agendar_cita","expected_mentions":["reserva","4","21"],"locale":"es"},
+  {"id":"rest-05","text":"¿Hacen delivery?","expected_action":"none","expected_mentions":["delivery","domicilio"],"locale":"es"},
+  {"id":"rest-06","text":"¿Hasta qué hora cocináis?","expected_action":"none","expected_mentions":["cocina","horario"],"locale":"es"},
+  {"id":"rest-07","text":"¿Tenéis bebidas sin alcohol?","expected_action":"none","expected_mentions":["sin alcohol","refrescos"],"locale":"es"},
+  {"id":"rest-08","text":"¿La pasta lleva gluten?","expected_action":"none","expected_mentions":["gluten","alérgeno"],"locale":"es"},
+  {"id":"rest-09","text":"Reserva para el sábado a las 20:30","expected_action":"agendar_cita","expected_mentions":["sábado","20:30"],"locale":"es"},
+  {"id":"rest-10","text":"Quiero cancelar mi reserva","expected_action":"mis_citas","expected_mentions":["cancelar","reserva"],"locale":"es"},
+  {"id":"rest-11","text":"¿Qué postre recomiendas?","expected_action":"none","expected_mentions":["postre","recomendación"],"locale":"es"},
+  {"id":"rest-12","text":"¿La paella lleva marisco? Soy alérgico","expected_action":"none","expected_mentions":["marisco","alérgeno","disculpa"],"locale":"es"}
+]

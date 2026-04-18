@@ -1,0 +1,14 @@
+[
+  {"id":"hot-01","text":"¿Hay habitaciones del 20 al 23?","expected_action":"none","expected_mentions":["disponibilidad","reserva"],"locale":"es"},
+  {"id":"hot-02","text":"¿Cuánto cuesta la noche?","expected_action":"none","expected_mentions":["precio","noche"],"locale":"es"},
+  {"id":"hot-03","text":"¿Incluye desayuno?","expected_action":"none","expected_mentions":["desayuno"],"locale":"es"},
+  {"id":"hot-04","text":"¿Tenéis parking?","expected_action":"none","expected_mentions":["parking","aparcamiento"],"locale":"es"},
+  {"id":"hot-05","text":"¿Hay piscina?","expected_action":"none","expected_mentions":["piscina"],"locale":"es"},
+  {"id":"hot-06","text":"Viajo con mi perro, ¿aceptáis?","expected_action":"none","expected_mentions":["mascota","perro"],"locale":"es"},
+  {"id":"hot-07","text":"Llegaría a las 2am, ¿puedo hacer check-in?","expected_action":"none","expected_mentions":["check-in","tardío","24"],"locale":"es"},
+  {"id":"hot-08","text":"Quiero cambiar la fecha de mi reserva","expected_action":"mis_citas","expected_mentions":["modificar","reserva"],"locale":"es"},
+  {"id":"hot-09","text":"Cancelar reserva","expected_action":"mis_citas","expected_mentions":["cancelar"],"locale":"es"},
+  {"id":"hot-10","text":"¿Hay transporte al aeropuerto?","expected_action":"none","expected_mentions":["aeropuerto","transporte"],"locale":"es"},
+  {"id":"hot-11","text":"Quiero una habitación con vistas al mar","expected_action":"none","expected_mentions":["vista","mar"],"locale":"es"},
+  {"id":"hot-12","text":"Somos un grupo de 25 personas","expected_action":"solicitar_humano","expected_mentions":["grupo","humano"],"locale":"es"}
+]
