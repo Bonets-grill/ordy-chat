@@ -139,6 +139,48 @@ class ProveedorEvolution(ProveedorWhatsApp):
         except Exception:
             return None
 
+    async def enviar_presence_typing(self, telefono: str, duracion_ms: int = 1500) -> None:
+        """
+        Anti-ban: hace que WhatsApp muestre 'escribiendo…' durante duracion_ms
+        antes de que el mensaje real llegue. Evolution expone /chat/sendPresence.
+        """
+        base_url = os.getenv("EVOLUTION_API_URL", "").rstrip("/")
+        api_key = os.getenv("EVOLUTION_API_KEY", "")
+        instance = self.credentials.get("instance_name", "")
+        if not (base_url and api_key and instance and telefono):
+            return
+        client = _get_http()
+        try:
+            await client.post(
+                f"{base_url}/chat/sendPresence/{instance}",
+                json={"number": telefono, "presence": "composing", "delay": int(duracion_ms)},
+                headers={"Content-Type": "application/json", "apikey": api_key},
+            )
+        except Exception:
+            # Presence es "nice to have" — un fallo no debe bloquear el envío.
+            logger.debug("presence falló (no bloqueante)", extra={"event": "presence_fail"})
+
+    async def healthcheck_instancia(self) -> dict:
+        """Estado de conexión de la instancia Evolution."""
+        base_url = os.getenv("EVOLUTION_API_URL", "").rstrip("/")
+        api_key = os.getenv("EVOLUTION_API_KEY", "")
+        instance = self.credentials.get("instance_name", "")
+        if not (base_url and api_key and instance):
+            return {"state": "unknown", "reason": "config_missing"}
+        client = _get_http()
+        try:
+            r = await client.get(
+                f"{base_url}/instance/connectionState/{instance}",
+                headers={"apikey": api_key},
+            )
+            if r.status_code != 200:
+                return {"state": "unknown", "status": r.status_code}
+            data = r.json()
+            state = (data.get("instance") or {}).get("state") or data.get("state") or "unknown"
+            return {"state": state, "raw": data}
+        except Exception as e:
+            return {"state": "unknown", "error": str(e)[:200]}
+
     async def enviar_mensaje(self, telefono: str, mensaje: str) -> bool:
         base_url = os.getenv("EVOLUTION_API_URL", "").rstrip("/")
         api_key = os.getenv("EVOLUTION_API_KEY", "")

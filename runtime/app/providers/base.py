@@ -49,3 +49,18 @@ class ProveedorWhatsApp(ABC):
     async def validar_webhook_get(self, request: Request) -> int | str | None:
         """GET de verificación (solo Meta lo usa). None si no aplica."""
         return None
+
+    async def enviar_presence_typing(self, telefono: str, duracion_ms: int = 1500) -> None:
+        """
+        Opcional: indica "está escribiendo…" antes de enviar el mensaje real.
+        Humaniza conversaciones (anti-ban Evolution/Baileys). No-op por
+        defecto — cada adapter override si el proveedor lo soporta.
+        """
+        return None
+
+    async def healthcheck_instancia(self) -> dict:
+        """
+        Opcional: estado de la instancia/conexión. Devuelve al menos
+        {"state": "open"|"close"|"connecting"|"unknown"}.
+        """
+        return {"state": "unknown"}

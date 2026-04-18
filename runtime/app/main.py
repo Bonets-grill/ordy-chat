@@ -31,7 +31,7 @@ from app.memory import (
     ya_procesado,
 )
 from app.onboarding_scraper import ejecutar_scrape
-from app.outbound_throttle import esperar_turno
+from app.outbound_throttle import esperar_con_warmup, esperar_turno
 from app.providers import MensajeEntrante, obtener_proveedor
 from app.rate_limit import limite_superado
 from app.renderer import cerrar_browser, renderizar
@@ -150,6 +150,75 @@ async def internal_jobs_reap(request: Request):
     return {"status": "ok", "swept": result}
 
 
+# ────────────────────────────────────────────────────────────
+# /internal/health/evolution-all — healthcheck de instancias Evolution.
+# Llamado cada 10 min desde Vercel Cron. Marca burned=true las que caen.
+# ────────────────────────────────────────────────────────────
+
+@app.get("/internal/health/evolution-all")
+async def internal_health_evolution_all(request: Request):
+    _check_internal_secret(request)
+
+    from app.tenants import cargar_tenant_por_slug  # import lazy
+    pool = await inicializar_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT t.slug, pc.tenant_id, pc.credentials_encrypted, pc.webhook_secret
+            FROM provider_credentials pc
+            JOIN tenants t ON t.id = pc.tenant_id
+            WHERE pc.provider = 'evolution' AND pc.burned = false
+            """
+        )
+
+    checked = 0
+    burned = 0
+    errors: list[dict] = []
+
+    for row in rows:
+        slug = row["slug"]
+        try:
+            tenant = await cargar_tenant_por_slug(slug)
+        except Exception as e:
+            errors.append({"slug": slug, "error": f"load_tenant: {str(e)[:120]}"})
+            continue
+
+        adapter = obtener_proveedor("evolution", tenant.credentials, tenant.webhook_secret)
+        try:
+            health = await adapter.healthcheck_instancia()
+        except Exception as e:
+            errors.append({"slug": slug, "error": f"healthcheck: {str(e)[:120]}"})
+            continue
+
+        checked += 1
+        state = (health or {}).get("state")
+        if state == "close":
+            async with pool.acquire() as c2:
+                await c2.execute(
+                    """
+                    UPDATE provider_credentials
+                    SET burned = true,
+                        burned_at = now(),
+                        burned_reason = 'disconnected'
+                    WHERE tenant_id = $1 AND burned = false
+                    """,
+                    row["tenant_id"],
+                )
+            burned += 1
+            logger.warning(
+                "evolution instance burned",
+                extra={"event": "instance_burned", "slug": slug, "state": state},
+            )
+
+    return {
+        "status": "ok",
+        "checked": checked,
+        "burned": burned,
+        "errors_count": len(errors),
+        "errors": errors[:20],  # limite log
+    }
+
+
 @app.get("/webhook/{provider}/{tenant_slug}")
 async def webhook_get(provider: str, tenant_slug: str, request: Request):
     try:
@@ -264,8 +333,9 @@ async def _procesar_mensaje(tenant: TenantContext, provider: str, msg: MensajeEn
                     f"Recibí tu {msg.tipo_no_texto}, pero por ahora solo sé leer texto "
                     "e imágenes. ¿Podrías escribirme lo que necesitas?"
                 )
-                waited = await esperar_turno(msg.telefono)
-                await adapter.enviar_mensaje(msg.telefono, respuesta)
+                estado = await esperar_con_warmup(tenant.id, msg.telefono)
+                if not estado.get("blocked"):
+                    await adapter.enviar_mensaje(msg.telefono, respuesta)
                 logger.info("media no soportada", extra={**log_extra, "event": "media_skip"})
                 return
 
@@ -299,13 +369,48 @@ async def _procesar_mensaje(tenant: TenantContext, provider: str, msg: MensajeEn
             tenant.id, msg.telefono, msg.texto, respuesta,
             mensaje_id=msg.mensaje_id, tokens_in=tin, tokens_out=tout,
         )
-        # Anti-ban: WhatsApp banea si mandamos varios msgs al mismo número en <1s.
-        waited = await esperar_turno(msg.telefono)
+
+        # Anti-ban combinado: warmup daily cap + jitter 0.8-2.0s + presence typing.
+        estado = await esperar_con_warmup(tenant.id, msg.telefono)
+        if estado.get("blocked"):
+            logger.warning(
+                "warmup cap hit",
+                extra={**log_extra, "event": "warmup_cap_hit",
+                       "tier": estado.get("tier"), "cap": estado.get("cap"),
+                       "sent_today": estado.get("sent_today")},
+            )
+            # Solo en fase "fresh" (día 1-3) avisamos al cliente. Días 4+
+            # silenciosos para no exponer el cap del warmup al usuario final.
+            if estado.get("tier") == "fresh":
+                try:
+                    await adapter.enviar_mensaje(
+                        msg.telefono,
+                        "He llegado al límite de mensajes por hoy. Mañana retomamos. "
+                        "Gracias por tu paciencia.",
+                    )
+                except Exception:
+                    logger.exception("fallo enviando aviso warmup",
+                                     extra={**log_extra, "event": "warmup_notice_fail"})
+            return
+
+        waited = estado.get("waited", 0.0)
         if waited > 0:
             logger.debug(
                 "outbound throttled",
                 extra={**log_extra, "event": "outbound_wait", "waited_ms": int(waited * 1000)},
             )
+
+        # Presence "escribiendo…" 1-2s antes del mensaje real (solo Evolution).
+        import random as _rnd
+        try:
+            await adapter.enviar_presence_typing(
+                msg.telefono, duracion_ms=_rnd.randint(800, 2000),
+            )
+            await asyncio.sleep(0.3)
+        except Exception:
+            # Presence es nice-to-have; no bloquea el envío.
+            pass
+
         await adapter.enviar_mensaje(msg.telefono, respuesta)
 
         logger.info(

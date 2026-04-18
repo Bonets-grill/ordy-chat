@@ -13,10 +13,19 @@
 # distribuido (mismo patrón que web/lib/rate-limit.ts → limitByWhatsappSender).
 
 import asyncio
+import random
 import time
-from collections import defaultdict
+from uuid import UUID
 
-MIN_INTERVAL_SEC = 1.0  # WhatsApp banea si <1s entre mensajes al mismo número
+# Anti-ban: intervalo entre mensajes al mismo número con jitter humano.
+# El 1s fijo original era huella detectable; ahora 0.8–2.0s aleatorio.
+JITTER_MIN_SEC = 0.8
+JITTER_MAX_SEC = 2.0
+
+
+def _jitter_interval() -> float:
+    return random.uniform(JITTER_MIN_SEC, JITTER_MAX_SEC)
+
 
 _last_sent: dict[str, float] = {}
 _lock = asyncio.Lock()
@@ -33,11 +42,13 @@ async def esperar_turno(phone: str) -> float:
     if not phone:
         return 0.0
 
+    interval = _jitter_interval()
+
     async with _lock:
         now = time.monotonic()
         last = _last_sent.get(phone, 0.0)
         delta = now - last
-        wait = max(0.0, MIN_INTERVAL_SEC - delta)
+        wait = max(0.0, interval - delta)
 
         # Reservamos el slot AHORA (last_sent += interval) para que si otro
         # coroutine llega mientras dormimos, se ponga detrás de nosotros.
@@ -54,3 +65,28 @@ async def esperar_turno(phone: str) -> float:
     if wait > 0:
         await asyncio.sleep(wait)
     return wait
+
+
+async def esperar_con_warmup(tenant_id: UUID, phone: str) -> dict:
+    """
+    Wrapper que combina cap diario de warmup + throttle por teléfono.
+    Devuelve:
+      - {blocked: False, waited: float}  si paso
+      - {blocked: True, reason: str, cap: int, sent_today: int, tier: str}
+        si el warmup bloqueó. El caller decide qué decirle al cliente.
+
+    Import diferido para evitar ciclos (warmup → memory → ...).
+    """
+    from app.warmup import chequear_warmup
+    estado = await chequear_warmup(tenant_id)
+    if estado["blocked"]:
+        return {
+            "blocked": True,
+            "reason": estado["reason"],
+            "cap": estado["cap"],
+            "sent_today": estado["sent_today"],
+            "tier": estado["tier"],
+        }
+
+    waited = await esperar_turno(phone)
+    return {"blocked": False, "waited": waited, "tier": estado["tier"]}
