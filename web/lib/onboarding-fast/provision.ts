@@ -13,6 +13,7 @@ import { db } from "@/lib/db";
 import { agentConfigs, providerCredentials, tenantMembers, tenants } from "@/lib/db/schema";
 import { createInstance, evolutionConfigured, evolutionInstanceName } from "@/lib/evolution";
 import { buildSystemPrompt } from "@/lib/prompt-builder";
+import { resolveResellerAttribution } from "@/lib/reseller/attribution";
 import { slugify } from "@/lib/utils";
 import { buildAgentConfigInsert, mapCanonicalToWizardFields } from "./provision-mappers";
 import type {
@@ -113,7 +114,19 @@ export async function createTenantFromCanonical(input: ProvisionInput): Promise<
   const slug = await uniqueSlug(input.canonical.name);
   const trialEndsAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
-  // 5. INSERT tenants.
+  // 5. Resolve reseller attribution (NULL si venta directa o sin contexto).
+  let resellerId: string | null = null;
+  if (input.attributionContext) {
+    try {
+      const attr = await resolveResellerAttribution(input.attributionContext);
+      resellerId = attr.resellerId;
+    } catch (err) {
+      // Falla de atribución NO bloquea creación de tenant. Log y sigue.
+      console.error("[provision] resolveResellerAttribution fail:", err);
+    }
+  }
+
+  // 6. INSERT tenants.
   const [tenant] = await db
     .insert(tenants)
     .values({
@@ -121,6 +134,7 @@ export async function createTenantFromCanonical(input: ProvisionInput): Promise<
       name: input.canonical.name,
       ownerUserId: input.userId,
       trialEndsAt,
+      resellerId,
     })
     .returning();
 

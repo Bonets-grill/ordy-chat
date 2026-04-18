@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { auth } from "@/lib/auth";
 import { limitByIp, rateLimitConfigured } from "@/lib/rate-limit";
+import { hasAttributionConsent } from "@/lib/reseller/consent";
+
+// Regex sincronizado con CHECK resellers_slug_format de la migración 012.
+const RESELLER_SLUG_REGEX = /^[a-z0-9]([a-z0-9-]{1,38}[a-z0-9])?$/;
+const ORDY_REF_COOKIE_MAX_AGE = 60 * 60 * 24 * Number(process.env.ORDY_REF_COOKIE_DAYS ?? 90);
 
 // Prefijos de /api que están EXENTOS de rate limit:
 //   - Stripe valida firma (stripe-signature) en su handler
@@ -47,7 +52,19 @@ export default auth(async (req) => {
 
   if (pathname.startsWith("/admin")) {
     if (!isAuthed) return NextResponse.redirect(new URL("/signin?from=/admin", req.url));
-    if (!isAdmin) return NextResponse.redirect(new URL("/dashboard", req.url));
+    if (!isAdmin) {
+      // Resellers van a su panel, tenants al dashboard.
+      const dest = req.auth?.user?.role === "reseller" ? "/reseller" : "/dashboard";
+      return NextResponse.redirect(new URL(dest, req.url));
+    }
+  }
+
+  if (pathname.startsWith("/reseller")) {
+    if (!isAuthed) return NextResponse.redirect(new URL("/signin?from=/reseller", req.url));
+    if (req.auth?.user?.role !== "reseller") {
+      const dest = isAdmin ? "/admin/resellers" : "/dashboard";
+      return NextResponse.redirect(new URL(dest, req.url));
+    }
   }
 
   const protectedApp =
@@ -61,18 +78,46 @@ export default auth(async (req) => {
     return NextResponse.redirect(new URL(`/signin?from=${pathname}`, req.url));
   }
 
+  // 3. Reseller attribution capture (first-touch, consent-gated).
+  // Nunca sobrescribe cookie existente. Skip admin/reseller/api para no
+  // fijar sesiones mediante ?ref= en URLs sensibles.
+  const ref = req.nextUrl.searchParams.get("ref");
+  const skipRef =
+    pathname.startsWith("/admin") ||
+    pathname.startsWith("/reseller") ||
+    pathname.startsWith("/api");
+  if (
+    ref &&
+    !skipRef &&
+    RESELLER_SLUG_REGEX.test(ref) &&
+    !req.cookies.get("ordy_ref") &&
+    hasAttributionConsent(req.headers.get("cookie"))
+  ) {
+    const res = NextResponse.next();
+    res.cookies.set("ordy_ref", ref, {
+      maxAge: ORDY_REF_COOKIE_MAX_AGE,
+      sameSite: "lax",
+      path: "/",
+      httpOnly: false, // JS cliente lo lee para el beacon /api/ref/touch
+      secure: process.env.NODE_ENV === "production",
+    });
+    return res;
+  }
+
   return NextResponse.next();
 });
 
 export const config = {
   matcher: [
-    // Páginas protegidas + /api/* (rate-limited, menos exentos arriba).
+    // Landing (ref capture) + páginas protegidas + /api/* (rate-limited, menos exentos arriba).
+    "/",
     "/dashboard/:path*",
     "/onboarding/:path*",
     "/conversations/:path*",
     "/agent/:path*",
     "/billing/:path*",
     "/admin/:path*",
+    "/reseller/:path*",
     "/api/:path*",
   ],
 };

@@ -92,7 +92,7 @@ declare module "next-auth" {
   interface Session {
     user: {
       id: string;
-      role: "super_admin" | "tenant_admin";
+      role: "super_admin" | "tenant_admin" | "reseller";
     } & DefaultSession["user"];
   }
 }
@@ -174,15 +174,32 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         session.user.id = userId;
         const { eq } = await import("drizzle-orm");
         const [row] = await db.select({ role: users.role }).from(users).where(eq(users.id, userId)).limit(1);
-        session.user.role = (row?.role as "super_admin" | "tenant_admin") ?? "tenant_admin";
+        session.user.role =
+          (row?.role as "super_admin" | "tenant_admin" | "reseller") ?? "tenant_admin";
       }
       return session;
     },
     async signIn({ user }) {
+      // Hardening F2: promover a super_admin SOLO si el rol actual NO es 'reseller'.
+      // Un reseller que cambie email para matchear SUPER_ADMIN_EMAIL no escala.
       const superEmail = process.env.SUPER_ADMIN_EMAIL?.toLowerCase();
       if (user.email && superEmail && user.email.toLowerCase() === superEmail && user.id) {
         const { eq } = await import("drizzle-orm");
-        await db.update(users).set({ role: "super_admin" }).where(eq(users.id, user.id));
+        const [existing] = await db.select({ role: users.role }).from(users).where(eq(users.id, user.id)).limit(1);
+        if (!existing || existing.role === "tenant_admin") {
+          // First login del super admin o tenant_admin con email matching → promover.
+          await db.update(users).set({ role: "super_admin" }).where(eq(users.id, user.id));
+        } else if (existing.role === "reseller") {
+          // NO promover. Log para revisión manual.
+          const { auditLog: auditLogTable } = await import("@/lib/db/schema");
+          await db.insert(auditLogTable).values({
+            action: "auth.suspicious.reseller_email_matches_super_admin",
+            entity: "user",
+            entityId: user.id,
+            metadata: { email: user.email.toLowerCase() },
+          });
+        }
+        // existing.role === "super_admin" → no-op (ya es super admin).
       }
       return true;
     },

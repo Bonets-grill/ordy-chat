@@ -81,6 +81,34 @@ export async function limitByTenantValidatorManual(
   return r.success ? { ok: true } : { ok: false, reset: r.reset };
 }
 
+/**
+ * Reseller program (F1):
+ * - 50 touches/h por slug de reseller (anti cookie-stuffing dirigido a un reseller)
+ * - Bucket por userId para endpoints admin/reseller (crear, aprobar, etc.)
+ */
+export async function limitByResellerSlug(
+  slug: string,
+): Promise<{ ok: true } | { ok: false; reset: number }> {
+  const rl = limiter("reseller-slug", 50, "1 h");
+  if (!rl) return { ok: true };
+  const r = await rl.limit(slug);
+  return r.success ? { ok: true } : { ok: false, reset: r.reset };
+}
+
+type UserBucket = "reseller_create" | "reseller_approve" | "payout_approve" | "connect_start";
+
+export async function limitByUserId(
+  userId: string,
+  bucket: UserBucket,
+  limit: number,
+  window: Parameters<typeof Ratelimit.slidingWindow>[1],
+): Promise<{ ok: true } | { ok: false; reset: number }> {
+  const rl = limiter(`user-${bucket}`, limit, window);
+  if (!rl) return { ok: true };
+  const r = await rl.limit(userId);
+  return r.success ? { ok: true } : { ok: false, reset: r.reset };
+}
+
 /** Devuelve true si Upstash está configurado (útil para logs/health). */
 export function rateLimitConfigured(): boolean {
   return Boolean(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);

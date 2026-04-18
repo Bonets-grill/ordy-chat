@@ -22,6 +22,7 @@ import {
   createTenantFromCanonical,
   ProvisionError,
 } from "@/lib/onboarding-fast/provision";
+import { hashIp } from "@/lib/reseller/anon-id";
 
 export const dynamic = "force-dynamic";
 
@@ -104,6 +105,19 @@ export async function POST(req: Request) {
     );
   }
 
+  // Reseller attribution context (F1).
+  const refCookie = req.headers.get("cookie")?.match(/(?:^|;\s*)ordy_ref=([^;]+)/)?.[1] ?? null;
+  const ipAddr =
+    req.headers.get("x-forwarded-for")?.split(",")[0].trim() ||
+    req.headers.get("x-real-ip") ||
+    null;
+  const attributionContext = {
+    refCookieValue: refCookie,
+    ipHash: ipAddr ? hashIp(ipAddr) : null,
+    userAgent: req.headers.get("user-agent")?.slice(0, 500) ?? null,
+    signupEmail: session.user.email ?? "",
+  };
+
   try {
     const result = await createTenantFromCanonical({
       userId,
@@ -115,6 +129,7 @@ export async function POST(req: Request) {
       knowledgeText: data.knowledgeText,
       agentName: data.agentName,
       schedule: data.schedule,
+      attributionContext,
     });
 
     await db
