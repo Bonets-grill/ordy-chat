@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { getFlag } from "@/lib/admin/flags";
 import { auth } from "@/lib/auth";
 import { requireTenant } from "@/lib/tenant";
 import { OnboardingWizard } from "./wizard";
@@ -18,9 +19,11 @@ export default async function OnboardingPage({
 
   const params = await searchParams;
 
-  // Feature flag: redirect default al fast wizard si ONBOARDING_FAST_ENABLED=true
+  // Feature flag: redirect default al fast wizard si onboarding_fast_enabled=true
   // y el usuario no viene explícitamente con ?legacy=1 (escape hatch).
-  if (process.env.ONBOARDING_FAST_ENABLED === "true" && params.legacy !== "1") {
+  // Precedencia: platform_settings (DB, seteado desde /admin/flags) > env ONBOARDING_FAST_ENABLED > default (false).
+  const fastEnabled = await getFlag<boolean>("onboarding_fast_enabled");
+  if (fastEnabled && params.legacy !== "1") {
     redirect("/onboarding/fast");
   }
 
