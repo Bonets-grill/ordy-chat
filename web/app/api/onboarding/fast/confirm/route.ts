@@ -13,6 +13,7 @@
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { getFlag } from "@/lib/admin/flags";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { onboardingJobs } from "@/lib/db/schema";
@@ -127,6 +128,37 @@ export async function POST(req: Request) {
         updatedAt: new Date(),
       })
       .where(eq(onboardingJobs.id, data.job_id));
+
+    // Trigger validator del tenant recién creado (Sprint 2 validador-core).
+    // Fire-and-forget: NO bloquea el QR al cliente. Si validator falla o
+    // runtime está down, watchdog no aplica aquí (el validator es no-crítico
+    // para el onboarding). La flag validation_mode_default='skip' por
+    // default deja el validador inactivo hasta que admin lo active.
+    try {
+      const validationMode = await getFlag<"auto" | "manual" | "skip">("validation_mode_default");
+      if (validationMode !== "skip") {
+        const runtimeUrl = (process.env.RUNTIME_URL ?? "").replace(/\/$/, "");
+        const secret = process.env.RUNTIME_INTERNAL_SECRET ?? "";
+        if (runtimeUrl && secret) {
+          fetch(`${runtimeUrl}/internal/validator/run-seeds`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-internal-secret": secret },
+            body: JSON.stringify({
+              tenant_id: result.tenantId,
+              triggered_by: "onboarding_auto",
+            }),
+            signal: AbortSignal.timeout(1500),
+          }).catch((e) => {
+            console.error("[onboarding-fast/confirm] validator trigger failed:", e);
+          });
+        } else {
+          console.warn("[onboarding-fast/confirm] RUNTIME_URL/RUNTIME_INTERNAL_SECRET ausentes, validator skip");
+        }
+      }
+    } catch (e) {
+      // No bloquear la respuesta del confirm por fallo del flag/trigger.
+      console.error("[onboarding-fast/confirm] validator flag check failed:", e);
+    }
 
     return NextResponse.json({
       slug: result.slug,
