@@ -222,3 +222,66 @@ function escapeHtml(s: string): string {
 function stripTags(s: string): string {
   return s.replace(/<[^>]+>/g, "");
 }
+
+// ─── Validator failure email (Sprint 2 validador-core) ──────────────
+
+export type ValidatorFailureEmailInput = {
+  tenantEmail: string;
+  tenantName: string;
+  runId: string;
+  /** Motivos concretos: ["seed=rest-03: idioma_ok=false", "seed=uni-06: judge_score=18/40"]. */
+  reasons: string[];
+  /** URL opcional al review (Sprint 3) — /admin/validator/<run_id>. */
+  reviewUrl?: string;
+};
+
+/**
+ * Envía email al owner del tenant cuando el validador detectó FAIL crítico
+ * tras autopatch. El bot ya fue pausado (agent_configs.paused=true).
+ * Reusa el helper sendBrandedEmail + plantilla Ordy Chat existente.
+ */
+export async function sendValidatorFailureEmail(
+  input: ValidatorFailureEmailInput,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { tenantEmail, tenantName, runId, reasons, reviewUrl } = input;
+  try {
+    const listItems = reasons
+      .slice(0, 10)
+      .map((r) => `<li style="margin:0 0 6px 0;color:#4b5563;">${escapeHtml(r)}</li>`)
+      .join("");
+    const extraHtml = `
+      <tr>
+        <td style="padding:0 40px 16px 40px;">
+          <p style="margin:0 0 8px 0;font-size:14px;font-weight:600;color:#111827;">
+            Fallos detectados
+          </p>
+          <ul style="margin:0;padding-left:20px;font-size:14px;line-height:1.6;">
+            ${listItems}
+          </ul>
+        </td>
+      </tr>`;
+
+    await sendBrandedEmail({
+      to: tenantEmail,
+      subject: `Tu agente de WhatsApp fue pausado — revisa los fallos (run ${runId.slice(0, 8)})`,
+      title: "Tu agente fue pausado automáticamente",
+      paragraphs: [
+        `Hola${tenantName ? ` <strong>${escapeHtml(tenantName)}</strong>` : ""},`,
+        "El validador automático detectó fallos críticos en las respuestas de tu agente y lo hemos <strong>pausado</strong> temporalmente para proteger a tus clientes.",
+        "Intentamos corregir el system prompt automáticamente, pero los fallos se mantuvieron. Revisa los motivos abajo y ajusta tu configuración desde el dashboard.",
+      ],
+      extraHtml,
+      button: reviewUrl
+        ? { label: "Revisar en el dashboard", href: reviewUrl }
+        : { label: "Ir al dashboard", href: (process.env.NEXT_PUBLIC_APP_URL ?? "https://ordychat.ordysuite.com") + "/dashboard" },
+      footerNote: "Puedes reactivar tu agente cuando hayas corregido los fallos.",
+      recipient: tenantEmail,
+    });
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
