@@ -60,6 +60,15 @@ export async function limitByWhatsappSender(phone: string): Promise<{ ok: true }
   return r.success ? { ok: true } : { ok: false, reset: r.reset };
 }
 
+export async function limitByUserOnboarding(userId: string): Promise<{ ok: true } | { ok: false; reset: number }> {
+  // Onboarding fast: 5 jobs/hora/user. Evita abuso (scrapes en cadena,
+  // llamadas N veces a Anthropic merger).
+  const rl = limiter("onboarding", 5, "1 h");
+  if (!rl) return { ok: true };
+  const r = await rl.limit(userId);
+  return r.success ? { ok: true } : { ok: false, reset: r.reset };
+}
+
 /** Devuelve true si Upstash está configurado (útil para logs/health). */
 export function rateLimitConfigured(): boolean {
   return Boolean(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);

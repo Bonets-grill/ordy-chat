@@ -10,6 +10,8 @@
 #   4. Responder 200 INMEDIATAMENTE.
 #   5. Procesar cada mensaje en background (dedupe → rate limit → Claude → enviar).
 
+import asyncio
+import hmac
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -21,7 +23,14 @@ from fastapi.responses import PlainTextResponse
 
 from app.brain import generar_respuesta
 from app.logging_config import configurar_logging
-from app.memory import cerrar_pool, guardar_intercambio, inicializar_pool, obtener_historial, ya_procesado
+from app.memory import (
+    cerrar_pool,
+    guardar_intercambio,
+    inicializar_pool,
+    obtener_historial,
+    ya_procesado,
+)
+from app.onboarding_scraper import ejecutar_scrape
 from app.outbound_throttle import esperar_turno
 from app.providers import MensajeEntrante, obtener_proveedor
 from app.rate_limit import limite_superado
@@ -32,6 +41,16 @@ from app.tenants import (
     TenantNotFound,
     cargar_tenant_por_slug,
 )
+
+
+def _check_internal_secret(request: Request) -> None:
+    """Valida x-internal-secret con hmac.compare_digest (timing-safe).
+    Raises HTTPException 403 si no coincide.
+    """
+    shared = os.getenv("RUNTIME_INTERNAL_SECRET", "")
+    provided = request.headers.get("x-internal-secret", "")
+    if not shared or not provided or not hmac.compare_digest(provided, shared):
+        raise HTTPException(status_code=403, detail="invalid internal secret")
 
 load_dotenv()
 configurar_logging()
@@ -62,10 +81,7 @@ async def health():
 
 @app.post("/render")
 async def render_endpoint(request: Request):
-    shared_secret = os.getenv("RUNTIME_INTERNAL_SECRET", "")
-    provided = request.headers.get("x-internal-secret", "")
-    if not shared_secret or provided != shared_secret:
-        raise HTTPException(status_code=403, detail="invalid internal secret")
+    _check_internal_secret(request)
 
     body = await request.json()
     url = (body or {}).get("url", "")
@@ -79,6 +95,59 @@ async def render_endpoint(request: Request):
     except Exception as e:
         logger.exception("render failed: %s", url)
         raise HTTPException(status_code=502, detail=f"render_error: {e}") from e
+
+
+# ────────────────────────────────────────────────────────────
+# /onboarding/scrape — fire-and-forget. La web llama aquí y el worker
+# corre en background actualizando onboarding_jobs en DB.
+# ────────────────────────────────────────────────────────────
+
+@app.post("/onboarding/scrape", status_code=202)
+async def onboarding_scrape_endpoint(request: Request):
+    _check_internal_secret(request)
+
+    body = await request.json()
+    job_id_raw = (body or {}).get("job_id")
+    urls = (body or {}).get("urls") or {}
+    if not job_id_raw:
+        raise HTTPException(status_code=400, detail="job_id requerido")
+    try:
+        job_id = UUID(str(job_id_raw))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="job_id no es UUID")
+    if not isinstance(urls, dict):
+        raise HTTPException(status_code=400, detail="urls debe ser objeto")
+
+    # asyncio.create_task (NO BackgroundTasks) para desacoplar del request
+    # y que el scrape (~30s) sobreviva aunque el cliente cierre la conexión.
+    asyncio.create_task(ejecutar_scrape(job_id, urls))
+    return {"status": "accepted", "job_id": str(job_id)}
+
+
+# ────────────────────────────────────────────────────────────
+# /internal/jobs/reap — watchdog. Disparado cada minuto por Vercel Cron
+# para marcar como failed los jobs cuyo deadline expiró sin terminar.
+# ────────────────────────────────────────────────────────────
+
+@app.get("/internal/jobs/reap")
+async def internal_jobs_reap(request: Request):
+    _check_internal_secret(request)
+
+    pool = await inicializar_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            """
+            UPDATE onboarding_jobs
+            SET status = 'failed',
+                error = COALESCE(error, 'deadline_exceeded'),
+                updated_at = now()
+            WHERE status IN ('pending', 'scraping', 'sources_ready', 'confirming')
+              AND scrape_deadline_at IS NOT NULL
+              AND scrape_deadline_at < now()
+            """
+        )
+    # asyncpg .execute() devuelve "UPDATE N" string.
+    return {"status": "ok", "swept": result}
 
 
 @app.get("/webhook/{provider}/{tenant_slug}")
