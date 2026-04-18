@@ -147,6 +147,13 @@ export const providerCredentials = pgTable("provider_credentials", {
   phoneNumber: text("phone_number"),
   webhookSecret: text("webhook_secret"),
   webhookVerified: boolean("webhook_verified").notNull().default(false),
+  // Warm-up anti-ban (migración 009). instance_created_at arranca como NULL en la
+  // migración y se backfill-ea a now() - 30 días para filas preexistentes; nuevas
+  // filas usan DEFAULT now(). Drizzle lo modela como notNull + defaultNow.
+  instanceCreatedAt: timestamp("instance_created_at", { withTimezone: true }).notNull().defaultNow(),
+  burned: boolean("burned").notNull().default(false),
+  burnedAt: timestamp("burned_at", { withTimezone: true }),
+  burnedReason: text("burned_reason"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -334,3 +341,25 @@ export const handoffRequests = pgTable("handoff_requests", {
 
 export type Appointment = typeof appointments.$inferSelect;
 export type HandoffRequest = typeof handoffRequests.$inferSelect;
+
+// ── Onboarding jobs (migración 009) ─────────────────────────
+// Jobs de scraping + merger del onboarding fast. NO es tabla multi-tenant
+// (tenant aún no existe) — filtra por user_id. RLS activa defense-in-depth.
+export const onboardingJobs = pgTable("onboarding_jobs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  urlsJson: jsonb("urls_json").notNull(),
+  status: text("status").notNull(),  // CHECK enforza: pending|scraping|sources_ready|ready|confirming|done|failed
+  resultJson: jsonb("result_json"),
+  error: text("error"),
+  // Consent RGPD (art.6.1.a) + legal: log de "soy propietario, autorizo scrape".
+  consentAcceptedAt: timestamp("consent_accepted_at", { withTimezone: true }),
+  consentIp: text("consent_ip"),  // Postgres es INET; Drizzle usa text (la columna acepta cast).
+  scrapeStartedAt: timestamp("scrape_started_at", { withTimezone: true }),
+  scrapeDeadlineAt: timestamp("scrape_deadline_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type OnboardingJob = typeof onboardingJobs.$inferSelect;
+export type NewOnboardingJob = typeof onboardingJobs.$inferInsert;
