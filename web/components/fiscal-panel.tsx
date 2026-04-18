@@ -6,6 +6,29 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 
+type TaxRegionValue =
+  | "es_peninsula" | "es_canarias" | "es_ceuta_melilla"
+  | "pt" | "fr" | "it" | "de" | "uk"
+  | "us" | "mx" | "co" | "ar" | "cl" | "pe" | "other";
+
+const TAX_REGION_LABELS: Record<TaxRegionValue, string> = {
+  es_peninsula: "🇪🇸 España — Península + Baleares (IVA)",
+  es_canarias: "🇮🇨 España — Canarias (IGIC)",
+  es_ceuta_melilla: "🇪🇸 España — Ceuta/Melilla (IPSI)",
+  pt: "🇵🇹 Portugal (IVA)",
+  fr: "🇫🇷 Francia (TVA)",
+  it: "🇮🇹 Italia (IVA)",
+  de: "🇩🇪 Alemania (MwSt)",
+  uk: "🇬🇧 Reino Unido (VAT)",
+  us: "🇺🇸 Estados Unidos (Sales Tax)",
+  mx: "🇲🇽 México (IVA)",
+  co: "🇨🇴 Colombia (IVA)",
+  ar: "🇦🇷 Argentina (IVA)",
+  cl: "🇨🇱 Chile (IVA)",
+  pe: "🇵🇪 Perú (IGV)",
+  other: "🌍 Otro — configurar manualmente",
+};
+
 type FiscalState = {
   tenant: {
     legalName: string | null;
@@ -17,6 +40,13 @@ type FiscalState = {
     brandColor: string;
     brandLogoUrl: string | null;
     defaultVatRate: string;
+    // Régimen fiscal
+    taxRegion: TaxRegionValue;
+    taxSystem: string;
+    pricesIncludeTax: boolean;
+    taxRateStandard: string;
+    taxRateAlcohol: string;
+    taxLabel: string;
   };
   fiscalConfig: null | {
     verifactuEnabled: boolean;
@@ -30,9 +60,11 @@ type FiscalState = {
   };
 };
 
-type TenantPatch = Partial<Omit<FiscalState["tenant"], "defaultVatRate">> & {
+type TenantPatch = Partial<Omit<FiscalState["tenant"], "defaultVatRate" | "taxRateStandard" | "taxRateAlcohol">> & {
   invoiceSeries?: string;
   defaultVatRate?: number;
+  taxRateStandard?: number;
+  taxRateAlcohol?: number;
 };
 
 export function FiscalPanel() {
@@ -160,6 +192,21 @@ export function FiscalPanel() {
         </CardHeader>
         <CardContent>
           <TenantForm state={state.tenant} onSave={saveTenantFields} saving={saving} />
+        </CardContent>
+      </Card>
+
+      {/* ── Régimen fiscal ─────────────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Régimen fiscal</CardTitle>
+          <CardDescription>
+            El agente usará este régimen para calcular totales. En España peninsular aplica IVA,
+            en Canarias IGIC, en Ceuta/Melilla IPSI. Selecciona tu región y autocompletamos los
+            datos; puedes editar cualquier campo manualmente.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <TaxRegimeForm state={state.tenant} onSave={saveTenantFields} saving={saving} />
         </CardContent>
       </Card>
 
@@ -451,5 +498,120 @@ function Field({ label, value, onChange, placeholder }: { label: string; value: 
       <label className="text-sm font-medium text-neutral-700">{label}</label>
       <Input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} />
     </div>
+  );
+}
+
+function TaxRegimeForm({
+  state,
+  onSave,
+  saving,
+}: {
+  state: FiscalState["tenant"];
+  onSave: (patch: TenantPatch) => void;
+  saving: boolean;
+}) {
+  const [taxRegion, setTaxRegion] = React.useState<TaxRegionValue>(state.taxRegion);
+  const [taxLabel, setTaxLabel] = React.useState(state.taxLabel);
+  const [taxRateStandard, setTaxRateStandard] = React.useState(parseFloat(state.taxRateStandard));
+  const [taxRateAlcohol, setTaxRateAlcohol] = React.useState(parseFloat(state.taxRateAlcohol));
+  const [pricesIncludeTax, setPricesIncludeTax] = React.useState(state.pricesIncludeTax);
+
+  function handleRegionChange(value: TaxRegionValue) {
+    setTaxRegion(value);
+    // Nota: el backend aplica el preset de la región cuando recibe taxRegion, así que
+    // al guardar se sincronizarán los demás campos. Aquí actualizamos el UI local
+    // para reflejar los valores sugeridos inmediatamente.
+    const presets: Record<TaxRegionValue, { label: string; standard: number; alcohol: number; inclusive: boolean }> = {
+      es_peninsula:     { label: "IVA",       standard: 10.0, alcohol: 21.0, inclusive: true },
+      es_canarias:      { label: "IGIC",      standard:  7.0, alcohol: 20.0, inclusive: true },
+      es_ceuta_melilla: { label: "IPSI",      standard:  4.0, alcohol:  8.0, inclusive: true },
+      pt: { label: "IVA PT", standard: 13.0, alcohol: 23.0, inclusive: true },
+      fr: { label: "TVA",    standard: 10.0, alcohol: 20.0, inclusive: true },
+      it: { label: "IVA IT", standard: 10.0, alcohol: 22.0, inclusive: true },
+      de: { label: "MwSt",   standard:  7.0, alcohol: 19.0, inclusive: true },
+      uk: { label: "VAT",    standard: 20.0, alcohol: 20.0, inclusive: true },
+      us: { label: "Sales Tax", standard: 0,  alcohol: 0,   inclusive: false },
+      mx: { label: "IVA",    standard: 16.0, alcohol: 16.0, inclusive: true },
+      co: { label: "IVA",    standard:  8.0, alcohol: 19.0, inclusive: true },
+      ar: { label: "IVA",    standard: 10.5, alcohol: 21.0, inclusive: true },
+      cl: { label: "IVA",    standard: 19.0, alcohol: 19.0, inclusive: true },
+      pe: { label: "IGV",    standard: 18.0, alcohol: 18.0, inclusive: true },
+      other: { label: "Impuesto", standard: 0, alcohol: 0, inclusive: true },
+    };
+    const p = presets[value];
+    setTaxLabel(p.label);
+    setTaxRateStandard(p.standard);
+    setTaxRateAlcohol(p.alcohol);
+    setPricesIncludeTax(p.inclusive);
+  }
+
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSave({
+          taxRegion,
+          taxLabel,
+          taxRateStandard,
+          taxRateAlcohol,
+          pricesIncludeTax,
+        });
+      }}
+      className="space-y-4"
+    >
+      <div className="space-y-1.5">
+        <label className="text-sm font-medium text-neutral-700">Región fiscal</label>
+        <select
+          value={taxRegion}
+          onChange={(e) => handleRegionChange(e.target.value as TaxRegionValue)}
+          className="h-11 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm"
+        >
+          {(Object.keys(TAX_REGION_LABELS) as TaxRegionValue[]).map((r) => (
+            <option key={r} value={r}>{TAX_REGION_LABELS[r]}</option>
+          ))}
+        </select>
+        <p className="text-xs text-neutral-500">
+          Al cambiar la región se autocompletan los valores típicos del sistema fiscal local.
+          Puedes editarlos manualmente si tu negocio tiene algo específico.
+        </p>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium text-neutral-700">Etiqueta impuesto</label>
+          <Input value={taxLabel} onChange={(e) => setTaxLabel(e.target.value)} placeholder="IVA" />
+        </div>
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium text-neutral-700">Tasa estándar (%)</label>
+          <Input
+            type="number" step="0.01" min="0" max="30"
+            value={String(taxRateStandard)}
+            onChange={(e) => setTaxRateStandard(parseFloat(e.target.value) || 0)}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium text-neutral-700">Tasa alcohol (%)</label>
+          <Input
+            type="number" step="0.01" min="0" max="30"
+            value={String(taxRateAlcohol)}
+            onChange={(e) => setTaxRateAlcohol(parseFloat(e.target.value) || 0)}
+          />
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between rounded-lg border border-neutral-200 bg-neutral-50 p-4">
+        <div>
+          <div className="font-medium text-neutral-900">Los precios del menú ya incluyen impuesto</div>
+          <p className="text-sm text-neutral-500">
+            En España hostelería es lo habitual. En B2B internacional suele ser NO — el impuesto se suma al total.
+          </p>
+        </div>
+        <Toggle checked={pricesIncludeTax} disabled={saving} onChange={setPricesIncludeTax} />
+      </div>
+
+      <Button type="submit" variant="brand" disabled={saving}>
+        {saving ? "Guardando…" : "Guardar régimen fiscal"}
+      </Button>
+    </form>
   );
 }

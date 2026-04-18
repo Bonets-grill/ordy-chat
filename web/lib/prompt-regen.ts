@@ -41,6 +41,9 @@ export async function regenerateTenantPrompt(tenantId: string): Promise<void> {
     paymentMethods: cfg.paymentMethods ?? ["on_pickup", "cash"],
     acceptOnlinePayment: cfg.acceptOnlinePayment ?? false,
     paymentNotes: cfg.paymentNotes,
+    taxLabel: tenant?.taxLabel ?? "IVA",
+    taxRateStandard: parseFloat(tenant?.taxRateStandard ?? "10"),
+    pricesIncludeTax: tenant?.pricesIncludeTax ?? true,
   });
 
   await db

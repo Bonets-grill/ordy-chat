@@ -5,6 +5,8 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { tenantFiscalConfig, tenants } from "@/lib/db/schema";
+import { regenerateTenantPrompt } from "@/lib/prompt-regen";
+import { TAX_PRESETS, VALID_REGIONS, VALID_SYSTEMS, type TaxRegion } from "@/lib/tax/presets";
 import { requireTenant } from "@/lib/tenant";
 
 export const runtime = "nodejs";
@@ -20,6 +22,13 @@ const patchSchema = z.object({
   brandLogoUrl: z.string().url().max(500).nullable().optional(),
   defaultVatRate: z.number().min(0).max(100).optional(),
   invoiceSeries: z.string().max(10).optional(),
+  // Régimen fiscal (migración 008)
+  taxRegion: z.enum(VALID_REGIONS as [TaxRegion, ...TaxRegion[]]).optional(),
+  taxSystem: z.enum(VALID_SYSTEMS as [string, ...string[]]).optional(),
+  pricesIncludeTax: z.boolean().optional(),
+  taxRateStandard: z.number().min(0).max(30).optional(),
+  taxRateAlcohol: z.number().min(0).max(30).optional(),
+  taxLabel: z.string().max(20).optional(),
 });
 
 export async function GET() {
@@ -43,6 +52,13 @@ export async function GET() {
       brandColor: bundle.tenant.brandColor,
       brandLogoUrl: bundle.tenant.brandLogoUrl,
       defaultVatRate: bundle.tenant.defaultVatRate,
+      // Régimen fiscal
+      taxRegion: bundle.tenant.taxRegion,
+      taxSystem: bundle.tenant.taxSystem,
+      pricesIncludeTax: bundle.tenant.pricesIncludeTax,
+      taxRateStandard: bundle.tenant.taxRateStandard,
+      taxRateAlcohol: bundle.tenant.taxRateAlcohol,
+      taxLabel: bundle.tenant.taxLabel,
     },
     fiscalConfig: config
       ? {
@@ -82,6 +98,29 @@ export async function PATCH(req: Request) {
   if (data.defaultVatRate !== undefined) {
     tenantUpdate.defaultVatRate = String(data.defaultVatRate.toFixed(2));
   }
+
+  // Régimen fiscal: si viene taxRegion, aplicamos el preset pero permitimos que
+  // los otros campos la sobrescriban (override manual).
+  if (data.taxRegion !== undefined) {
+    const preset = TAX_PRESETS[data.taxRegion];
+    tenantUpdate.taxRegion = data.taxRegion;
+    tenantUpdate.taxSystem = data.taxSystem ?? preset.system;
+    tenantUpdate.taxLabel = data.taxLabel ?? preset.label;
+    tenantUpdate.taxRateStandard = String((data.taxRateStandard ?? preset.standard).toFixed(2));
+    tenantUpdate.taxRateAlcohol = String((data.taxRateAlcohol ?? preset.alcohol).toFixed(2));
+    tenantUpdate.pricesIncludeTax = data.pricesIncludeTax ?? preset.pricesIncludeTax;
+  } else {
+    if (data.taxSystem !== undefined) tenantUpdate.taxSystem = data.taxSystem;
+    if (data.taxLabel !== undefined) tenantUpdate.taxLabel = data.taxLabel;
+    if (data.taxRateStandard !== undefined) tenantUpdate.taxRateStandard = String(data.taxRateStandard.toFixed(2));
+    if (data.taxRateAlcohol !== undefined) tenantUpdate.taxRateAlcohol = String(data.taxRateAlcohol.toFixed(2));
+    if (data.pricesIncludeTax !== undefined) tenantUpdate.pricesIncludeTax = data.pricesIncludeTax;
+  }
+
+  const touchesAgentBehavior =
+    data.taxRegion !== undefined || data.taxSystem !== undefined || data.taxLabel !== undefined ||
+    data.taxRateStandard !== undefined || data.pricesIncludeTax !== undefined;
+
   if (Object.keys(tenantUpdate).length > 0) {
     tenantUpdate.updatedAt = new Date();
     await db.update(tenants).set(tenantUpdate).where(eq(tenants.id, bundle.tenant.id));
@@ -90,6 +129,11 @@ export async function PATCH(req: Request) {
   // Serie de facturación vive en fiscal_config.
   if (data.invoiceSeries !== undefined) {
     await upsertFiscalConfig(bundle.tenant.id, { invoiceSeries: data.invoiceSeries });
+  }
+
+  // Si cambió algo que afecta el comportamiento del agente (impuestos), regeneramos prompt.
+  if (touchesAgentBehavior) {
+    await regenerateTenantPrompt(bundle.tenant.id);
   }
 
   return NextResponse.json({ ok: true });

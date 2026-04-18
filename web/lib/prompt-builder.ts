@@ -12,6 +12,10 @@ export type OnboardingInput = {
   paymentMethods?: string[];
   acceptOnlinePayment?: boolean;
   paymentNotes?: string | null;
+  // Régimen fiscal (migración 008)
+  taxLabel?: string;
+  taxRateStandard?: number;
+  pricesIncludeTax?: boolean;
 };
 
 const TONE_DESC: Record<OnboardingInput["tone"], string> = {
@@ -46,6 +50,19 @@ ${note ? `\nNotas: ${note}\n` : ""}
 ${onlineRule}`;
 }
 
+function renderTaxSection(input: OnboardingInput): string {
+  const label = input.taxLabel ?? "IVA";
+  const rate = input.taxRateStandard ?? 10;
+  const inclusive = input.pricesIncludeTax ?? true;
+  const rule = inclusive
+    ? `Los precios del menú YA INCLUYEN el ${label}. Cuando sumes un total, usa los precios del menú tal cual — NO añadas ningún impuesto extra. El desglose fiscal (base + ${label}) lo hace el sistema automáticamente.`
+    : `Los precios del menú están SIN ${label}. Cuando des un total al cliente, suma el ${label} al ${rate}% encima (salvo que el cliente sea B2B con exención).`;
+  return `## Régimen fiscal del negocio
+- Impuesto aplicable: ${label} al ${rate}% (tasa estándar)
+- ${rule}
+`;
+}
+
 function renderFaqSection(faqs?: OnboardingInput["faqs"]): string {
   if (!faqs || faqs.length === 0) return "";
   const rows = faqs
@@ -69,6 +86,7 @@ export function buildSystemPrompt(input: OnboardingInput): string {
   const knowledge = (input.knowledgeText || "").trim();
   const faqSection = renderFaqSection(input.faqs);
   const paymentSection = renderPaymentSection(input);
+  const taxSection = renderTaxSection(input);
 
   return `Eres ${input.agentName}, el asistente virtual de ${input.businessName}.
 
@@ -83,7 +101,8 @@ ${input.businessDescription}
 ## Qué puedes hacer
 ${casosLista}
 
-${faqSection}${knowledge ? `## Información del negocio\n${knowledge}\n\n` : ""}${paymentSection}
+${faqSection}${knowledge ? `## Información del negocio\n${knowledge}\n\n` : ""}${taxSection}
+${paymentSection}
 
 ## Horario de atención
 ${input.schedule}

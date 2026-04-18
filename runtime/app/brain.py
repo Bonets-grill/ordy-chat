@@ -58,11 +58,11 @@ TOOLS: list[dict[str, Any]] = [
                             "unit_price_cents": {
                                 "type": "integer",
                                 "minimum": 0,
-                                "description": "Precio por unidad SIN IVA en céntimos (10€ = 1000)",
+                                "description": "Precio FINAL por unidad tal como aparece en el menú que ve el cliente, en céntimos (ej 14,90€ = 1490). El desglose fiscal (base + impuesto) lo calcula el sistema según el régimen del tenant — TÚ no añades ni restas impuestos, pasa el precio literal del menú.",
                             },
                             "vat_rate": {
                                 "type": "number",
-                                "description": "IVA aplicable (10 hostelería, 21 alcohol). Omite para usar el default del tenant.",
+                                "description": "Tasa de impuesto aplicable a esta línea (ej 10 hostelería IVA peninsular, 7 IGIC Canarias, 21 alcohol). Omite para usar la tasa estándar del tenant.",
                             },
                             "notes": {"type": "string", "description": "Aclaraciones: sin sal, bien hecho, etc."},
                         },
