@@ -5,6 +5,7 @@ import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getInstancesKpis, getOnboardingJobsKpis } from "@/lib/admin/queries";
+import { getRunsKpi24h } from "@/lib/admin/validator-queries";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { conversations, messages, tenants, users } from "@/lib/db/schema";
@@ -25,6 +26,7 @@ export default async function AdminHome() {
     convsCount,
     onboardingKpis,
     instancesKpis,
+    validatorKpi,
   ] = await Promise.all([
     db.select({ n: count() }).from(tenants).then((r) => r[0]),
     db.select({ n: count() }).from(tenants).where(eq(tenants.subscriptionStatus, "active")).then((r) => r[0]),
@@ -34,6 +36,7 @@ export default async function AdminHome() {
     db.select({ n: count() }).from(conversations).then((r) => r[0]),
     getOnboardingJobsKpis(),
     getInstancesKpis(),
+    getRunsKpi24h(),
   ]);
 
   const recent = await db.select().from(tenants).orderBy(desc(tenants.createdAt)).limit(10);
@@ -92,6 +95,24 @@ export default async function AdminHome() {
               href="/admin/instances"
               accent="neutral"
             />
+            <StatLink
+              label="Validator runs 24h"
+              value={validatorKpi.total}
+              href="/admin/validator"
+              accent={validatorKpi.byStatus.fail > 0 ? "red" : "neutral"}
+            />
+            <StatLink
+              label="Validator review 24h"
+              value={validatorKpi.byStatus.review}
+              href="/admin/validator?status=review"
+              accent={validatorKpi.byStatus.review > 0 ? "blue" : "neutral"}
+            />
+            <StatLink
+              label="Validator fail 24h"
+              value={validatorKpi.byStatus.fail}
+              href="/admin/validator?status=fail"
+              accent={validatorKpi.byStatus.fail > 0 ? "red" : "neutral"}
+            />
           </div>
         </div>
 
@@ -135,6 +156,9 @@ export default async function AdminHome() {
           </Link>
           <Link href="/admin/instances" className="inline-flex h-11 items-center rounded-full border border-neutral-200 bg-white px-5 text-sm font-medium text-neutral-900 hover:bg-neutral-50">
             Instancias
+          </Link>
+          <Link href="/admin/validator" className="inline-flex h-11 items-center rounded-full border border-neutral-200 bg-white px-5 text-sm font-medium text-neutral-900 hover:bg-neutral-50">
+            Validador
           </Link>
           <Link href="/admin/flags" className="inline-flex h-11 items-center rounded-full border border-neutral-200 bg-white px-5 text-sm font-medium text-neutral-900 hover:bg-neutral-50">
             Feature flags
