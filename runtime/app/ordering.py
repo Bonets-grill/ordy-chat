@@ -89,7 +89,13 @@ async def crear_pedido(
 
 
 async def obtener_link_pago(order_id: str) -> dict[str, Any]:
-    """Genera/reusa el Stripe Checkout Session. Devuelve {url, sessionId?, reused?}."""
+    """
+    Genera/reusa el Stripe Checkout Session.
+    Devuelve una de dos formas:
+      - {kind: "online", url, sessionId?, reused?}   ← Stripe OK
+      - {kind: "offline", reason, paymentMethods[], paymentNotes?}  ← cobrar en persona
+    Nunca lanza por "Stripe no configurado" — eso es un estado operativo normal.
+    """
     client = _get_http()
     r = await client.post(
         f"{_web_url()}/api/orders/{order_id}/pay",

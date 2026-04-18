@@ -165,13 +165,31 @@ async def _ejecutar_tool(
                 notes=tool_input.get("notes"),
             )
             link = await obtener_link_pago(order["orderId"])
-            return json.dumps({
+            result: dict[str, Any] = {
                 "ok": True,
                 "order_id": order["orderId"],
                 "total_eur": order["totalCents"] / 100,
                 "currency": order["currency"],
-                "payment_url": link["url"],
-            })
+            }
+            kind = link.get("kind")
+            if kind == "online":
+                result["payment_mode"] = "online"
+                result["payment_url"] = link.get("url")
+                result["instruccion_al_cliente"] = (
+                    "Confírmale el pedido y envíale el link de pago. "
+                    "Recuérdale que pague antes de recoger/servir."
+                )
+            else:
+                # kind == "offline" → Stripe desactivado o no configurado.
+                result["payment_mode"] = "offline"
+                result["payment_methods"] = link.get("paymentMethods", [])
+                result["payment_notes"] = link.get("paymentNotes")
+                result["instruccion_al_cliente"] = (
+                    "Confírmale el pedido con el TOTAL y dile que pague usando uno "
+                    "de los payment_methods disponibles (p.ej. al recoger, en efectivo). "
+                    "NO menciones links de pago online — no están activos."
+                )
+            return json.dumps(result)
 
         if tool_name == "agendar_cita":
             result = await crear_cita(

@@ -59,7 +59,7 @@ export async function createInstance(
         instanceName,
         integration: "WHATSAPP-BAILEYS",
         qrcode: true,
-        webhook: { url: webhookUrl, byEvents: true, events, ...(headers ? { headers } : {}) },
+        webhook: { url: webhookUrl, byEvents: false, events, ...(headers ? { headers } : {}) },
       }),
     });
   } catch (err) {
@@ -77,14 +77,19 @@ export async function setWebhook(
 ) {
   const events = opts.events ?? ["CONNECTION_UPDATE", "MESSAGES_UPSERT", "QRCODE_UPDATED"];
   const headers = opts.webhookSecret ? { "X-Ordy-Signature": opts.webhookSecret } : undefined;
+  // IMPORTANTE: byEvents=false → Evolution manda webhooks al mismo path fijo.
+  // Con byEvents=true añadiría sufijos como /messages-upsert que el runtime no tiene.
   return evoFetch(`/webhook/set/${instanceName}`, {
     method: "POST",
     body: JSON.stringify({
-      enabled: true,
-      url: webhookUrl,
-      webhookByEvents: true,
-      events,
-      ...(headers ? { headers } : {}),
+      webhook: {
+        enabled: true,
+        url: webhookUrl,
+        byEvents: false,
+        base64: false,
+        events,
+        ...(headers ? { headers } : {}),
+      },
     }),
   });
 }

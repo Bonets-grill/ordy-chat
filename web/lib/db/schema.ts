@@ -96,6 +96,8 @@ export const tenantMembers = pgTable(
 );
 
 // ── Agent config ────────────────────────────────────────────
+import { sql as _sqlTag } from "drizzle-orm";
+
 export const agentConfigs = pgTable("agent_configs", {
   tenantId: uuid("tenant_id").primaryKey().references(() => tenants.id, { onDelete: "cascade" }),
   businessName: text("business_name").notNull(),
@@ -111,8 +113,24 @@ export const agentConfigs = pgTable("agent_configs", {
   paused: boolean("paused").notNull().default(false),
   onboardingCompleted: boolean("onboarding_completed").notNull().default(false),
   maxMessagesPerHour: integer("max_messages_per_hour").notNull().default(200),
+  paymentMethods: text("payment_methods").array().notNull().default(_sqlTag`ARRAY['on_pickup','cash']::text[]`),
+  acceptOnlinePayment: boolean("accept_online_payment").notNull().default(false),
+  paymentNotes: text("payment_notes"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// ── FAQs (migración 007) ────────────────────────────────────
+export const faqs = pgTable("faqs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  question: text("question").notNull(),
+  answer: text("answer").notNull(),
+  orderIndex: integer("order_index").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type Faq = typeof faqs.$inferSelect;
 
 // ── Provider credentials ────────────────────────────────────
 export const providerCredentials = pgTable("provider_credentials", {

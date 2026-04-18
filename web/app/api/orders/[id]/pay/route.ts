@@ -30,14 +30,14 @@ export async function POST(
 
   // Si ya tiene link vigente y la orden sigue awaiting_payment, reutilizarlo.
   if (order.stripePaymentLinkUrl && order.status === "awaiting_payment") {
-    return NextResponse.json({ url: order.stripePaymentLinkUrl, reused: true });
+    return NextResponse.json({ kind: "online", url: order.stripePaymentLinkUrl, reused: true });
   }
 
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ?? "https://ordy-chat.vercel.app";
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ?? "https://ordychat.ordysuite.com";
 
   try {
-    const { url, sessionId } = await createPaymentLink(orderId, baseUrl);
-    return NextResponse.json({ url, sessionId });
+    const result = await createPaymentLink(orderId, baseUrl);
+    return NextResponse.json(result);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: msg }, { status: 502 });

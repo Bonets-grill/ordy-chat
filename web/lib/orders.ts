@@ -8,7 +8,7 @@
 
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { orderItems, orders, tenants } from "@/lib/db/schema";
+import { agentConfigs, orderItems, orders, tenants } from "@/lib/db/schema";
 import { stripeClient } from "@/lib/stripe";
 
 export type OrderItemInput = {
@@ -101,11 +101,17 @@ export async function createOrder(input: CreateOrderInput) {
   return order;
 }
 
+export type PaymentLinkResult =
+  | { kind: "online"; url: string; sessionId: string }
+  | { kind: "offline"; reason: "not_accepted" | "stripe_not_configured" | "stripe_error"; paymentMethods: string[]; paymentNotes: string | null };
+
 /**
- * Genera un Stripe Checkout Session para cobrar una orden. Devuelve URL que
- * se puede mandar al comensal por WhatsApp. La orden pasa a `awaiting_payment`.
+ * Genera un Stripe Checkout Session para cobrar una orden. Si el tenant NO
+ * acepta pagos online (accept_online_payment=false) o Stripe no está configurado,
+ * devuelve kind:"offline" con los métodos de pago aceptados — el bot dirá al
+ * cliente que pague al recoger / en efectivo / etc.
  */
-export async function createPaymentLink(orderId: string, baseUrl: string) {
+export async function createPaymentLink(orderId: string, baseUrl: string): Promise<PaymentLinkResult> {
   const [order] = await db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
   if (!order) throw new Error("order_not_found");
   if (order.status === "paid") throw new Error("order_already_paid");
@@ -113,14 +119,47 @@ export async function createPaymentLink(orderId: string, baseUrl: string) {
   const [tenant] = await db.select().from(tenants).where(eq(tenants.id, order.tenantId)).limit(1);
   if (!tenant) throw new Error("tenant_not_found");
 
+  const [cfg] = await db
+    .select({
+      paymentMethods: agentConfigs.paymentMethods,
+      acceptOnlinePayment: agentConfigs.acceptOnlinePayment,
+      paymentNotes: agentConfigs.paymentNotes,
+    })
+    .from(agentConfigs)
+    .where(eq(agentConfigs.tenantId, order.tenantId))
+    .limit(1);
+  const paymentMethods = cfg?.paymentMethods ?? ["on_pickup", "cash"];
+  const paymentNotes = cfg?.paymentNotes ?? null;
+
+  // Gate 1: el tenant no acepta online → offline directo.
+  if (!cfg?.acceptOnlinePayment) {
+    await db
+      .update(orders)
+      .set({ status: "pending", updatedAt: new Date() })
+      .where(eq(orders.id, order.id));
+    return { kind: "offline", reason: "not_accepted", paymentMethods, paymentNotes };
+  }
+
   const lines = await db
     .select()
     .from(orderItems)
     .where(and(eq(orderItems.orderId, order.id), eq(orderItems.tenantId, order.tenantId)));
 
-  const stripe = await stripeClient();
+  // Gate 2: Stripe puede no estar configurado en esta instancia (dev, sin keys aún).
+  let stripe;
+  try {
+    stripe = await stripeClient();
+  } catch {
+    await db
+      .update(orders)
+      .set({ status: "pending", updatedAt: new Date() })
+      .where(eq(orders.id, order.id));
+    return { kind: "offline", reason: "stripe_not_configured", paymentMethods, paymentNotes };
+  }
 
-  const session = await stripe.checkout.sessions.create({
+  let session: Awaited<ReturnType<typeof stripe.checkout.sessions.create>>;
+  try {
+    session = await stripe.checkout.sessions.create({
     mode: "payment",
     payment_method_types: ["card"],
     line_items: lines.map((ln) => {
@@ -153,6 +192,14 @@ export async function createPaymentLink(orderId: string, baseUrl: string) {
       ...(tenant.legalName ? { statement_descriptor_suffix: tenant.legalName.slice(0, 22) } : {}),
     },
   });
+  } catch (err) {
+    console.error("[stripe] checkout.sessions.create failed:", err);
+    await db
+      .update(orders)
+      .set({ status: "pending", updatedAt: new Date() })
+      .where(eq(orders.id, order.id));
+    return { kind: "offline", reason: "stripe_error", paymentMethods, paymentNotes };
+  }
 
   await db
     .update(orders)
@@ -164,7 +211,7 @@ export async function createPaymentLink(orderId: string, baseUrl: string) {
     })
     .where(eq(orders.id, order.id));
 
-  return { url: session.url, sessionId: session.id };
+  return { kind: "online", url: session.url ?? "", sessionId: session.id };
 }
 
 /**
