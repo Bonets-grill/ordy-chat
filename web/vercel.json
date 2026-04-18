@@ -9,7 +9,8 @@
     { "path": "/api/cron/evolution-health", "schedule": "*/10 * * * *" },
     { "path": "/api/cron/onboarding-reap", "schedule": "* * * * *" },
     { "path": "/api/cron/onboarding-purge", "schedule": "0 3 * * *" },
-    { "path": "/api/cron/commissions-mature", "schedule": "0 3 * * *" }
+    { "path": "/api/cron/commissions-mature", "schedule": "0 3 * * *" },
+    { "path": "/api/cron/resellers-payout-run", "schedule": "0 8 5 * *" }
   ],
   "headers": [
     {
