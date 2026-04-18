@@ -80,6 +80,13 @@ export const tenants = pgTable("tenants", {
   brandColor: text("brand_color").notNull().default("#7c3aed"),
   brandLogoUrl: text("brand_logo_url"),
   defaultVatRate: numeric("default_vat_rate", { precision: 5, scale: 2 }).notNull().default("10.00"),
+  // Régimen fiscal multi-región (migración 008).
+  taxRegion: text("tax_region").notNull().default("es_peninsula"),
+  taxSystem: text("tax_system").notNull().default("IVA"),
+  pricesIncludeTax: boolean("prices_include_tax").notNull().default(true),
+  taxRateStandard: numeric("tax_rate_standard", { precision: 5, scale: 2 }).notNull().default("10.00"),
+  taxRateAlcohol: numeric("tax_rate_alcohol", { precision: 5, scale: 2 }).notNull().default("21.00"),
+  taxLabel: text("tax_label").notNull().default("IVA"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -233,7 +240,10 @@ export const orders = pgTable(
     status: text("status").notNull().default("pending"),
     currency: text("currency").notNull().default("EUR"),
     subtotalCents: integer("subtotal_cents").notNull().default(0),
+    // vatCents queda DEPRECATED — callers nuevos usan taxCents. Durante transición
+    // escribimos en ambos con el mismo valor para compatibilidad retroactiva.
     vatCents: integer("vat_cents").notNull().default(0),
+    taxCents: integer("tax_cents").notNull().default(0),
     totalCents: integer("total_cents").notNull().default(0),
     stripePaymentLinkUrl: text("stripe_payment_link_url"),
     stripePaymentIntentId: text("stripe_payment_intent_id").unique(),
@@ -253,7 +263,10 @@ export const orderItems = pgTable("order_items", {
   name: text("name").notNull(),
   quantity: integer("quantity").notNull().default(1),
   unitPriceCents: integer("unit_price_cents").notNull(),
+  // vatRate DEPRECATED — usar taxRate. Durante transición ambos se llenan igual.
   vatRate: numeric("vat_rate", { precision: 5, scale: 2 }).notNull().default("10.00"),
+  taxRate: numeric("tax_rate", { precision: 5, scale: 2 }).notNull().default("10.00"),
+  taxLabel: text("tax_label").notNull().default("IVA"),
   lineTotalCents: integer("line_total_cents").notNull(),
   notes: text("notes"),
 });
