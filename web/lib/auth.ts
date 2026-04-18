@@ -3,6 +3,7 @@
 import { DrizzleAdapter } from "@auth/drizzle-adapter";
 import NextAuth, { type DefaultSession } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
+import Google from "next-auth/providers/google";
 import Resend from "next-auth/providers/resend";
 import { db } from "@/lib/db";
 import { accounts, sessions, users, verificationTokens } from "@/lib/db/schema";
@@ -105,6 +106,13 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   }),
   session: { strategy: ALLOW_DEV_LOGIN ? "jwt" : "database" },
   providers: [
+    ...(process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET
+      ? [Google({
+          clientId: process.env.AUTH_GOOGLE_ID,
+          clientSecret: process.env.AUTH_GOOGLE_SECRET,
+          allowDangerousEmailAccountLinking: true,
+        })]
+      : []),
     ...(process.env.AUTH_RESEND_KEY
       ? [Resend({
           apiKey: process.env.AUTH_RESEND_KEY,
