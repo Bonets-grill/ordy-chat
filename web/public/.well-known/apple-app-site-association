@@ -1,0 +1,21 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appIDs": ["TEAMID_PLACEHOLDER.com.ordysuite.ordychat"],
+        "components": [
+          { "/": "/dashboard*", "comment": "Abre dashboard en app si instalada" },
+          { "/": "/admin*", "comment": "Abre admin en app" },
+          { "/": "/conversations*", "comment": "Conversaciones" },
+          { "/": "/agent*", "comment": "Configuración de agente" },
+          { "/": "/billing*", "comment": "Facturación" },
+          { "/": "/onboarding*", "comment": "Onboarding" }
+        ]
+      }
+    ]
+  },
+  "webcredentials": {
+    "apps": ["TEAMID_PLACEHOLDER.com.ordysuite.ordychat"]
+  }
+}

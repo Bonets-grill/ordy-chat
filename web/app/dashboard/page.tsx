@@ -2,6 +2,7 @@ import { count, desc, eq } from "drizzle-orm";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
+import { PullToRefresh } from "@/components/pull-to-refresh";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { WhatsappConnection } from "@/components/whatsapp-connection";
@@ -47,6 +48,7 @@ export default async function DashboardPage() {
 
   return (
     <AppShell session={session} subscriptionStatus={bundle.tenant.subscriptionStatus} trialDaysLeft={bundle.trialDaysLeft}>
+      <PullToRefresh>
       <div className="space-y-8">
         <header>
           <h1 className="text-3xl font-semibold text-neutral-900">Hola, {bundle.tenant.name}</h1>
@@ -117,6 +119,7 @@ export default async function DashboardPage() {
           </Button>
         </div>
       </div>
+      </PullToRefresh>
     </AppShell>
   );
 }
