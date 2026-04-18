@@ -6,7 +6,7 @@ import { OnboardingWizard } from "./wizard";
 export default async function OnboardingPage({
   searchParams,
 }: {
-  searchParams: Promise<{ seed?: string }>;
+  searchParams: Promise<{ seed?: string; legacy?: string }>;
 }) {
   const session = await auth();
   if (!session) redirect("/signin?from=/onboarding");
@@ -17,6 +17,12 @@ export default async function OnboardingPage({
   }
 
   const params = await searchParams;
+
+  // Feature flag: redirect default al fast wizard si ONBOARDING_FAST_ENABLED=true
+  // y el usuario no viene explícitamente con ?legacy=1 (escape hatch).
+  if (process.env.ONBOARDING_FAST_ENABLED === "true" && params.legacy !== "1") {
+    redirect("/onboarding/fast");
+  }
 
   return (
     <div className="min-h-screen bg-surface-subtle">
