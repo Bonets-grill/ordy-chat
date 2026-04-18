@@ -271,3 +271,35 @@ export type TenantFiscalConfig = typeof tenantFiscalConfig.$inferSelect;
 export type Order = typeof orders.$inferSelect;
 export type OrderItem = typeof orderItems.$inferSelect;
 export type Receipt = typeof receipts.$inferSelect;
+
+// ── Appointments + handoff (migración 006) ─────────────────
+export const appointments = pgTable("appointments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  customerPhone: text("customer_phone").notNull(),
+  customerName: text("customer_name"),
+  startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+  durationMin: integer("duration_min").notNull().default(30),
+  title: text("title").notNull(),
+  notes: text("notes"),
+  status: text("status").notNull().default("pending"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const handoffRequests = pgTable("handoff_requests", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  conversationId: uuid("conversation_id").references(() => conversations.id, { onDelete: "set null" }),
+  customerPhone: text("customer_phone").notNull(),
+  customerName: text("customer_name"),
+  reason: text("reason").notNull(),
+  priority: text("priority").notNull().default("normal"),
+  status: text("status").notNull().default("pending"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  handledAt: timestamp("handled_at", { withTimezone: true }),
+  handledBy: uuid("handled_by").references(() => users.id, { onDelete: "set null" }),
+});
+
+export type Appointment = typeof appointments.$inferSelect;
+export type HandoffRequest = typeof handoffRequests.$inferSelect;

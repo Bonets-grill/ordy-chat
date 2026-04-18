@@ -6,6 +6,7 @@ from typing import Any
 
 from anthropic import AsyncAnthropic, APIStatusError, APIConnectionError
 
+from app.agent_tools import crear_cita, crear_handoff, listar_citas_del_cliente
 from app.ordering import crear_pedido, obtener_link_pago
 from app.tenants import TenantContext, obtener_anthropic_api_key
 
@@ -72,7 +73,80 @@ TOOLS: list[dict[str, Any]] = [
                 "notes": {"type": "string", "description": "Nota general para el pedido"},
             },
         },
-    }
+    },
+    {
+        "name": "agendar_cita",
+        "description": (
+            "Reserva una cita/mesa/servicio en la agenda del negocio y lo guarda en la base "
+            "de datos. ÚSALO cuando el cliente confirma fecha y hora específicas. Antes de "
+            "llamarla, confirma con el cliente la fecha, hora y tipo de cita para evitar "
+            "errores. Si el cliente dice 'mañana a las 13h', primero calcula la fecha exacta "
+            "(hoy es el día que indica la zona horaria del negocio) y confírmala."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["starts_at_iso", "title"],
+            "properties": {
+                "starts_at_iso": {
+                    "type": "string",
+                    "description": "Fecha y hora de inicio ISO-8601 con zona horaria (ej: 2026-04-20T13:30:00+02:00)",
+                },
+                "duration_min": {
+                    "type": "integer",
+                    "minimum": 5,
+                    "maximum": 480,
+                    "description": "Duración en minutos (default 30)",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Tipo de cita (ej: 'Mesa para 4', 'Limpieza dental', 'Corte de pelo')",
+                },
+                "customer_name": {"type": "string", "description": "Nombre del cliente si lo sabes"},
+                "notes": {"type": "string", "description": "Preferencias o notas (ej: 'sin piñones', 'celíaco')"},
+            },
+        },
+    },
+    {
+        "name": "mis_citas",
+        "description": (
+            "Consulta las próximas citas del cliente que está escribiendo ahora. Úsalo cuando "
+            "el cliente pregunta 'qué cita tengo', 'a qué hora es lo mío', 'quiero cambiar mi cita'. "
+            "Devuelve lista de appointments futuras con id, fecha, duración y título."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "minimum": 1, "maximum": 10, "description": "Máximo a devolver (default 5)"},
+            },
+        },
+    },
+    {
+        "name": "solicitar_humano",
+        "description": (
+            "Escala la conversación a un humano del negocio. ÚSALO cuando: (a) el cliente lo "
+            "pide explícitamente ('quiero hablar con una persona'), (b) el cliente está "
+            "enfadado y no logras resolver, (c) hay una emergencia o pregunta que requiere "
+            "a alguien con autoridad (cambios de política, reembolsos grandes), (d) no "
+            "tienes información para responder con certeza. Después de llamar esta tool, "
+            "dile al cliente que alguien del equipo le escribirá pronto."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["reason"],
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "description": "Por qué necesita un humano (ej: 'Cliente quiere reembolso de pedido #1234')",
+                },
+                "priority": {
+                    "type": "string",
+                    "enum": ["low", "normal", "urgent"],
+                    "description": "urgent = emergencia/cliente muy enfadado; normal = caso estándar",
+                },
+                "customer_name": {"type": "string", "description": "Nombre del cliente si lo sabes"},
+            },
+        },
+    },
 ]
 
 
@@ -80,8 +154,8 @@ async def _ejecutar_tool(
     tenant: TenantContext, tool_name: str, tool_input: dict[str, Any], customer_phone: str
 ) -> str:
     """Ejecuta una tool solicitada por Claude y devuelve el resultado serializable."""
-    if tool_name == "crear_pedido":
-        try:
+    try:
+        if tool_name == "crear_pedido":
             order = await crear_pedido(
                 tenant_slug=tenant.slug,
                 items=tool_input.get("items", []),
@@ -91,21 +165,48 @@ async def _ejecutar_tool(
                 notes=tool_input.get("notes"),
             )
             link = await obtener_link_pago(order["orderId"])
-            total_eur = order["totalCents"] / 100
             return json.dumps({
                 "ok": True,
                 "order_id": order["orderId"],
-                "total_eur": total_eur,
+                "total_eur": order["totalCents"] / 100,
                 "currency": order["currency"],
                 "payment_url": link["url"],
             })
-        except Exception as e:
-            logger.exception(
-                "tool crear_pedido falló",
-                extra={"tenant_slug": tenant.slug, "event": "tool_error", "tool": tool_name},
+
+        if tool_name == "agendar_cita":
+            result = await crear_cita(
+                tenant_id=tenant.id,
+                customer_phone=customer_phone,
+                starts_at_iso=tool_input.get("starts_at_iso", ""),
+                title=tool_input.get("title", ""),
+                duration_min=int(tool_input.get("duration_min") or 30),
+                customer_name=tool_input.get("customer_name"),
+                notes=tool_input.get("notes"),
             )
-            return json.dumps({"ok": False, "error": str(e)[:300]})
-    return json.dumps({"ok": False, "error": f"tool desconocida: {tool_name}"})
+            return json.dumps(result)
+
+        if tool_name == "mis_citas":
+            lim = int(tool_input.get("limit") or 5)
+            citas = await listar_citas_del_cliente(tenant.id, customer_phone, limit=lim)
+            return json.dumps({"ok": True, "count": len(citas), "citas": citas})
+
+        if tool_name == "solicitar_humano":
+            result = await crear_handoff(
+                tenant_id=tenant.id,
+                customer_phone=customer_phone,
+                reason=tool_input.get("reason", ""),
+                priority=tool_input.get("priority") or "normal",
+                customer_name=tool_input.get("customer_name"),
+            )
+            return json.dumps(result)
+
+        return json.dumps({"ok": False, "error": f"tool desconocida: {tool_name}"})
+    except Exception as e:
+        logger.exception(
+            "tool falló",
+            extra={"tenant_slug": tenant.slug, "event": "tool_error", "tool": tool_name},
+        )
+        return json.dumps({"ok": False, "error": str(e)[:300]})
 
 
 async def generar_respuesta(
