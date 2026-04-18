@@ -94,11 +94,50 @@ class ProveedorEvolution(ProveedorWhatsApp):
                     tipo = marker
                     break
             if tipo:
+                # Extraer URL o mediaKey según tipo
+                sub_key_map = {
+                    "image": "imageMessage",
+                    "audio": "audioMessage",
+                    "video": "videoMessage",
+                    "document": "documentMessage",
+                    "sticker": "stickerMessage",
+                }
+                sub = msg_obj.get(sub_key_map[tipo], {}) if tipo in sub_key_map else {}
+                media_ref = sub.get("url") or sub.get("directPath") or mid
+                caption = sub.get("caption") or None
                 mensajes.append(MensajeEntrante(
                     telefono=telefono, texto="", mensaje_id=mid, es_propio=propio,
                     tipo_no_texto=tipo,
+                    media_ref=media_ref or None,
+                    caption=caption,
                 ))
         return mensajes
+
+    async def descargar_media(self, media_ref: str) -> tuple[bytes, str] | None:
+        """Evolution: endpoint /chat/getBase64FromMediaMessage/{instance} necesita el message.key.id."""
+        import base64 as _b64
+        instance = self.credentials.get("instance_name", "")
+        api_key = os.getenv("EVOLUTION_API_KEY", "")
+        base_url = os.getenv("EVOLUTION_API_URL", "").rstrip("/")
+        if not (instance and api_key and base_url and media_ref):
+            return None
+        client = _get_http()
+        try:
+            r = await client.post(
+                f"{base_url}/chat/getBase64FromMediaMessage/{instance}",
+                json={"message": {"key": {"id": media_ref}}},
+                headers={"Content-Type": "application/json", "apikey": api_key},
+            )
+            if r.status_code not in (200, 201):
+                return None
+            data = r.json()
+            b64 = data.get("base64") or ""
+            if not b64:
+                return None
+            mime = data.get("mimetype") or "application/octet-stream"
+            return _b64.b64decode(b64), mime
+        except Exception:
+            return None
 
     async def enviar_mensaje(self, telefono: str, mensaje: str) -> bool:
         base_url = os.getenv("EVOLUTION_API_URL", "").rstrip("/")

@@ -12,8 +12,13 @@ class MensajeEntrante:
     texto: str
     mensaje_id: str
     es_propio: bool
-    # Para media no soportada (audio, imagen, video, doc).
+    # Tipo si no es texto: "image", "audio", "voice", "video", "document", "sticker".
     tipo_no_texto: str | None = None
+    # URL directa o ID interno del provider para descargar la media. El adapter
+    # concreto sabe cómo usarla (headers, endpoint, etc.).
+    media_ref: str | None = None
+    # Caption del adjunto (si la media lo trae).
+    caption: str | None = None
 
 
 class ProveedorWhatsApp(ABC):
@@ -32,6 +37,14 @@ class ProveedorWhatsApp(ABC):
     @abstractmethod
     async def verificar_firma(self, request: Request, body_bytes: bytes) -> bool:
         """Valida que el webhook venga del proveedor y no de un atacante."""
+
+    async def descargar_media(self, media_ref: str) -> tuple[bytes, str] | None:
+        """
+        Descarga el contenido binario de un adjunto (imagen, audio, etc).
+        Devuelve (bytes, mime_type) o None si el proveedor no soporta.
+        Implementación por defecto: no soportado. Cada adapter override si puede.
+        """
+        return None
 
     async def validar_webhook_get(self, request: Request) -> int | str | None:
         """GET de verificación (solo Meta lo usa). None si no aplica."""

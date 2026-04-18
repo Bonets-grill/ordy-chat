@@ -162,17 +162,45 @@ async def _procesar_mensaje(tenant: TenantContext, provider: str, msg: MensajeEn
         # Recargar adapter con httpx client cacheado.
         adapter = obtener_proveedor(provider, tenant.credentials, tenant.webhook_secret)
 
-        # Media no soportada → responder amablemente y registrar.
+        # Media entrante: si es imagen y podemos descargarla, la pasamos a Claude como
+        # content block. Para otros tipos (audio, video, etc.) seguimos respondiendo
+        # que solo leemos texto e imagen por ahora (audio llegará en futura iteración
+        # con Whisper/AssemblyAI).
+        media_blocks: list[dict] = []
+        caption_text = ""
         if msg.tipo_no_texto:
-            respuesta = (
-                f"Recibí tu {msg.tipo_no_texto}, pero por ahora solo sé leer mensajes de texto. "
-                "¿Podrías escribirme lo que necesitas?"
-            )
-            await adapter.enviar_mensaje(msg.telefono, respuesta)
-            logger.info("media no soportada", extra={**log_extra, "event": "media_skip"})
-            return
+            if msg.tipo_no_texto == "image" and msg.media_ref:
+                downloaded = await adapter.descargar_media(msg.media_ref)
+                if downloaded is not None:
+                    raw_bytes, mime = downloaded
+                    # Claude acepta jpeg, png, gif, webp < 5MB por imagen.
+                    if mime.startswith("image/") and len(raw_bytes) <= 5 * 1024 * 1024:
+                        import base64 as _b64
+                        media_blocks.append({
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": mime if mime in ("image/jpeg", "image/png", "image/gif", "image/webp") else "image/jpeg",
+                                "data": _b64.b64encode(raw_bytes).decode("ascii"),
+                            },
+                        })
+                        caption_text = (msg.caption or "").strip()
+                        logger.info(
+                            "image recibida",
+                            extra={**log_extra, "event": "image_in", "size": len(raw_bytes), "mime": mime},
+                        )
+            if not media_blocks:
+                # No pudimos procesar la media — respondemos amablemente.
+                respuesta = (
+                    f"Recibí tu {msg.tipo_no_texto}, pero por ahora solo sé leer texto "
+                    "e imágenes. ¿Podrías escribirme lo que necesitas?"
+                )
+                waited = await esperar_turno(msg.telefono)
+                await adapter.enviar_mensaje(msg.telefono, respuesta)
+                logger.info("media no soportada", extra={**log_extra, "event": "media_skip"})
+                return
 
-        if not msg.texto or len(msg.texto.strip()) < 1:
+        if not media_blocks and (not msg.texto or len(msg.texto.strip()) < 1):
             return
 
         # Rate limit por tenant.
@@ -188,7 +216,15 @@ async def _procesar_mensaje(tenant: TenantContext, provider: str, msg: MensajeEn
             return
 
         historial = await obtener_historial(tenant.id, msg.telefono)
-        respuesta, tin, tout = await generar_respuesta(tenant, msg.texto, historial, customer_phone=msg.telefono)
+        # Texto efectivo: si hay imagen con caption, usamos el caption como prompt.
+        texto_efectivo = msg.texto if msg.texto else caption_text
+        respuesta, tin, tout = await generar_respuesta(
+            tenant,
+            texto_efectivo,
+            historial,
+            customer_phone=msg.telefono,
+            media_blocks=media_blocks or None,
+        )
 
         await guardar_intercambio(
             tenant.id, msg.telefono, msg.texto, respuesta,

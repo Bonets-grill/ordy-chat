@@ -58,11 +58,37 @@ class ProveedorWhapi(ProveedorWhatsApp):
                     telefono=telefono, texto=texto, mensaje_id=mid, es_propio=propio,
                 ))
             elif msg_type in ("image", "audio", "voice", "video", "document", "sticker"):
+                media_obj = msg.get(msg_type) or {}
+                media_ref = media_obj.get("link") or media_obj.get("id") or ""
+                caption = media_obj.get("caption") or None
                 mensajes.append(MensajeEntrante(
                     telefono=telefono, texto="", mensaje_id=mid, es_propio=propio,
                     tipo_no_texto=msg_type,
+                    media_ref=media_ref or None,
+                    caption=caption,
                 ))
         return mensajes
+
+    async def descargar_media(self, media_ref: str) -> tuple[bytes, str] | None:
+        """Whapi: media_ref suele ser URL directa. Si es ID, usar /messages/media/{id}."""
+        if not media_ref:
+            return None
+        token = self.credentials.get("token", "")
+        client = _get_http()
+        try:
+            if media_ref.startswith("http"):
+                r = await client.get(media_ref, headers={"Authorization": f"Bearer {token}"})
+            else:
+                r = await client.get(
+                    f"https://gate.whapi.cloud/messages/media/{media_ref}",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+            if r.status_code != 200:
+                return None
+            ctype = r.headers.get("content-type", "application/octet-stream").split(";")[0].strip()
+            return r.content, ctype
+        except Exception:
+            return None
 
     async def enviar_mensaje(self, telefono: str, mensaje: str) -> bool:
         token = self.credentials.get("token", "")

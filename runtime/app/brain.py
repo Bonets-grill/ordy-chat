@@ -214,13 +214,18 @@ async def generar_respuesta(
     mensaje_usuario: str,
     historial: list[dict],
     customer_phone: str = "",
+    media_blocks: list[dict[str, Any]] | None = None,
 ) -> tuple[str, int, int]:
     """
     Devuelve (respuesta, tokens_in, tokens_out).
-    Implementa tool-use loop para permitir a Claude crear pedidos.
+    `media_blocks` es una lista de content blocks tipo {"type":"image","source":{"type":"base64",...}}
+    que se adjuntan al mensaje del usuario. Si hay media SIN texto, se mete un
+    placeholder "Mira esta imagen" para que Claude tenga contexto textual.
     """
     texto_limpio = (mensaje_usuario or "").strip()
-    if len(texto_limpio) < 2:
+    has_media = bool(media_blocks)
+
+    if not has_media and len(texto_limpio) < 2:
         return tenant.fallback_message, 0, 0
 
     if len(texto_limpio) > 8000:
@@ -244,7 +249,13 @@ async def generar_respuesta(
     messages: list[dict[str, Any]] = [
         {"role": m["role"], "content": m["content"]} for m in historial
     ]
-    messages.append({"role": "user", "content": texto_limpio})
+    if has_media:
+        # Content blocks: primero las imágenes/media, luego texto (aunque sea placeholder).
+        blocks: list[dict[str, Any]] = list(media_blocks or [])
+        blocks.append({"type": "text", "text": texto_limpio or "Mira el archivo que te acabo de enviar."})
+        messages.append({"role": "user", "content": blocks})
+    else:
+        messages.append({"role": "user", "content": texto_limpio})
 
     total_in = 0
     total_out = 0
