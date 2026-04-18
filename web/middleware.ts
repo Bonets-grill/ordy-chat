@@ -52,7 +52,19 @@ export default auth(async (req) => {
 
   if (pathname.startsWith("/admin")) {
     if (!isAuthed) return NextResponse.redirect(new URL("/signin?from=/admin", req.url));
-    if (!isAdmin) return NextResponse.redirect(new URL("/dashboard", req.url));
+    if (!isAdmin) {
+      // Resellers van a su panel, tenants al dashboard.
+      const dest = req.auth?.user?.role === "reseller" ? "/reseller" : "/dashboard";
+      return NextResponse.redirect(new URL(dest, req.url));
+    }
+  }
+
+  if (pathname.startsWith("/reseller")) {
+    if (!isAuthed) return NextResponse.redirect(new URL("/signin?from=/reseller", req.url));
+    if (req.auth?.user?.role !== "reseller") {
+      const dest = isAdmin ? "/admin/resellers" : "/dashboard";
+      return NextResponse.redirect(new URL(dest, req.url));
+    }
   }
 
   const protectedApp =
