@@ -104,7 +104,18 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     sessionsTable: sessions,
     verificationTokensTable: verificationTokens,
   }),
-  session: { strategy: ALLOW_DEV_LOGIN ? "jwt" : "database" },
+  // strategy: "jwt" SIEMPRE.
+  //
+  // Con "database" el cookie es solo un sessionToken opaco — el middleware
+  // edge runtime NO ejecuta el callback session() ni puede consultar Neon
+  // (no puede importar drizzle desde edge). Resultado: req.auth.user.role
+  // queda undefined en middleware → super_admin tratado como tenant_admin
+  // → redirect /admin → /dashboard → /onboarding/fast (bug observado).
+  //
+  // Con "jwt" el role va embebido en el cookie (JWT firmado), accesible
+  // en edge sin DB. El callback jwt() abajo refresca el role desde DB en
+  // cada login (no en cada request — eso costaría latencia).
+  session: { strategy: "jwt" },
   providers: [
     ...(process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET
       ? [Google({
@@ -168,14 +179,34 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     verifyRequest: "/verify",
   },
   callbacks: {
+    async jwt({ token, user, trigger }) {
+      // Embebe el role del usuario en el JWT para que el middleware edge
+      // (sin acceso a Neon) pueda leerlo. Refresca cuando cambia el user
+      // (login) o cuando se llama updateSession() ("update" trigger).
+      const userId = (user?.id as string | undefined) ?? (token?.sub as string | undefined);
+      if (userId && (trigger === "signIn" || trigger === "signUp" || trigger === "update" || !token.role)) {
+        const { eq } = await import("drizzle-orm");
+        const [row] = await db.select({ role: users.role }).from(users).where(eq(users.id, userId)).limit(1);
+        token.role = row?.role ?? "tenant_admin";
+        token.sub = userId;
+      }
+      return token;
+    },
     async session({ session, user, token }) {
       const userId = user?.id ?? (token?.sub as string | undefined);
       if (session.user && userId) {
         session.user.id = userId;
-        const { eq } = await import("drizzle-orm");
-        const [row] = await db.select({ role: users.role }).from(users).where(eq(users.id, userId)).limit(1);
-        session.user.role =
-          (row?.role as "super_admin" | "tenant_admin" | "reseller") ?? "tenant_admin";
+        // Con strategy:"jwt" el token ya tiene role embebido (callback jwt
+        // arriba). Si por algún motivo falta, fallback a DB lookup.
+        const tokenRole = token?.role as string | undefined;
+        if (tokenRole) {
+          session.user.role = tokenRole as "super_admin" | "tenant_admin" | "reseller";
+        } else {
+          const { eq } = await import("drizzle-orm");
+          const [row] = await db.select({ role: users.role }).from(users).where(eq(users.id, userId)).limit(1);
+          session.user.role =
+            (row?.role as "super_admin" | "tenant_admin" | "reseller") ?? "tenant_admin";
+        }
       }
       return session;
     },
