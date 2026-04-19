@@ -1,7 +1,7 @@
 import type { CapacitorConfig } from "@capacitor/cli";
 
 const isDev = process.env.CAPACITOR_ENV === "development";
-const prodUrl = process.env.CAPACITOR_URL ?? "https://app.ordychat.com";
+const prodUrl = process.env.CAPACITOR_URL ?? "https://ordychat.ordysuite.com";
 const devUrl = process.env.CAPACITOR_DEV_URL ?? "http://localhost:3000";
 
 const config: CapacitorConfig = {
@@ -15,6 +15,8 @@ const config: CapacitorConfig = {
     url: isDev ? devUrl : prodUrl,
     cleartext: isDev,
     allowNavigation: [
+      "ordychat.ordysuite.com",
+      "*.ordysuite.com",
       "app.ordychat.com",
       "ordychat.com",
       "*.vercel.app",
