@@ -36,13 +36,12 @@ Sí: añado un componente client calendar picker inline (sin dep nueva — HTML 
 
 ---
 
-## §3 DB — migración 013
+## §3 DB — migración 015
 
-**⚠️ La migración 012 está reservada por el reseller-panel. Esta feature usa 013.**
-**⚠️ No tocar hasta que el reseller-panel haga merge.**
+**Histórico:** este spec apuntaba originalmente a 013, pero entre 2026-04-18 y 2026-04-19 se consumieron 013 (`password_login`) y 014 (`tenant_timezone`). La feature usa **015**. Reseller-panel (012) ya mergeado, sin bloqueo.
 
 ```sql
--- shared/migrations/013_reservations_closed_days.sql
+-- shared/migrations/015_reservations_closed_days.sql
 BEGIN;
 
 ALTER TABLE agent_configs
@@ -62,7 +61,7 @@ ALTER TABLE agent_configs DROP COLUMN IF EXISTS reservations_closed_for;
 COMMIT;
 ```
 
-Drizzle schema (después del merge del reseller-panel):
+Drizzle schema:
 
 ```ts
 // web/lib/db/schema.ts — añadir a agentConfigs
@@ -153,7 +152,7 @@ Output: log de cuántas fechas purgadas y por cuántos tenants.
 
 ## §8 Fases (6 fases)
 
-1. **F1** Migración 013 + schema.ts + rollback.
+1. **F1** Migración 015 + schema.ts + rollback.
 2. **F2** Server action `setClosedDaysAction` + `getClosedDays()` helper + tests unit.
 3. **F3** `/agent/closed-days/page.tsx` + `ClosedDaysCalendar.tsx` client + link desde `/agent`.
 4. **F4** Runtime `brain.py` inyección de regla (+ tests pytest del prompt builder).
@@ -172,10 +171,10 @@ Total estimado: 2-3h.
 | Race: tenant añade fecha, cliente ya envió mensaje WhatsApp antes | Ambos guards (prompt + tool) protegen: el segundo mensaje del cliente ya ve la regla. |
 | Timezone del tenant distinto a Madrid | Usa `agent_configs.schedule` hint o columna `tz` futura. v1 asume Madrid. |
 | Array vs tabla separada | `DATE[]` suficiente hasta 365 fechas/tenant. Si llega a 1000+ (improbable) migrar a tabla. |
-| Merge conflict con reseller-panel | Esperar a que reseller-panel haga merge antes de ejecutar F1. |
+| Conflict con otra rama tocando agent_configs | Antes de F1, rebase contra main y validar que no hay ALTER pendiente. |
 
 ---
 
 ## §10 Compromiso
 
-No ejecutar F1 hasta que `feat/reseller-panel` esté en `main`. Después: the-architect → blueprint → audit-architect (5 auditores) → fases → push.
+Reseller-panel ya en `main` (commit `3560259`). Flujo: the-architect → blueprint → audit-architect (5 auditores) → fases → push.

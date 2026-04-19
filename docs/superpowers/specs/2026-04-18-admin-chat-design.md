@@ -2,7 +2,7 @@
 
 **Fecha:** 2026-04-18
 **Sprint:** 6 (propuesto)
-**Dependencias:** Sprint 4 (PWA) ✅ · Reseller panel merged · Migración 013 `reservations_closed_for`
+**Dependencias:** Sprint 4 (PWA) ✅ · Reseller panel merged ✅ · Migración 015 `reservations_closed_for` (renumerada desde 013: 013=password_login, 014=tenant_timezone ya consumidas)
 **Scope:** permitir que el dueño del tenant chatee (texto o audio) con "su agente" para darle instrucciones tipo "cierra reservas de hoy", "quita el plato X", "pausa 2 horas", y que el agente las ejecute en su propia config — todo desde la PWA móvil con feel nativo.
 
 ---
@@ -120,7 +120,7 @@ Cada comando genera 1-N filas:
 ## §4 DB
 
 **No añade tablas.** Usa:
-- `agent_configs.reservations_closed_for` (migración 013 — pendiente de reseller merge)
+- `agent_configs.reservations_closed_for` (migración 015 — la crea el spec closed-days, dependency de F1 aquí)
 - `agent_configs.paused` (ya existe)
 - `agent_configs.knowledge` (ya existe, JSONB)
 - `agent_configs.schedule` / `tone` / `fallback_message` (ya existen)
@@ -181,7 +181,7 @@ Response: same shape as /command + {transcript: string}
 
 ## §8 Fases (8 fases)
 
-1. **F1** — Migración 013 (heredada de spec "closed days"). Schema.ts + reservations_closed_for.
+1. **F1** — Migración 015 (heredada de spec "closed days"). Schema.ts + reservations_closed_for. Si closed-days se ejecuta primero (recomendado), esta fase se salta.
 2. **F2** — Groq client + Whisper helper (`lib/speech/transcribe.ts`). Env var setup.
 3. **F3** — Tool definitions (12 tools Zod schemas) + ejecutor (`lib/agent-chat/tools.ts`).
 4. **F4** — Claude Haiku orchestrator (`lib/agent-chat/orchestrator.ts`) con tool_use loop + rate-limit.
@@ -204,7 +204,7 @@ Estimado: 6-8h de trabajo real.
 | Usuario sube audio >60s o >2MB | LOW | MediaRecorder client-side corta. Server rechaza con 413. |
 | Groq API down | LOW | Fallback error "no pude entender tu audio, escríbelo por favor". |
 | Cost runaway | MEDIUM | flag global $5/mes/tenant. 429 con ETA de reset. |
-| Migración 013 no mergeada aún | BLOCKING F1 | Esperar a que reseller-panel haga merge. |
+| Migración 015 (closed_for) no aplicada aún | BLOCKING F1 | Ejecutar spec closed-days antes de Admin Chat. |
 
 ---
 
@@ -220,10 +220,9 @@ Estimado: 6-8h de trabajo real.
 ## §11 Compromiso de ejecución
 
 - NO tocar hasta que:
-  1. Reseller-panel merge en main.
-  2. Mario autorice explícitamente.
+  1. Reseller-panel merge en main. ✅ (commit `3560259`)
+  2. Closed-days spec ejecutado (migración 015 aplicada + schema.ts).
+  3. Mario autorice explícitamente.
 - the-architect → blueprint detallado con contratos TS completos
 - audit-architect (5 auditores paralelos)
 - Fases commit-push incremental
-
-No ejecutar migración 013 hasta coordinar con agente del reseller-panel.
