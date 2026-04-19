@@ -81,6 +81,9 @@ export const tenants = pgTable("tenants", {
   billingPostalCode: text("billing_postal_code"),
   billingCity: text("billing_city"),
   billingCountry: text("billing_country").notNull().default("ES"),
+  // IANA tz. Europe/Madrid default, Atlantic/Canary para Canarias. Migración 014.
+  // Usado por runtime/app/tenants.py para inyectar <ahora> con hora local correcta.
+  timezone: text("timezone").notNull().default("Europe/Madrid"),
   brandColor: text("brand_color").notNull().default("#7c3aed"),
   brandLogoUrl: text("brand_logo_url"),
   defaultVatRate: numeric("default_vat_rate", { precision: 5, scale: 2 }).notNull().default("10.00"),

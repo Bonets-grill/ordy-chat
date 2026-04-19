@@ -385,8 +385,18 @@ function ConflictResolver({
   onResolve: (resoluciones: Record<string, unknown>) => void;
 }) {
   const [choices, setChoices] = React.useState<Record<string, unknown>>({});
+  // Horario SIEMPRE editable y confirmado por humano. Bug observado (Bonets
+  // Grill): el scraper/merger metía "L-V 9:00-18:00" desde fuentes poco
+  // fiables y acababa en el system_prompt sin que nadie lo viese. Ahora lo
+  // presentamos siempre, pre-filled con canonicos.hours si existe.
+  const hoursInConflict = conflictos.some((c) => c.campo === "hours");
+  const [hours, setHours] = React.useState<string>(
+    typeof canonicos.hours === "string" ? canonicos.hours : "",
+  );
+  const [hoursAck, setHoursAck] = React.useState<boolean>(false);
 
   const allResolved = conflictos.every((c) => c.campo in choices);
+  const hoursOk = hours.trim().length >= 3 || hoursAck;
 
   return (
     <section className="rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
@@ -397,6 +407,41 @@ function ConflictResolver({
           ? `Hay ${conflictos.length} diferencia(s) entre fuentes — elige cuál usar.`
           : "No hay conflictos."}
       </p>
+
+      {!hoursInConflict && (
+        <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-4">
+          <div className="flex items-center gap-2">
+            <Badge>horario</Badge>
+            <span className="text-xs text-blue-900">Revisa tu horario de atención (crítico para reservas)</span>
+          </div>
+          <Input
+            className="mt-2"
+            value={hours}
+            onChange={(e) => {
+              setHours(e.target.value);
+              setHoursAck(false);
+            }}
+            placeholder={
+              typeof canonicos.hours === "string"
+                ? canonicos.hours
+                : "Ej: Mar-Sáb 13:30-16:30 y 19:30-23:00. Dom-Lun cerrado."
+            }
+          />
+          <p className="mt-2 text-xs text-blue-800">
+            Si lo dejas vacío el bot no podrá rechazar reservas fuera de hora — úsalo solo si de verdad abres 24/7.
+          </p>
+          {hours.trim().length < 3 && (
+            <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs text-blue-900">
+              <input
+                type="checkbox"
+                checked={hoursAck}
+                onChange={(e) => setHoursAck(e.target.checked)}
+              />
+              Confirmo que mi negocio está abierto 24/7.
+            </label>
+          )}
+        </div>
+      )}
 
       {Object.keys(canonicos).length > 0 ? (
         <details className="mt-4 rounded-lg border border-neutral-200 bg-neutral-50 p-4 text-sm">
@@ -453,8 +498,16 @@ function ConflictResolver({
 
       <div className="mt-6 flex justify-end">
         <Button
-          disabled={!allResolved && conflictos.length > 0}
-          onClick={() => onResolve(choices)}
+          disabled={(!allResolved && conflictos.length > 0) || !hoursOk}
+          onClick={() => {
+            // Si el user editó horario (no había conflicto), inyectamos como
+            // resolución para que el merger lo use sobre canonicos.hours.
+            const finalChoices: Record<string, unknown> = { ...choices };
+            if (!hoursInConflict && hours.trim().length >= 3) {
+              finalChoices.hours = hours.trim();
+            }
+            onResolve(finalChoices);
+          }}
           variant="brand"
           size="lg"
         >
