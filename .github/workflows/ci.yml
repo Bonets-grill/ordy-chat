@@ -122,6 +122,10 @@ jobs:
           RUNTIME_INTERNAL_SECRET: ci-internal
           NEXT_PUBLIC_APP_URL: http://localhost:3000
           ALLOW_DEV_LOGIN: "1"
+          # El signin page usa NEXT_PUBLIC_ALLOW_DEV_LOGIN (embedido en bundle client-side).
+          # Sin este var, devMode=false en el cliente y el botón de magic mode dice
+          # "Enviar enlace" en lugar de "Entrar", rompiendo el helper e2e loginDev.
+          NEXT_PUBLIC_ALLOW_DEV_LOGIN: "1"
           SUPER_ADMIN_EMAIL: e2e-admin@ci.ordychat.local
         run: pnpm test:e2e
 
