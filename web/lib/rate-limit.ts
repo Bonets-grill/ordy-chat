@@ -137,6 +137,19 @@ export async function limitByIpRegister(
   return r.success ? { ok: true } : { ok: false, reset: r.reset };
 }
 
+/**
+ * Landing "mejorar prompt" — endpoint público que llama a Anthropic.
+ * 5 requests / 10 min / IP. Usuario real pulsa 1-2 veces; bots bloqueados.
+ */
+export async function limitByIpImprovePrompt(
+  ip: string,
+): Promise<{ ok: true } | { ok: false; reset: number }> {
+  const rl = limiter("improve-prompt-ip", 5, "10 m");
+  if (!rl) return { ok: true };
+  const r = await rl.limit(ip);
+  return r.success ? { ok: true } : { ok: false, reset: r.reset };
+}
+
 /** Devuelve true si Upstash está configurado (útil para logs/health). */
 export function rateLimitConfigured(): boolean {
   return Boolean(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);
