@@ -493,6 +493,29 @@ async def generar_respuesta(
         # Bloque NO cacheado: cambia por usuario y tras cada pedido/cita.
         system_blocks.append({"type": "text", "text": contexto_bloque})
 
+    # Multi-agent orchestrator (best-effort). Solo activo si el tenant tiene
+    # tenant_add_ons.multi_agent_enabled=true. Si el query falla o el flag
+    # está off, el flujo monolítico sigue igual — zero-risk.
+    try:
+        from app import memory as _memory_mod
+        from app.agents.orchestrator import (
+            build_enabled_set,
+            build_focus_block,
+            get_tenant_add_ons,
+        )
+        pool = getattr(_memory_mod, "_pool", None)
+        if pool is not None:
+            addons = await get_tenant_add_ons(pool, tenant.id)
+            if addons and addons.get("multi_agent_enabled"):
+                enabled = build_enabled_set(addons)
+                focus = build_focus_block(texto_limpio or "", enabled)
+                system_blocks.append({"type": "text", "text": focus})
+    except Exception:
+        logger.exception(
+            "orchestrator focus_block falló (flujo sigue sin multi-agent)",
+            extra={"tenant_slug": tenant.slug, "event": "orchestrator_error"},
+        )
+
     try:
         for _ in range(MAX_TOOL_ITERATIONS):
             resp = await client.messages.create(
