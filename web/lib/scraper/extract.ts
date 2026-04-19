@@ -90,7 +90,10 @@ export async function extractWithClaude(consolidatedText: string): Promise<Extra
     : consolidatedText;
 
   const resp = await client.messages.create({
-    model: "claude-sonnet-4-6",
+    // Opus 4.7: una sola vez por onboarding, extrae mejor datos estructurados
+    // de HTML largo (precios, carta, alergias, maridajes) — determina calidad
+    // downstream del system_prompt del tenant.
+    model: "claude-opus-4-7",
     max_tokens: 8192,
     system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
     messages: [
