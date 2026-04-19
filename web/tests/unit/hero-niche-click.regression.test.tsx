@@ -3,9 +3,10 @@
 // Found by /qa on 2026-04-19
 // Report: .gstack/qa-reports/qa-report-ordychat-ordysuite-com-2026-04-19.md
 //
-// El bug: clicar un nicho (Restaurante, Clínica dental, etc.) hacía
+// El bug: clicar un nicho (Restaurante, Bar de tapas, etc.) hacía
 // setValue(n.seed) incondicionalmente, destruyendo cualquier texto que el
 // usuario ya hubiera escrito en el textarea del hero.
+// Actualizado 2026-04-19 post-pivot a hostelería-only (sin Clínica/Barbería).
 //
 // Fix: setValue((v) => v.trim() ? v : n.seed) — solo rellena si vacío.
 
@@ -29,7 +30,8 @@ describe("Hero niche button", () => {
     const restaurante = screen.getByRole("button", { name: "Restaurante" });
     fireEvent.click(restaurante);
 
-    expect(textarea.value).toContain("restaurante");
+    // Case-insensitive: seeds actuales empiezan con "Restaurante" (mayúscula)
+    expect(textarea.value.toLowerCase()).toContain("restaurante");
     expect(textarea.value.length).toBeGreaterThan(0);
   });
 
@@ -42,8 +44,8 @@ describe("Hero niche button", () => {
     expect(textarea.value).toBe(miTexto);
 
     // Ahora cambia de opinión y clica un nicho — el texto debe sobrevivir.
-    const dental = screen.getByRole("button", { name: "Clínica dental" });
-    fireEvent.click(dental);
+    const otroNicho = screen.getByRole("button", { name: "Bar de tapas" });
+    fireEvent.click(otroNicho);
 
     expect(textarea.value).toBe(miTexto);
   });
@@ -53,9 +55,9 @@ describe("Hero niche button", () => {
     const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
 
     fireEvent.change(textarea, { target: { value: "   \n  " } });
-    const barberia = screen.getByRole("button", { name: "Barbería" });
-    fireEvent.click(barberia);
+    const cerveceria = screen.getByRole("button", { name: "Cervecería" });
+    fireEvent.click(cerveceria);
 
-    expect(textarea.value).toContain("Barbería");
+    expect(textarea.value.toLowerCase()).toContain("cervecería");
   });
 });
