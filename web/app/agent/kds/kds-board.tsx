@@ -244,6 +244,15 @@ function OrderCard({
     0,
     Math.round((Date.now() - new Date(order.createdAt).getTime()) / 60000),
   );
+  // Formato humano: <60min = "Xm", <24h = "Xh", más = "Xd". 2724 min era
+  // ruido visual que enmascaraba el problema real (pedidos antiguos olvidados).
+  const ageLabel =
+    minutesAgo < 60
+      ? `${minutesAgo} min`
+      : minutesAgo < 1440
+        ? `${Math.round(minutesAgo / 60)} h`
+        : `${Math.round(minutesAgo / 1440)} d`;
+  const isStale = minutesAgo > 180; // >3h = pedido olvidado, se destaca en rojo
   const hasNotes =
     order.notes || order.items.some((it) => it.notes);
 
@@ -258,8 +267,12 @@ function OrderCard({
         <span className="font-semibold text-neutral-900">
           {order.tableNumber ? `Mesa ${order.tableNumber}` : "Para llevar"}
         </span>
-        <span className={`rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${tone.badge}`}>
-          {minutesAgo} min
+        <span
+          className={`rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+            isStale ? "bg-rose-100 text-rose-800 ring-1 ring-rose-200" : tone.badge
+          }`}
+        >
+          {ageLabel}
         </span>
       </div>
       {order.customerName ? (
