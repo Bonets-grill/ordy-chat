@@ -8,8 +8,9 @@ export default defineConfig({
     },
   },
   test: {
-    include: ["tests/unit/**/*.test.ts"],
+    include: ["tests/unit/**/*.test.ts", "tests/unit/**/*.test.tsx"],
     globals: false,
     environment: "node",
+    // Component tests opt in via `// @vitest-environment happy-dom` en el top del file.
   },
 });
