@@ -3,7 +3,7 @@
 
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { AppShell } from "@/components/app-shell";
+import { AdminShell } from "@/components/admin-shell";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AdminAuthError, requireSuperAdmin } from "@/lib/admin/auth";
@@ -80,7 +80,7 @@ export default async function AdminValidatorPage({
   ]);
 
   return (
-    <AppShell session={session}>
+    <AdminShell session={session}>
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
@@ -161,6 +161,6 @@ export default async function AdminValidatorPage({
           </CardContent>
         </Card>
       </div>
-    </AppShell>
+    </AdminShell>
   );
 }

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { AppShell } from "@/components/app-shell";
+import { AdminShell } from "@/components/admin-shell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AdminAuthError, requireSuperAdmin } from "@/lib/admin/auth";
 import { getInstanceRows, type InstanceTier } from "@/lib/admin/queries";
@@ -49,7 +49,7 @@ export default async function AdminInstancesPage({
   });
 
   return (
-    <AppShell session={session}>
+    <AdminShell session={session}>
       <div className="space-y-6">
         <header>
           <h1 className="text-3xl font-semibold text-neutral-900">Instancias WhatsApp</h1>
@@ -157,6 +157,6 @@ export default async function AdminInstancesPage({
           </CardContent>
         </Card>
       </div>
-    </AppShell>
+    </AdminShell>
   );
 }

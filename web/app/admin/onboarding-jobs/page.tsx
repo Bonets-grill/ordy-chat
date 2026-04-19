@@ -3,7 +3,7 @@
 import { desc, eq, inArray, and, gte } from "drizzle-orm";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { AppShell } from "@/components/app-shell";
+import { AdminShell } from "@/components/admin-shell";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AdminAuthError, requireSuperAdmin } from "@/lib/admin/auth";
@@ -99,7 +99,7 @@ export default async function AdminOnboardingJobsPage({
     .limit(50);
 
   return (
-    <AppShell session={session}>
+    <AdminShell session={session}>
       <div className="space-y-6">
         <header>
           <h1 className="text-3xl font-semibold text-neutral-900">Onboarding jobs</h1>
@@ -188,7 +188,7 @@ export default async function AdminOnboardingJobsPage({
           </CardContent>
         </Card>
       </div>
-    </AppShell>
+    </AdminShell>
   );
 }
 

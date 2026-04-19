@@ -1,6 +1,6 @@
 import { desc, eq } from "drizzle-orm";
 import { redirect } from "next/navigation";
-import { AppShell } from "@/components/app-shell";
+import { AdminShell } from "@/components/admin-shell";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { auth } from "@/lib/auth";
@@ -21,7 +21,7 @@ export default async function AdminTenantsPage() {
     .limit(200);
 
   return (
-    <AppShell session={session}>
+    <AdminShell session={session}>
       <h1 className="text-3xl font-semibold text-neutral-900">Tenants</h1>
       <p className="mt-1 text-neutral-500">Todos los clientes de la plataforma.</p>
 
@@ -56,6 +56,6 @@ export default async function AdminTenantsPage() {
           </table>
         </CardContent>
       </Card>
-    </AppShell>
+    </AdminShell>
   );
 }

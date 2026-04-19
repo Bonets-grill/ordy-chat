@@ -1,7 +1,7 @@
 import { desc, eq, sql } from "drizzle-orm";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { AppShell } from "@/components/app-shell";
+import { AdminShell } from "@/components/admin-shell";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusButtons } from "./status-buttons";
@@ -74,7 +74,7 @@ export default async function ResellerDetailPage({
     .limit(12);
 
   return (
-    <AppShell session={session}>
+    <AdminShell session={session}>
       <Link href="/admin/resellers" className="text-xs text-neutral-500 hover:underline">
         ← Resellers
       </Link>
@@ -187,7 +187,7 @@ export default async function ResellerDetailPage({
           )}
         </CardContent>
       </Card>
-    </AppShell>
+    </AdminShell>
   );
 }
 

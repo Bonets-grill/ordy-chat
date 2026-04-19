@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { AppShell } from "@/components/app-shell";
+import { AdminShell } from "@/components/admin-shell";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
@@ -16,7 +16,7 @@ export default async function AdminSettingsPage() {
   for (const r of rows) populated[r.key] = !!r.valueEncrypted;
 
   return (
-    <AppShell session={session}>
+    <AdminShell session={session}>
       <h1 className="text-3xl font-semibold text-neutral-900">API keys globales</h1>
       <p className="mt-1 text-neutral-500">
         Se guardan cifradas con AES-256-GCM y solo tú puedes verlas. Si un tenant no trae su propia
@@ -34,6 +34,6 @@ export default async function AdminSettingsPage() {
           <SettingsForm populated={populated} descriptions={Object.fromEntries(rows.map((r) => [r.key, r.description ?? ""]))} />
         </CardContent>
       </Card>
-    </AppShell>
+    </AdminShell>
   );
 }

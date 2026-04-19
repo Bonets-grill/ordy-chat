@@ -1,7 +1,7 @@
 import { count, desc, eq } from "drizzle-orm";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { AppShell } from "@/components/app-shell";
+import { AdminShell } from "@/components/admin-shell";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getInstancesKpis, getOnboardingJobsKpis } from "@/lib/admin/queries";
@@ -42,7 +42,7 @@ export default async function AdminHome() {
   const recent = await db.select().from(tenants).orderBy(desc(tenants.createdAt)).limit(10);
 
   return (
-    <AppShell session={session}>
+    <AdminShell session={session}>
       <div className="space-y-8">
         <header>
           <div className="flex items-center gap-3">
@@ -168,7 +168,7 @@ export default async function AdminHome() {
           </Link>
         </div>
       </div>
-    </AppShell>
+    </AdminShell>
   );
 }
 

@@ -1,7 +1,7 @@
 import { desc, eq, sql } from "drizzle-orm";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { AppShell } from "@/components/app-shell";
+import { AdminShell } from "@/components/admin-shell";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ApproveButton } from "./approve-button";
@@ -39,7 +39,7 @@ export default async function AdminPayoutsPage() {
     .where(eq(resellerPayouts.status, "ready"));
 
   return (
-    <AppShell session={session}>
+    <AdminShell session={session}>
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-3xl font-semibold text-neutral-900">Payouts</h1>
@@ -143,7 +143,7 @@ export default async function AdminPayoutsPage() {
           )}
         </CardContent>
       </Card>
-    </AppShell>
+    </AdminShell>
   );
 }
 

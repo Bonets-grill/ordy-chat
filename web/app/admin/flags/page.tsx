@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { AppShell } from "@/components/app-shell";
+import { AdminShell } from "@/components/admin-shell";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { AdminAuthError, requireSuperAdmin } from "@/lib/admin/auth";
 import { listFlagStates } from "@/lib/admin/flags";
@@ -26,7 +26,7 @@ export default async function AdminFlagsPage() {
   const states = await listFlagStates();
 
   return (
-    <AppShell session={session}>
+    <AdminShell session={session}>
       <div className="space-y-6">
         <header>
           <div className="flex items-center gap-3">
@@ -59,6 +59,6 @@ export default async function AdminFlagsPage() {
           </CardContent>
         </Card>
       </div>
-    </AppShell>
+    </AdminShell>
   );
 }

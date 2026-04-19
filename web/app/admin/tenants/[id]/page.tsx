@@ -4,7 +4,7 @@
 import { eq } from "drizzle-orm";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { AppShell } from "@/components/app-shell";
+import { AdminShell } from "@/components/admin-shell";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AdminAuthError, requireSuperAdmin } from "@/lib/admin/auth";
@@ -77,7 +77,7 @@ export default async function AdminTenantDetailPage({
       : globalDefault;
 
   return (
-    <AppShell session={session}>
+    <AdminShell session={session}>
       <div className="space-y-6">
         <div>
           <Link href="/admin/tenants" className="text-sm text-neutral-500 hover:text-neutral-900">
@@ -140,6 +140,6 @@ export default async function AdminTenantDetailPage({
           </CardContent>
         </Card>
       </div>
-    </AppShell>
+    </AdminShell>
   );
 }

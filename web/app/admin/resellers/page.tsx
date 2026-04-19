@@ -1,7 +1,7 @@
 import { desc, eq, sql } from "drizzle-orm";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { AppShell } from "@/components/app-shell";
+import { AdminShell } from "@/components/admin-shell";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { auth } from "@/lib/auth";
@@ -72,7 +72,7 @@ export default async function AdminResellersPage() {
   const totalPending = enriched.reduce((a, b) => a + b.commissionsPendingCents, 0);
 
   return (
-    <AppShell session={session}>
+    <AdminShell session={session}>
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-3xl font-semibold text-neutral-900">Resellers</h1>
@@ -172,7 +172,7 @@ export default async function AdminResellersPage() {
           )}
         </CardContent>
       </Card>
-    </AppShell>
+    </AdminShell>
   );
 }
 

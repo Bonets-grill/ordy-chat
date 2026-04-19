@@ -3,7 +3,7 @@
 import { eq } from "drizzle-orm";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { AppShell } from "@/components/app-shell";
+import { AdminShell } from "@/components/admin-shell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AdminAuthError, requireSuperAdmin } from "@/lib/admin/auth";
 import { auth } from "@/lib/auth";
@@ -54,7 +54,7 @@ export default async function OnboardingJobDetailPage({
   if (!job) notFound();
 
   return (
-    <AppShell session={session}>
+    <AdminShell session={session}>
       <div className="space-y-6">
         <header>
           <div className="text-sm">
@@ -162,6 +162,6 @@ export default async function OnboardingJobDetailPage({
           </CardContent>
         </Card>
       </div>
-    </AppShell>
+    </AdminShell>
   );
 }
