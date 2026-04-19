@@ -75,6 +75,33 @@ async def health():
     return {"service": "ordy-chat-runtime", "status": "ok"}
 
 
+@app.get("/version")
+async def version():
+    """
+    Devuelve commit SHA actual + feature flags de runtime importantes.
+    Útil para verificar qué revisión está desplegada en Railway.
+    Variables de entorno RAILWAY_GIT_COMMIT_SHA las inyecta Railway solo;
+    fallback a os.getenv('GIT_SHA') o 'unknown'.
+    """
+    import os
+    sha = (
+        os.getenv("RAILWAY_GIT_COMMIT_SHA")
+        or os.getenv("GIT_SHA")
+        or "unknown"
+    )
+    return {
+        "service": "ordy-chat-runtime",
+        "commit": sha[:12] if sha != "unknown" else sha,
+        "features": {
+            # Flags para que el deploy verifique que el código nuevo está vivo.
+            "now_block": True,       # brain.py _build_now_block (inyecta fecha/tz/día)
+            "schedule_rules": True,  # <horario> con reglas innegociables
+            "crear_cita_guards": True,  # rechaza pasado/>90d en agent_tools
+            "tenant_timezone": True,  # columna tenants.timezone migration 014
+        },
+    }
+
+
 # ────────────────────────────────────────────────────────────
 # /render — Playwright headless para SPAs. Usado por el scraper del web.
 # Autenticación por header compartido RUNTIME_INTERNAL_SECRET.
