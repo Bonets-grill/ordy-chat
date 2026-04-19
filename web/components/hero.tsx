@@ -41,8 +41,8 @@ export function Hero() {
   function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     const text = value.trim();
-    const qs = text ? `?seed=${encodeURIComponent(text)}` : "";
-    router.push(`/signin${qs ? `?from=/onboarding${qs}` : "?from=/onboarding"}`);
+    const nextPath = text ? `/onboarding?seed=${encodeURIComponent(text)}` : "/onboarding";
+    router.push(`/signin?from=${encodeURIComponent(nextPath)}`);
   }
 
   return (
