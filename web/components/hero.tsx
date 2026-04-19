@@ -2,7 +2,7 @@
 
 "use client";
 
-import { Sparkles, Send } from "lucide-react";
+import { Loader2, Sparkles, Send } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import * as React from "react";
@@ -77,6 +77,8 @@ export function Hero() {
   const router = useRouter();
   const [value, setValue] = React.useState("");
   const [focused, setFocused] = React.useState(false);
+  const [improving, setImproving] = React.useState(false);
+  const [improveError, setImproveError] = React.useState<string | null>(null);
   const demo = useTypewriter(value === "" && !focused);
 
   function onSubmit(e: React.FormEvent) {
@@ -84,6 +86,38 @@ export function Hero() {
     const text = value.trim();
     const nextPath = text ? `/onboarding?seed=${encodeURIComponent(text)}` : "/onboarding";
     router.push(`/signin?from=${encodeURIComponent(nextPath)}`);
+  }
+
+  async function onImprove() {
+    const text = value.trim();
+    if (!text || improving) return;
+    setImproving(true);
+    setImproveError(null);
+    try {
+      const res = await fetch("/api/landing/improve-prompt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      if (res.status === 429) {
+        setImproveError("Demasiados intentos. Prueba en unos minutos.");
+        return;
+      }
+      if (!res.ok) {
+        setImproveError("No se pudo mejorar ahora. Reintenta.");
+        return;
+      }
+      const data = (await res.json()) as { improved?: string };
+      if (data?.improved && typeof data.improved === "string") {
+        setValue(data.improved);
+      } else {
+        setImproveError("Respuesta vacía. Reintenta.");
+      }
+    } catch {
+      setImproveError("Error de red. Reintenta.");
+    } finally {
+      setImproving(false);
+    }
   }
 
   return (
@@ -128,7 +162,7 @@ export function Hero() {
 
         <form
           onSubmit={onSubmit}
-          className="neon-wrap relative mt-10 w-full max-w-3xl rounded-2xl bg-black p-1 shadow-[0_30px_80px_-20px_rgba(236,72,153,0.3)]"
+          className="neon-wrap relative mt-10 w-full max-w-3xl rounded-2xl bg-black p-1 shadow-[0_30px_80px_-20px_rgba(34,211,238,0.3)]"
         >
           <div className="relative rounded-xl bg-[#0a0a0a]">
             <textarea
@@ -151,21 +185,35 @@ export function Hero() {
             ) : null}
           </div>
 
-          <div className="flex items-center justify-between px-3 pb-2 pt-1">
-            <div className="flex items-center gap-2">
-              <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/5 text-accent-pink ring-1 ring-white/10">
-                <Sparkles className="h-4 w-4" />
-              </span>
-              <span className="text-xs text-white/50">
-                Cuéntame de tu negocio y creo el agente
-              </span>
-            </div>
+          <div className="flex flex-wrap items-center justify-between gap-2 px-3 pb-2 pt-1">
+            <button
+              type="button"
+              onClick={onImprove}
+              disabled={!value.trim() || improving}
+              aria-label="Mejorar prompt con IA"
+              className="inline-flex h-9 items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-400/5 px-3 text-xs font-medium text-cyan-200 transition hover:border-cyan-400/60 hover:bg-cyan-400/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-cyan-400/5 disabled:hover:text-cyan-200"
+            >
+              {improving ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="h-3.5 w-3.5" />
+              )}
+              {improving ? "Mejorando…" : "Mejorar prompt"}
+            </button>
             <Button type="submit" variant="brand" size="md" className="gap-2">
               Crear agente
               <Send className="h-4 w-4" />
             </Button>
           </div>
         </form>
+
+        <p className="mt-4 text-xs text-white/40">
+          {improveError ? (
+            <span className="text-rose-300">{improveError}</span>
+          ) : (
+            <>Escribe tu idea y pulsa <span className="text-cyan-300">Mejorar prompt</span> — la IA la convierte en un brief útil antes de crear el agente.</>
+          )}
+        </p>
 
         <p className="mt-6 text-sm text-white/50">
           7 días gratis — luego <span className="font-semibold text-white">€19.90/mes</span>.
