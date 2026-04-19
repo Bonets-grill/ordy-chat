@@ -17,29 +17,42 @@ export default async function AdminHome() {
   if (!session) redirect("/signin?from=/admin");
   if (session.user.role !== "super_admin") redirect("/dashboard");
 
-  const [
-    tenantsCount,
-    activeCount,
-    trialingCount,
-    usersCount,
-    messagesCount,
-    convsCount,
-    onboardingKpis,
-    instancesKpis,
-    validatorKpi,
-  ] = await Promise.all([
-    db.select({ n: count() }).from(tenants).then((r) => r[0]),
-    db.select({ n: count() }).from(tenants).where(eq(tenants.subscriptionStatus, "active")).then((r) => r[0]),
-    db.select({ n: count() }).from(tenants).where(eq(tenants.subscriptionStatus, "trialing")).then((r) => r[0]),
-    db.select({ n: count() }).from(users).then((r) => r[0]),
-    db.select({ n: count() }).from(messages).then((r) => r[0]),
-    db.select({ n: count() }).from(conversations).then((r) => r[0]),
-    getOnboardingJobsKpis(),
-    getInstancesKpis(),
-    getRunsKpi24h(),
-  ]);
+  // DIAGNÓSTICO temporal: ejecuta cada query por separado para identificar
+  // cuál falla. Se quita en cuanto identifique el bug del 500.
+  const queries = [
+    ["tenantsCount", () => db.select({ n: count() }).from(tenants).then((r) => r[0])],
+    ["activeCount", () => db.select({ n: count() }).from(tenants).where(eq(tenants.subscriptionStatus, "active")).then((r) => r[0])],
+    ["trialingCount", () => db.select({ n: count() }).from(tenants).where(eq(tenants.subscriptionStatus, "trialing")).then((r) => r[0])],
+    ["usersCount", () => db.select({ n: count() }).from(users).then((r) => r[0])],
+    ["messagesCount", () => db.select({ n: count() }).from(messages).then((r) => r[0])],
+    ["convsCount", () => db.select({ n: count() }).from(conversations).then((r) => r[0])],
+    ["onboardingKpis", () => getOnboardingJobsKpis()],
+    ["instancesKpis", () => getInstancesKpis()],
+    ["validatorKpi", () => getRunsKpi24h()],
+    ["recentTenants", () => db.select().from(tenants).orderBy(desc(tenants.createdAt)).limit(10)],
+  ] as const;
 
-  const recent = await db.select().from(tenants).orderBy(desc(tenants.createdAt)).limit(10);
+  const results: Record<string, unknown> = {};
+  for (const [name, fn] of queries) {
+    try {
+      results[name] = await fn();
+    } catch (err) {
+      console.error(`[admin/page.tsx DIAG] FALLO en query "${name}":`, err);
+      throw new Error(`admin diag · query="${name}" · ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  const tenantsCount = results.tenantsCount as { n: number } | undefined;
+  const activeCount = results.activeCount as { n: number } | undefined;
+  const trialingCount = results.trialingCount as { n: number } | undefined;
+  const usersCount = results.usersCount as { n: number } | undefined;
+  const messagesCount = results.messagesCount as { n: number } | undefined;
+  const convsCount = results.convsCount as { n: number } | undefined;
+  const onboardingKpis = results.onboardingKpis as Awaited<ReturnType<typeof getOnboardingJobsKpis>>;
+  const instancesKpis = results.instancesKpis as Awaited<ReturnType<typeof getInstancesKpis>>;
+  const validatorKpi = results.validatorKpi as Awaited<ReturnType<typeof getRunsKpi24h>>;
+  type TenantRow = typeof tenants.$inferSelect;
+  const recent = results.recentTenants as TenantRow[];
 
   return (
     <AdminShell session={session}>
