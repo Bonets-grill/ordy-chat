@@ -17,7 +17,7 @@ mobile/
 
 El binario nativo es un shell ligero. Apunta a:
 - **Dev:** `http://localhost:3000` (cuando `CAPACITOR_ENV=development`)
-- **Prod:** `https://app.ordychat.com` (o el que pongas en `CAPACITOR_URL`)
+- **Prod:** `https://ordychat.ordysuite.com` (o el que pongas en `CAPACITOR_URL`)
 
 La web detecta automáticamente que está en Capacitor (via `components/capacitor-bridge.tsx`) y activa:
 - Status bar con fondo blanco
@@ -83,8 +83,8 @@ Edita `mobile/capacitor.config.ts`:
 
 ```ts
 server: {
-  url: "https://app.ordychat.com",  // tu dominio real
-  allowNavigation: ["app.ordychat.com", "ordychat.com"],
+  url: "https://ordychat.ordysuite.com",  // tu dominio real
+  allowNavigation: ["ordychat.ordysuite.com", "*.ordysuite.com"],
 }
 ```
 
