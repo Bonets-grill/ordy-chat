@@ -37,7 +37,10 @@ export type MergerInput = {
   model?: string;
 };
 
-const DEFAULT_MODEL = "claude-sonnet-4-6";
+// Onboarding merger usa Opus 4.7 — el mejor modelo disponible. Una sola vez por
+// tenant (alta), ~35¢ vs 7¢ Sonnet. Delta trivial pero determina la calidad
+// del system_prompt que Sonnet usará en TODAS las conversaciones futuras.
+const DEFAULT_MODEL = "claude-opus-4-7";
 const MAX_TOKENS = 1024;
 const MAX_TOOL_ITERATIONS = 4;
 
