@@ -64,3 +64,4 @@ yarn-error.log*
 .railway/
 .vercel
 whatsapp-agentkit/
+.gstack/
