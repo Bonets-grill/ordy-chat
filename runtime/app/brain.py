@@ -372,6 +372,8 @@ async def _ejecutar_tool(
                 duration_min=int(tool_input.get("duration_min") or 30),
                 customer_name=tool_input.get("customer_name"),
                 notes=tool_input.get("notes"),
+                closed_for=tenant.reservations_closed_for,
+                tenant_timezone=tenant.timezone,
             )
             return json.dumps(result)
 

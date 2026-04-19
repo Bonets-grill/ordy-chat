@@ -6,6 +6,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from app.memory import inicializar_pool
 
@@ -22,6 +23,8 @@ async def crear_cita(
     duration_min: int = 30,
     customer_name: str | None = None,
     notes: str | None = None,
+    closed_for: list[str] | None = None,
+    tenant_timezone: str = "Europe/Madrid",
 ) -> dict[str, Any]:
     """
     Guarda una cita/reserva. `starts_at_iso` formato ISO-8601 (ej: 2026-04-20T13:30:00+02:00).
@@ -29,8 +32,12 @@ async def crear_cita(
 
     Guard server-side: rechaza fechas en pasado o >90 días futuro. No valida
     horario del negocio (eso vive en el system prompt dinámico vía
-    `tenants.schedule`) — cuando exista migration 014 con opening_hours JSONB,
-    añadir validación estructurada aquí.
+    `tenants.schedule`).
+
+    Double-guard contra `reservations_closed_for` (migración 015): aunque el
+    system_prompt ya incluye la regla de días cerrados, este guard rechaza
+    a nivel DB si el modelo la ignorara. La fecha se compara en la TZ del
+    tenant para que "cerrado el 20" se aplique a todo el día local del negocio.
     """
     try:
         starts_at = datetime.fromisoformat(starts_at_iso)
@@ -56,6 +63,22 @@ async def crear_cita(
         return {"ok": False, "error": "duration_min inválido"}
     if not title or len(title.strip()) < 2:
         return {"ok": False, "error": "title requerido"}
+
+    if closed_for:
+        try:
+            tz = ZoneInfo(tenant_timezone)
+        except Exception:
+            tz = ZoneInfo("Europe/Madrid")
+        local_date_iso = starts_at.astimezone(tz).date().isoformat()
+        if local_date_iso in closed_for:
+            return {
+                "ok": False,
+                "error": "fecha_no_disponible",
+                "hint": (
+                    f"Ese día ({local_date_iso}) el negocio no acepta reservas. "
+                    "Discúlpate con el cliente y ofrece otro día disponible."
+                ),
+            }
 
     pool = await inicializar_pool()
     async with pool.acquire() as conn:
