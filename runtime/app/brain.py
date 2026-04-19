@@ -11,6 +11,7 @@ from anthropic import AsyncAnthropic, APIStatusError, APIConnectionError
 from app.agent_tools import crear_cita, crear_handoff, listar_citas_del_cliente
 from app.memory import actualizar_nombre_cliente, obtener_contexto_cliente
 from app.ordering import crear_pedido, obtener_link_pago
+from app.prompt_wrapper import wrap as wrap_system_prompt
 from app.tenants import TenantContext, obtener_anthropic_api_key
 
 # Días de semana en español — weekday() devuelve 0=lunes … 6=domingo
@@ -102,6 +103,9 @@ logger = logging.getLogger("ordychat.brain")
 MODEL_ID = "claude-sonnet-4-6"
 MAX_TOKENS = 1024
 MAX_TOOL_ITERATIONS = 4  # protege contra bucles; un pedido típico usa 1-2
+# Spike F7: temperature baja estabiliza tool-use y reduce alucinaciones.
+# Default Anthropic es 1.0 — demasiado creativo para un agente operacional.
+TEMPERATURE = 0.2
 
 # Cache de clientes por api_key. El SDK ya hace retries internos (max_retries=3).
 _client_cache: dict[str, AsyncAnthropic] = {}
@@ -469,7 +473,11 @@ async def generar_respuesta(
     system_blocks: list[dict[str, Any]] = [
         {
             "type": "text",
-            "text": tenant.system_prompt,
+            # Spike F7: wrapper XML hostelero + few-shots DELANTE del prompt del
+            # tenant. Wrap completo va cacheado: es estable entre turnos y entre
+            # tenants (contenido idéntico). Cache hit en 2º+ mensaje ahorra ~70%
+            # del coste input de este bloque.
+            "text": wrap_system_prompt(tenant.system_prompt),
             "cache_control": {"type": "ephemeral"},
         },
         # Bloque dinámico: fecha/hora/día + horario. NO cacheado — cambia cada
@@ -490,6 +498,7 @@ async def generar_respuesta(
             resp = await client.messages.create(
                 model=MODEL_ID,
                 max_tokens=MAX_TOKENS,
+                temperature=TEMPERATURE,
                 system=system_blocks,
                 messages=messages,
                 tools=TOOLS,
