@@ -75,10 +75,15 @@ export default auth(async (req) => {
   // Super admin nunca pasa por onboarding/dashboard/agent/billing/conversations:
   // son rutas de tenant, no de plataforma. Signin default manda a /onboarding,
   // que para un super admin sin tenant redirigía en bucle. Escapa a /admin.
-  // Query ?as_tenant=1 deja override explícito (dev/pruebas).
+  // Overrides:
+  //   ?as_tenant=1 — bypass manual (dev/pruebas interactivas).
+  //   NEXT_PUBLIC_ALLOW_DEV_LOGIN=1 — saltar redirect en CI e2e (dev-login usa
+  //   email super admin y los tests esperan flujo de tenant normal).
+  const devLoginActive = process.env.NEXT_PUBLIC_ALLOW_DEV_LOGIN === "1";
   if (
     isAuthed &&
     isAdmin &&
+    !devLoginActive &&
     req.nextUrl.searchParams.get("as_tenant") !== "1" &&
     (pathname.startsWith("/onboarding") ||
       pathname.startsWith("/dashboard") ||
