@@ -14,8 +14,12 @@ export function freshEmail(prefix = "e2e"): string {
 export async function loginDev(page: Page, email: string, redirectTo = "/dashboard") {
   await page.goto(`/signin?from=${encodeURIComponent(redirectTo)}`);
   await expect(page.getByRole("heading", { name: /Entra a Ordy Chat/i })).toBeVisible();
+  // El signin ahora defaultea a modo password; el dev provider usa magic link,
+  // así que cambiamos a magic mode antes de submit. En dev mode el botón sigue
+  // siendo "Entrar" (no "Enviar enlace") por la rama devMode del signin page.
+  await page.getByRole("button", { name: /Prefiero enlace mágico/i }).click();
   await page.getByPlaceholder("tu@empresa.com").fill(email);
-  await page.getByRole("button", { name: /Enviar enlace/i }).click();
+  await page.getByRole("button", { name: /^Entrar$/i }).click();
   // El dev provider redirige inmediatamente al callbackUrl sin email real.
   await page.waitForURL((url) => !url.pathname.startsWith("/signin"), { timeout: 15_000 });
 }
