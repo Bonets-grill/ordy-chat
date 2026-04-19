@@ -291,6 +291,8 @@ export const orderItems = pgTable("order_items", {
   taxLabel: text("tax_label").notNull().default("IVA"),
   lineTotalCents: integer("line_total_cents").notNull(),
   notes: text("notes"),
+  // Station = dónde se prepara (kitchen|bar). Filtro del KDS. Mig 016.
+  station: text("station").notNull().default("kitchen"),
 });
 
 export const receipts = pgTable(
