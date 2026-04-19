@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: ["**"]
   pull_request:
 
 concurrency:
@@ -32,6 +32,9 @@ jobs:
       - run: pnpm install --frozen-lockfile || pnpm install
 
       - run: pnpm typecheck
+
+      - name: Guard "use server" misuse
+        run: pnpm check:use-server
 
       - name: Unit tests (vitest)
         run: pnpm test:unit
