@@ -68,12 +68,27 @@ html.cap-native .cap-safe-bottom {
     background-size: 48px 48px;
   }
 
+  .grid-backdrop-dark {
+    background-image: linear-gradient(to right, rgba(255,255,255,0.04) 1px, transparent 1px),
+                      linear-gradient(to bottom, rgba(255,255,255,0.04) 1px, transparent 1px);
+    background-size: 48px 48px;
+  }
+
   .hero-glow {
     background: radial-gradient(50% 50% at 50% 60%,
       rgba(236, 72, 153, 0.05) 0%,
       rgba(139, 92, 246, 0.04) 45%,
       transparent 80%);
     filter: blur(60px);
+  }
+
+  .hero-glow-dark {
+    background: radial-gradient(50% 50% at 50% 60%,
+      rgba(236, 72, 153, 0.22) 0%,
+      rgba(139, 92, 246, 0.18) 35%,
+      rgba(249, 115, 22, 0.10) 60%,
+      transparent 80%);
+    filter: blur(80px);
   }
 }
 
