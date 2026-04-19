@@ -82,13 +82,21 @@ export function FastWizard({ resumeJobId }: { resumeJobId?: string } = {}) {
   );
   const [error, setError] = React.useState<string | null>(null);
 
+  // El subtítulo promete que el sistema "scrapea y pregunta solo si hay dudas".
+  // Solo es cierto en las fases previas al scrape (consent + input). Una vez
+  // que estamos scrapeando, resolviendo o cayó al fallback manual, el promise
+  // es engañoso — cada fase ya tiene su propio copy dentro de la card.
+  const showPromise = state.phase === "consent" || state.phase === "input";
+
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-10">
       <header className="mb-8 text-center">
         <h1 className="text-3xl font-semibold tracking-tight">Configurar tu asistente</h1>
-        <p className="mt-2 text-sm text-neutral-600">
-          Pega 1-3 URLs y el sistema scrapea, fusiona y pregunta solo si hay dudas.
-        </p>
+        {showPromise ? (
+          <p className="mt-2 text-sm text-neutral-600">
+            Pega 1-3 URLs y el sistema scrapea, fusiona y pregunta solo si hay dudas.
+          </p>
+        ) : null}
       </header>
 
       {error ? (
