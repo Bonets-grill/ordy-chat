@@ -8,25 +8,28 @@ import { useRouter } from "next/navigation";
 import * as React from "react";
 import { Button } from "./ui/button";
 
+// Catálogo de tipos de local hostelero. Solo restaurantes/bares/cafés — el
+// sistema está especializado en este vertical: carta, maridaje, reservas,
+// pedidos, KDS cocina/bar, Verifactu-ready.
 const NICHOS: { label: string; seed: string }[] = [
-  { label: "Restaurante", seed: "Tengo un restaurante y quiero que el agente tome reservas y responda el menú por WhatsApp." },
-  { label: "Clínica dental", seed: "Soy una clínica dental. Necesito que agende citas y confirme visitas por WhatsApp." },
-  { label: "Estética", seed: "Centro de estética — quiero que el agente informe de tratamientos, precios y agende citas." },
-  { label: "Inmobiliaria", seed: "Inmobiliaria: quiero calificar leads y agendar visitas de pisos automáticamente." },
-  { label: "Tienda online", seed: "Tienda online — necesito responder preguntas de stock, envíos y tomar pedidos por WhatsApp." },
-  { label: "Academia", seed: "Academia de formación. Quiero atender a alumnos, dar horarios y vender cursos." },
-  { label: "Gimnasio", seed: "Gimnasio — atiende socios, horarios de clases y gestiona altas de membresía." },
-  { label: "Abogados", seed: "Despacho de abogados. Quiero calificar casos, agendar consultas y contestar FAQ legales básicas." },
-  { label: "Consultoría", seed: "Consultora: califica leads, agenda discovery calls y envía propuestas." },
-  { label: "Barbería", seed: "Barbería — quiero que tome reservas de cortes y confirme citas por WhatsApp." },
+  { label: "Restaurante", seed: "Restaurante de cocina mediterránea — quiero que tome reservas, responda la carta y gestione alergias por WhatsApp." },
+  { label: "Bar de tapas", seed: "Bar de tapas en el casco histórico. Necesito que responda carta, tome reservas y recomiende maridajes." },
+  { label: "Cafetería", seed: "Cafetería con brunch y specialty coffee. Horarios, reservas de mesa y pedidos para recoger por WhatsApp." },
+  { label: "Pizzería", seed: "Pizzería artesanal — pedidos para recoger/entrega, toma nota de alergias (gluten, lactosa) y recomienda." },
+  { label: "Marisquería", seed: "Marisquería de playa. Reservas con marea, carta del día según pesca fresca, preguntas frecuentes." },
+  { label: "Asador", seed: "Asador de carnes al horno de leña — reservas noche, carta de puntos, maridajes con vinos tintos." },
+  { label: "Hamburguesería", seed: "Hamburguesería smash — pedidos para recoger, opciones veggie y sin gluten, confirmaciones automáticas." },
+  { label: "Cervecería", seed: "Cervecería artesanal. Tap list del día, reservas de mesa y pedidos de picoteo por WhatsApp." },
+  { label: "Heladería", seed: "Heladería artesana — sabores del día, alergias (lactosa/frutos secos), pedidos de tartas por encargo." },
+  { label: "Panadería", seed: "Panadería y pastelería — pedidos de pan especial, tartas por encargo, horarios y disponibilidad." },
 ];
 
 const DEMO_MESSAGES = [
-  "Mi restaurante vende pizza artesanal en Madrid, quiero tomar reservas por WhatsApp…",
-  "Clínica dental en Valencia. Necesito agendar citas y confirmar por WhatsApp…",
-  "Barbería con 3 sillas — quiero que tome reservas y mande recordatorios…",
-  "Tienda online de moda. Responder tallas, stock y envíos 24/7…",
-  "Academia de inglés: calificar leads y apuntar a pruebas de nivel…",
+  "Mi pizzería artesanal en Madrid. Quiero tomar reservas y pedidos para recoger por WhatsApp…",
+  "Bar de tapas en Sevilla — necesito que tome reservas y recomiende maridajes de vino…",
+  "Cafetería con brunch en Valencia. Responder horarios y reservar mesas sábado y domingo…",
+  "Hamburguesería smash: pedidos para recoger + reservas noche, gluten y veggie anotado…",
+  "Asador con horno de leña. Reservas de cena, carta de puntos y maridajes tintos…",
 ];
 
 function useTypewriter(active: boolean) {
@@ -131,22 +134,22 @@ export function Hero() {
           className="mb-8 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-white/80 backdrop-blur hover:bg-white/10"
         >
           <Sparkles className="h-3.5 w-3.5 text-accent-pink" />
-          Nuevo · La primera plataforma de agentes de WhatsApp para cualquier nicho
+          Nuevo · La IA especializada para restaurantes, bares y cafeterías
         </Link>
 
         <h1 className="max-w-3xl text-center text-5xl font-semibold tracking-tight text-white sm:text-6xl md:text-7xl">
-          Tu agente de WhatsApp con IA — <br className="hidden sm:inline" />
+          El agente de WhatsApp — <br className="hidden sm:inline" />
           <span className="bg-gradient-to-r from-brand-500 via-accent-pink to-accent-orange bg-clip-text text-transparent">
-            que de verdad vende
+            que entiende tu restaurante
           </span>
         </h1>
 
         <p className="mt-6 max-w-2xl text-center text-lg text-white/60">
-          Configura tu asistente en 5 minutos. Atiende, agenda, vende y responde 24/7.
-          Funciona para cualquier negocio — desde una cafetería hasta una clínica.
+          Reservas, carta, pedidos, maridajes y alergias — 24/7, sin errores, en 5 minutos.
+          Entrenado solo para hostelería: sabe lo que tu sala, tu cocina y tu bar necesitan.
         </p>
 
-        <p className="mt-5 text-sm font-medium text-white/50">Elige tu nicho para empezar:</p>
+        <p className="mt-5 text-sm font-medium text-white/50">Elige tu tipo de local:</p>
         <div className="mt-3 flex max-w-2xl flex-wrap justify-center gap-2">
           {NICHOS.map((n) => (
             <button
