@@ -394,7 +394,7 @@ function GraphPanel({ active }: { active: Set<NodeId> }) {
   const tokens = useLiveMetric(162, 40, "", active.size);
 
   return (
-    <div className="relative flex h-[420px] flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02] p-4 sm:h-[560px] sm:p-5">
+    <div className="relative flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02] p-4 sm:h-[560px] sm:p-5">
       <div className="flex items-center justify-between text-xs">
         <div className="flex items-center gap-2 font-mono text-white/60">
           <span className="inline-block h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
@@ -405,7 +405,15 @@ function GraphPanel({ active }: { active: Set<NodeId> }) {
         </div>
       </div>
 
-      <div className="relative mt-6 flex-1">
+      {/* Móvil: lista vertical de nodos — el grafo absoluto no cabe y se amontona. */}
+      <div className="mt-4 flex flex-col gap-1.5 sm:hidden">
+        {NODES.map((n) => (
+          <MobileNodeRow key={n.id} node={n} activeNow={active.has(n.id)} />
+        ))}
+      </div>
+
+      {/* Desktop: grafo SVG con nodos absolutos sobre viewBox 100x100. */}
+      <div className="relative mt-6 hidden flex-1 sm:block">
         <svg
           viewBox="0 0 100 100"
           preserveAspectRatio="xMidYMid meet"
@@ -423,7 +431,7 @@ function GraphPanel({ active }: { active: Set<NodeId> }) {
                 y1={na.y}
                 x2={nb.x}
                 y2={nb.y}
-                stroke={isActive ? "rgba(236,72,153,0.8)" : "rgba(255,255,255,0.08)"}
+                stroke={isActive ? "rgba(34,211,238,0.8)" : "rgba(255,255,255,0.08)"}
                 strokeWidth={isActive ? 0.4 : 0.25}
                 strokeDasharray={isActive ? "0" : "0.8 0.8"}
               />
@@ -437,10 +445,32 @@ function GraphPanel({ active }: { active: Set<NodeId> }) {
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <Metric label="Latencia" value={latency} tone="text-[#c4b5fd]" />
+        <Metric label="Latencia" value={latency} tone="text-cyan-300" />
         <Metric label="Tokens/s" value={tokens} tone="text-amber-300" />
         <Metric label="Confianza" value="97%" tone="text-emerald-300" />
         <Metric label="Resueltos hoy" value="863" tone="text-cyan-300" />
+      </div>
+    </div>
+  );
+}
+
+function MobileNodeRow({ node, activeNow }: { node: NodeDef; activeNow: boolean }) {
+  const t = TONE_CLASS[node.tone];
+  const Icon = node.icon;
+  return (
+    <div
+      className={`flex items-center gap-2.5 rounded-lg px-3 py-1.5 ring-1 transition-all duration-300 ${t.bg} ${
+        activeNow ? `${t.border} ${t.glow}` : "ring-white/10"
+      }`}
+    >
+      <span
+        className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-black/30 ${activeNow ? t.text : "text-white/50"}`}
+      >
+        <Icon className="h-3.5 w-3.5" />
+      </span>
+      <div className="flex min-w-0 flex-1 items-baseline justify-between gap-2 text-[11px]">
+        <span className={`truncate font-semibold ${activeNow ? "text-white" : "text-white/70"}`}>{node.label}</span>
+        <span className="shrink-0 text-[10px] text-white/40">{node.sub}</span>
       </div>
     </div>
   );
