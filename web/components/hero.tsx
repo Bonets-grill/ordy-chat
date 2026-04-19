@@ -77,7 +77,7 @@ export function Hero() {
             <button
               key={n.label}
               type="button"
-              onClick={() => setValue(n.seed)}
+              onClick={() => setValue((v) => (v.trim() ? v : n.seed))}
               className="rounded-full border border-neutral-200 bg-white/90 px-3 py-1 text-xs font-medium text-neutral-700 shadow-sm transition hover:border-brand-400 hover:bg-brand-50 hover:text-brand-700"
             >
               {n.label}
