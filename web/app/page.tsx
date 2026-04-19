@@ -6,7 +6,7 @@ import { PricingCard } from "@/components/pricing-card";
 
 export default function LandingPage() {
   return (
-    <>
+    <div className="bg-black text-white">
       <Navbar />
       <main>
         <Hero />
@@ -14,6 +14,6 @@ export default function LandingPage() {
         <PricingCard />
       </main>
       <Footer />
-    </>
+    </div>
   );
 }
