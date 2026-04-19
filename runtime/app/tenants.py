@@ -2,7 +2,7 @@
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from uuid import UUID
 
 from app.crypto import descifrar
@@ -31,6 +31,10 @@ class TenantContext:
     # Zona horaria IANA (ej: Europe/Madrid, Atlantic/Canary). Default peninsular.
     # Derivada de billing_country si existe — por ahora hardcoded hasta migration 014.
     timezone: str = "Europe/Madrid"
+    # Fechas YYYY-MM-DD en que el tenant NO acepta reservas (migración 015).
+    # Se inyectan en <dias_cerrados> del system_prompt y crear_cita hace
+    # double-guard contra este array.
+    reservations_closed_for: list[str] = field(default_factory=list)
 
 
 class TenantNotFound(Exception):
@@ -50,7 +54,7 @@ async def cargar_tenant_por_slug(slug: str) -> TenantContext:
                 t.id, t.slug, t.name, t.subscription_status, t.billing_country,
                 t.timezone, t.billing_city,
                 ac.paused, ac.system_prompt, ac.fallback_message, ac.error_message,
-                ac.max_messages_per_hour, ac.schedule,
+                ac.max_messages_per_hour, ac.schedule, ac.reservations_closed_for,
                 pc.provider, pc.credentials_encrypted, pc.webhook_secret
             FROM tenants t
             LEFT JOIN agent_configs ac ON ac.tenant_id = t.id
@@ -95,6 +99,11 @@ async def cargar_tenant_por_slug(slug: str) -> TenantContext:
         )
         tz = "Atlantic/Canary" if is_canarias else "Europe/Madrid"
 
+    # asyncpg devuelve DATE[] como list[datetime.date]. Normalizamos a list[str]
+    # YYYY-MM-DD para serializar fácil y comparar con today_iso.
+    closed_raw = row["reservations_closed_for"] or []
+    closed_for: list[str] = [d.isoformat() if hasattr(d, "isoformat") else str(d) for d in closed_raw]
+
     return TenantContext(
         id=row["id"],
         slug=row["slug"],
@@ -110,6 +119,7 @@ async def cargar_tenant_por_slug(slug: str) -> TenantContext:
         webhook_secret=row["webhook_secret"] or "",
         schedule=row["schedule"] or "",
         timezone=tz,
+        reservations_closed_for=closed_for,
     )
 
 

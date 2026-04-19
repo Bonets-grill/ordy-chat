@@ -68,6 +68,33 @@ def _build_now_block(tenant: TenantContext) -> str:
         ]
     else:
         partes.append("</ahora>")
+
+    # Días concretos cerrados (migración 015). Filtra las fechas pasadas respecto
+    # a "hoy" en la tz del tenant y solo inyecta el bloque si queda al menos una
+    # fecha ≥ hoy. Si hoy está en la lista, se marca con un asterisco de máxima
+    # prioridad para que el modelo rechace reservas para hoy aunque el prompt
+    # estático no lo diga.
+    today_iso = now.date().isoformat()
+    closed_future = sorted(d for d in (tenant.reservations_closed_for or []) if d >= today_iso)
+    if closed_future:
+        partes.append("<dias_cerrados>")
+        if today_iso in closed_future:
+            partes.append(
+                f"HOY ({today_iso}) el negocio NO acepta reservas nuevas. Si un cliente pide "
+                "mesa/cita para hoy, discúlpate brevemente y ofrécele otro día disponible."
+            )
+        otros = [d for d in closed_future if d != today_iso]
+        if otros:
+            partes.append(
+                "Fechas futuras sin reservas: " + ", ".join(otros) + ". Si un cliente pide "
+                "reservar en alguna de esas fechas, rechaza con educación y ofrece otro día."
+            )
+        partes.append(
+            "REGLA: NUNCA llames a `agendar_cita` con una fecha listada arriba. Si el cliente "
+            "insiste, usa `solicitar_humano` para escalar."
+        )
+        partes.append("</dias_cerrados>")
+
     return "\n".join(partes)
 
 logger = logging.getLogger("ordychat.brain")
