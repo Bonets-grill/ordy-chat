@@ -109,6 +109,34 @@ export async function limitByUserId(
   return r.success ? { ok: true } : { ok: false, reset: r.reset };
 }
 
+/**
+ * Login con password (013): anti-brute-force.
+ * - 5 intentos/15min por email. Email en lowercase para no escapar con mayúsculas.
+ * - Defensa en profundidad: argon2id ya es lento, pero así evitamos ocupar
+ *   CPU verificando hashes en ataques masivos.
+ */
+export async function limitByEmailLogin(
+  email: string,
+): Promise<{ ok: true } | { ok: false; reset: number }> {
+  const rl = limiter("login-password", 5, "15 m");
+  if (!rl) return { ok: true };
+  const r = await rl.limit(email.toLowerCase().trim());
+  return r.success ? { ok: true } : { ok: false, reset: r.reset };
+}
+
+/**
+ * Registro (013): anti-spam cuenta nueva.
+ * - 5 registros/hora por IP. Margen para equipos detrás de mismo NAT.
+ */
+export async function limitByIpRegister(
+  ip: string,
+): Promise<{ ok: true } | { ok: false; reset: number }> {
+  const rl = limiter("register-ip", 5, "1 h");
+  if (!rl) return { ok: true };
+  const r = await rl.limit(ip);
+  return r.success ? { ok: true } : { ok: false, reset: r.reset };
+}
+
 /** Devuelve true si Upstash está configurado (útil para logs/health). */
 export function rateLimitConfigured(): boolean {
   return Boolean(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);

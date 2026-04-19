@@ -1,10 +1,15 @@
 // web/lib/auth.ts — Auth.js v5 con Drizzle + magic link Resend.
+//
+// Runtime Node — NO lo importa el middleware edge. El middleware usa
+// `@/lib/auth.config` (edge-safe) para evitar arrastrar argon2, Drizzle
+// adapter, etc. al bundle edge.
 
 import { DrizzleAdapter } from "@auth/drizzle-adapter";
-import NextAuth, { type DefaultSession } from "next-auth";
+import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
 import Resend from "next-auth/providers/resend";
+import { authConfig } from "@/lib/auth.config";
 import { db } from "@/lib/db";
 import { accounts, sessions, users, verificationTokens } from "@/lib/db/schema";
 
@@ -88,16 +93,11 @@ function renderMagicLinkEmail(url: string, email: string): string {
 </html>`;
 }
 
-declare module "next-auth" {
-  interface Session {
-    user: {
-      id: string;
-      role: "super_admin" | "tenant_admin" | "reseller";
-    } & DefaultSession["user"];
-  }
-}
+// Session augmentation vive en auth.config.ts (edge-safe) para que middleware
+// también vea el role tipado.
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
+  ...authConfig,
   adapter: DrizzleAdapter(db, {
     usersTable: users,
     accountsTable: accounts,
@@ -151,6 +151,41 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           },
         })]
       : []),
+    // Login directo email + password. Siempre habilitado (independiente de Resend/Google).
+    // Requiere que el user tenga password_hash — si no, rechaza.
+    Credentials({
+      id: "password",
+      name: "Email y contraseña",
+      credentials: {
+        email: { label: "Email", type: "email" },
+        password: { label: "Contraseña", type: "password" },
+      },
+      async authorize(creds) {
+        const email = String(creds?.email ?? "").toLowerCase().trim();
+        const password = String(creds?.password ?? "");
+        if (!email || !email.includes("@") || password.length < 8) return null;
+
+        // Rate-limit anti-brute-force. No-op si Upstash no está configurado.
+        const { limitByEmailLogin } = await import("@/lib/rate-limit");
+        const rl = await limitByEmailLogin(email);
+        if (!rl.ok) return null;
+
+        const { eq } = await import("drizzle-orm");
+        const [row] = await db
+          .select({ id: users.id, email: users.email, passwordHash: users.passwordHash })
+          .from(users)
+          .where(eq(users.email, email))
+          .limit(1);
+        if (!row?.passwordHash) return null; // enumeración: mismo mensaje vaga que pwd incorrecta.
+
+        const { verifyPassword } = await import("@/lib/auth/password");
+        const ok = await verifyPassword(row.passwordHash, password);
+        if (!ok) return null;
+
+        // Return minimal user. Adapter rellena el resto via DB.
+        return { id: row.id, email: row.email };
+      },
+    }),
     ...(ALLOW_DEV_LOGIN
       ? [
           Credentials({

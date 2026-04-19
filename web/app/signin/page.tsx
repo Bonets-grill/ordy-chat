@@ -7,11 +7,19 @@ import { Suspense, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
+type AuthMode = "password" | "magic";
+
 function SignInForm() {
   const params = useSearchParams();
-  const from = params.get("from") ?? "/onboarding";
+  const from = params.get("from") ?? params.get("next") ?? "/onboarding";
+  const errorParam = params.get("error");
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [mode, setMode] = useState<AuthMode>("password");
+  const [error, setError] = useState<string | null>(
+    errorParam === "CredentialsSignin" ? "Email o contraseña incorrectos." : null,
+  );
 
   const devMode =
     process.env.NODE_ENV === "development" || process.env.NEXT_PUBLIC_ALLOW_DEV_LOGIN === "1";
@@ -19,9 +27,30 @@ function SignInForm() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setError(null);
     setLoading(true);
-    const provider = devMode ? "dev" : "resend";
-    await signIn(provider, { email, callbackUrl: from });
+    try {
+      if (mode === "password") {
+        const res = await signIn("password", {
+          email,
+          password,
+          redirect: false,
+          callbackUrl: from,
+        });
+        if (!res || res.error) {
+          setError("Email o contraseña incorrectos.");
+          setLoading(false);
+          return;
+        }
+        window.location.href = res.url ?? from;
+        return;
+      }
+      const provider = devMode ? "dev" : "resend";
+      await signIn(provider, { email, callbackUrl: from });
+    } catch {
+      setError("Algo ha fallado. Inténtalo de nuevo.");
+      setLoading(false);
+    }
   }
 
   async function onGoogle() {
@@ -34,12 +63,21 @@ function SignInForm() {
       <div>
         <h1 className="text-2xl font-semibold text-neutral-900">Entra a Ordy Chat</h1>
         <p className="mt-1 text-sm text-neutral-500">
-          {devMode ? "Accede con tu email — modo demo sin verificación." : "Te mandamos un enlace mágico a tu email."}
+          {mode === "password"
+            ? "Accede con tu email y contraseña."
+            : devMode
+              ? "Accede con tu email — modo demo sin verificación."
+              : "Te mandamos un enlace mágico a tu email."}
         </p>
       </div>
-      {devMode && (
+      {devMode && mode === "magic" && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
           🚧 <strong>Modo demo restringido.</strong> Solo el email del super admin puede entrar mientras se configura el envío de magic link.
+        </div>
+      )}
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700" role="alert">
+          {error}
         </div>
       )}
       {googleEnabled && (
@@ -68,13 +106,40 @@ function SignInForm() {
       <Input
         type="email"
         required
+        autoComplete="email"
         placeholder="tu@empresa.com"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
       />
+      {mode === "password" && (
+        <Input
+          type="password"
+          required
+          autoComplete="current-password"
+          minLength={8}
+          placeholder="Tu contraseña"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
+      )}
       <Button type="submit" variant="brand" size="lg" className="w-full" disabled={loading}>
-        {loading ? "Entrando…" : devMode ? "Entrar" : "Enviar enlace"}
+        {loading ? "Entrando…" : mode === "password" ? "Entrar" : devMode ? "Entrar" : "Enviar enlace"}
       </Button>
+      <div className="flex items-center justify-between text-xs">
+        <button
+          type="button"
+          onClick={() => {
+            setMode((m) => (m === "password" ? "magic" : "password"));
+            setError(null);
+          }}
+          className="text-neutral-500 underline hover:text-neutral-900"
+        >
+          {mode === "password" ? "Prefiero enlace mágico" : "Prefiero contraseña"}
+        </button>
+        <Link href="/signup" className="font-medium text-brand-600 hover:underline">
+          Crear cuenta
+        </Link>
+      </div>
       <p className="text-center text-xs text-neutral-500">
         Al entrar aceptas los <Link href="/terms" className="underline">términos</Link> y la{" "}
         <Link href="/privacy" className="underline">privacidad</Link>.

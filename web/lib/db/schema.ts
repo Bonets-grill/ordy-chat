@@ -25,6 +25,8 @@ export const users = pgTable("users", {
   emailVerified: timestamp("email_verified", { withTimezone: true }),
   image: text("image"),
   role: text("role").notNull().default("tenant_admin"),
+  // Hash argon2id. NULL = usuario sin login directo (sólo magic link / OAuth).
+  passwordHash: text("password_hash"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

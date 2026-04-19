@@ -1,8 +1,13 @@
+import NextAuth from "next-auth";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { auth } from "@/lib/auth";
+import { authConfig } from "@/lib/auth.config";
 import { limitByIp, rateLimitConfigured } from "@/lib/rate-limit";
 import { hasAttributionConsent } from "@/lib/reseller/consent";
+
+// Edge-safe auth: sólo lee el JWT cookie. NO importa `@/lib/auth` (que arrastra
+// DrizzleAdapter + Credentials + argon2 → incompatible edge).
+const { auth } = NextAuth(authConfig);
 
 // Regex sincronizado con CHECK resellers_slug_format de la migración 012.
 const RESELLER_SLUG_REGEX = /^[a-z0-9]([a-z0-9-]{1,38}[a-z0-9])?$/;
