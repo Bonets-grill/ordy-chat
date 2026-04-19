@@ -136,6 +136,8 @@ export const agentConfigs = pgTable("agent_configs", {
   // NULL → usa flag global platform_settings.validation_mode_default.
   // 'auto'|'manual'|'skip' → override explícito para este tenant.
   validationMode: text("validation_mode"),
+  // Fechas cerradas (migración 015). Inyectado en system_prompt y guard de crear_cita.
+  reservationsClosedFor: date("reservations_closed_for").array().notNull().default(_sqlTag`ARRAY[]::date[]`),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
