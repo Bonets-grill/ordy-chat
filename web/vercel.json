@@ -11,16 +11,26 @@
     { "path": "/api/cron/onboarding-purge", "schedule": "0 3 * * *" },
     { "path": "/api/cron/commissions-mature", "schedule": "0 3 * * *" },
     { "path": "/api/cron/closed-days-cleanup", "schedule": "0 3 * * *" },
-    { "path": "/api/cron/resellers-payout-run", "schedule": "0 8 5 * *" }
+    { "path": "/api/cron/resellers-payout-run", "schedule": "0 8 5 * *" },
+    { "path": "/api/cron/verifactu-retry", "schedule": "0 * * * *" }
   ],
   "headers": [
     {
-      "source": "/(.*)",
+      "source": "/((?!chat/).*)",
       "headers": [
         { "key": "X-Frame-Options", "value": "DENY" },
         { "key": "X-Content-Type-Options", "value": "nosniff" },
         { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
         { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=()" }
+      ]
+    },
+    {
+      "source": "/chat/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+        { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=()" },
+        { "key": "Content-Security-Policy", "value": "frame-ancestors *" }
       ]
     }
   ]

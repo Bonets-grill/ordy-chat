@@ -3,6 +3,7 @@ import { AppShell } from "@/components/app-shell";
 import { FiscalPanel } from "@/components/fiscal-panel";
 import { auth } from "@/lib/auth";
 import { requireTenant } from "@/lib/tenant";
+import { VerifactuMonitor } from "./verifactu-monitor";
 
 export default async function FiscalPage() {
   const session = await auth();
@@ -14,7 +15,7 @@ export default async function FiscalPage() {
 
   return (
     <AppShell session={session} subscriptionStatus={bundle.tenant.subscriptionStatus} trialDaysLeft={bundle.trialDaysLeft}>
-      <div className="space-y-8">
+      <div className="space-y-12">
         <header>
           <h1 className="text-3xl font-semibold text-neutral-900">Datos fiscales y branding</h1>
           <p className="mt-1 text-neutral-500">
@@ -23,6 +24,10 @@ export default async function FiscalPage() {
         </header>
 
         <FiscalPanel />
+
+        <div className="border-t border-neutral-200 pt-10">
+          <VerifactuMonitor />
+        </div>
       </div>
     </AppShell>
   );
