@@ -150,6 +150,19 @@ export async function limitByIpImprovePrompt(
   return r.success ? { ok: true } : { ok: false, reset: r.reset };
 }
 
+/**
+ * Webchat público — visitante anónimo enviando mensaje al agente del tenant.
+ * 30 mensajes / min / IP. Suficiente para conversación humana; bloquea bots.
+ */
+export async function limitByIpWebchat(
+  ip: string,
+): Promise<{ ok: true } | { ok: false; reset: number }> {
+  const rl = limiter("webchat-ip", 30, "1 m");
+  if (!rl) return { ok: true };
+  const r = await rl.limit(ip);
+  return r.success ? { ok: true } : { ok: false, reset: r.reset };
+}
+
 /** Devuelve true si Upstash está configurado (útil para logs/health). */
 export function rateLimitConfigured(): boolean {
   return Boolean(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);
