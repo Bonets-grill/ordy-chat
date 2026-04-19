@@ -3,11 +3,15 @@
 # Objetivo: que el bot DEJE DE MENTIR. Antes decía "tu cita queda agendada" sin
 # guardar nada. Ahora cada tool persiste el evento en Postgres con tenant_id.
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
 from app.memory import inicializar_pool
+
+# Máximo horizonte de reserva: 90 días. Más allá casi siempre es modelo que
+# confabuló un año equivocado (observado: 2027 en lugar de 2026).
+_MAX_FUTURE_DAYS = 90
 
 
 async def crear_cita(
@@ -22,11 +26,32 @@ async def crear_cita(
     """
     Guarda una cita/reserva. `starts_at_iso` formato ISO-8601 (ej: 2026-04-20T13:30:00+02:00).
     Devuelve {ok, appointment_id, starts_at_iso}.
+
+    Guard server-side: rechaza fechas en pasado o >90 días futuro. No valida
+    horario del negocio (eso vive en el system prompt dinámico vía
+    `tenants.schedule`) — cuando exista migration 014 con opening_hours JSONB,
+    añadir validación estructurada aquí.
     """
     try:
         starts_at = datetime.fromisoformat(starts_at_iso)
     except Exception:
         return {"ok": False, "error": f"fecha_inválida: '{starts_at_iso}'. Usa ISO-8601 (YYYY-MM-DDTHH:MM:SS+TZ)"}
+    if starts_at.tzinfo is None:
+        # Asumimos UTC solo para la comparación — el cliente debería enviar tz.
+        starts_at = starts_at.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    if starts_at < now - timedelta(minutes=5):
+        return {
+            "ok": False,
+            "error": "fecha_en_pasado",
+            "hint": "Esa fecha ya pasó. Pregunta al cliente por un día/hora futura.",
+        }
+    if starts_at > now + timedelta(days=_MAX_FUTURE_DAYS):
+        return {
+            "ok": False,
+            "error": "fecha_demasiado_lejana",
+            "hint": f"Solo aceptamos reservas en los próximos {_MAX_FUTURE_DAYS} días. Verifica el AÑO con el cliente — probablemente quiso decir {now.year} y no {starts_at.year}.",
+        }
     if duration_min <= 0 or duration_min > 24 * 60:
         return {"ok": False, "error": "duration_min inválido"}
     if not title or len(title.strip()) < 2:

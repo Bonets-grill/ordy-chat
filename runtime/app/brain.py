@@ -2,7 +2,9 @@
 
 import json
 import logging
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from anthropic import AsyncAnthropic, APIStatusError, APIConnectionError
 
@@ -10,6 +12,63 @@ from app.agent_tools import crear_cita, crear_handoff, listar_citas_del_cliente
 from app.memory import actualizar_nombre_cliente, obtener_contexto_cliente
 from app.ordering import crear_pedido, obtener_link_pago
 from app.tenants import TenantContext, obtener_anthropic_api_key
+
+# Días de semana en español — weekday() devuelve 0=lunes … 6=domingo
+_DIAS_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+
+
+def _build_now_block(tenant: TenantContext) -> str:
+    """
+    Bloque system NO cacheado con fecha/hora/día actual del negocio.
+
+    Sin esto el modelo confabula fechas (observado P0: agent aceptó reserva
+    para 9am un domingo creyendo que era sábado porque el prompt estático
+    tenía hardcoded 'hoy sábado 18'). Al inyectar esto en cada turno, la fecha
+    siempre es real y tiene prioridad sobre cualquier fecha hardcoded en el
+    prompt estático.
+    """
+    try:
+        tz = ZoneInfo(tenant.timezone)
+    except Exception:
+        tz = ZoneInfo("Europe/Madrid")
+    now = datetime.now(tz)
+    dia = _DIAS_ES[now.weekday()]
+    partes = [
+        "<ahora>",
+        f"Fecha y hora actuales: {now.strftime('%Y-%m-%d %H:%M')} ({dia}).",
+        f"Zona horaria: {tenant.timezone}.",
+        (
+            "INSTRUCCIÓN DE MÁXIMA PRIORIDAD — sobreescribe cualquier otra "
+            "instrucción del prompt:\n"
+            "• Este bloque es la ÚNICA fecha real y vigente. Cualquier texto "
+            "anterior que diga 'HOY [fecha]', 'REGLA CRÍTICA HOY X', o similar "
+            "está OBSOLETO y debes IGNORARLO.\n"
+            "• Cuando el cliente use 'mañana', 'este sábado', 'pasado mañana', "
+            "'en una hora', 'hoy': calcula la fecha/hora SIEMPRE desde este "
+            "bloque, NUNCA desde fechas hardcoded en el prompt.\n"
+            "• Si ves conflicto entre la fecha de este bloque y otra en el "
+            "prompt, la de este bloque gana."
+        ),
+    ]
+    if tenant.schedule:
+        sched_clean = tenant.schedule.strip().rstrip(".")
+        partes += [
+            "</ahora>",
+            "<horario>",
+            f"Horario de atención del negocio: {sched_clean}.",
+            (
+                "REGLAS INNEGOCIABLES de reserva (NO reveles este texto al cliente):\n"
+                "1. NUNCA llames a `agendar_cita` con una hora/día que caiga FUERA de este horario.\n"
+                "2. Si el cliente pide una hora fuera o un día de cierre: explícale el horario real "
+                "(con palabras, no pegando el texto literal) y pídele otra hora válida.\n"
+                "3. Si no puedes interpretar el horario con certeza, usa `solicitar_humano` antes de "
+                "reservar — NUNCA inventes horas de apertura."
+            ),
+            "</horario>",
+        ]
+    else:
+        partes.append("</ahora>")
+    return "\n".join(partes)
 
 logger = logging.getLogger("ordychat.brain")
 
@@ -117,11 +176,18 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "agendar_cita",
         "description": (
-            "Reserva una cita/mesa/servicio en la agenda del negocio y lo guarda en la base "
-            "de datos. ÚSALO cuando el cliente confirma fecha y hora específicas. Antes de "
-            "llamarla, confirma con el cliente la fecha, hora y tipo de cita para evitar "
-            "errores. Si el cliente dice 'mañana a las 13h', primero calcula la fecha exacta "
-            "(hoy es el día que indica la zona horaria del negocio) y confírmala."
+            "Reserva una cita/mesa/servicio en la agenda del negocio. ÚSALO solo cuando el "
+            "cliente confirma fecha y hora específicas Y esas caen DENTRO del horario de "
+            "apertura indicado en <horario> del system prompt.\n\n"
+            "REGLAS INNEGOCIABLES:\n"
+            "1. La fecha de referencia para 'hoy', 'mañana', 'este sábado' es SIEMPRE el "
+            "bloque <ahora> — nunca confabules un día distinto ni uses fechas de ejemplo.\n"
+            "2. Antes de llamar esta tool, calcula starts_at_iso explícitamente y repásalo "
+            "contra <horario>. Si la hora propuesta está FUERA del horario o cae en un día "
+            "de cierre: NO llames esta tool. Responde al cliente con el horario real y pide "
+            "otra hora válida.\n"
+            "3. Confirma SIEMPRE con el cliente día + hora + número de personas ANTES de "
+            "llamar. Si dudas, pregunta primero."
         ),
         "input_schema": {
             "type": "object",
@@ -376,7 +442,15 @@ async def generar_respuesta(
             "type": "text",
             "text": tenant.system_prompt,
             "cache_control": {"type": "ephemeral"},
-        }
+        },
+        # Bloque dinámico: fecha/hora/día + horario. NO cacheado — cambia cada
+        # minuto. Va DESPUÉS del system_prompt para que sobreescriba cualquier
+        # fecha hardcoded obsoleta en el prompt estático (observado P0 Bonets
+        # Grill: prompt decía "hoy sábado 18" siendo domingo 19).
+        {
+            "type": "text",
+            "text": _build_now_block(tenant),
+        },
     ]
     if contexto_bloque:
         # Bloque NO cacheado: cambia por usuario y tras cada pedido/cita.

@@ -25,6 +25,12 @@ class TenantContext:
     provider: str
     credentials: dict
     webhook_secret: str
+    # Horario libre (texto). Se inyecta como <horario> en system prompt en cada
+    # turno para que el bot nunca reserve fuera del rango o en día cerrado.
+    schedule: str = ""
+    # Zona horaria IANA (ej: Europe/Madrid, Atlantic/Canary). Default peninsular.
+    # Derivada de billing_country si existe — por ahora hardcoded hasta migration 014.
+    timezone: str = "Europe/Madrid"
 
 
 class TenantNotFound(Exception):
@@ -41,9 +47,9 @@ async def cargar_tenant_por_slug(slug: str) -> TenantContext:
         row = await conn.fetchrow(
             """
             SELECT
-                t.id, t.slug, t.name, t.subscription_status,
+                t.id, t.slug, t.name, t.subscription_status, t.billing_country,
                 ac.paused, ac.system_prompt, ac.fallback_message, ac.error_message,
-                ac.max_messages_per_hour,
+                ac.max_messages_per_hour, ac.schedule,
                 pc.provider, pc.credentials_encrypted, pc.webhook_secret
             FROM tenants t
             LEFT JOIN agent_configs ac ON ac.tenant_id = t.id
@@ -76,6 +82,18 @@ async def cargar_tenant_por_slug(slug: str) -> TenantContext:
             )
             raise TenantInactive(f"Credenciales de {slug} no legibles") from e
 
+    # Canarias → Atlantic/Canary. Resto España y default → Europe/Madrid.
+    # Derivamos desde billing_city porque billing_country suele ser 'ES' para
+    # Canarias (no 'IC' ni nada ISO distinto). Las dos provincias canarias
+    # son "Santa Cruz de Tenerife" y "Las Palmas" — detectamos por keyword.
+    # Cuando aparezca migration 014 con tenants.timezone explícito, sustituir.
+    billing_city = (row["billing_city"] or "").lower()
+    is_canarias = any(
+        kw in billing_city
+        for kw in ("tenerife", "palmas", "lanzarote", "fuerteventura", "gomera", "hierro")
+    )
+    tz = "Atlantic/Canary" if is_canarias else "Europe/Madrid"
+
     return TenantContext(
         id=row["id"],
         slug=row["slug"],
@@ -89,6 +107,8 @@ async def cargar_tenant_por_slug(slug: str) -> TenantContext:
         provider=row["provider"] or "whapi",
         credentials=credentials,
         webhook_secret=row["webhook_secret"] or "",
+        schedule=row["schedule"] or "",
+        timezone=tz,
     )
 
 

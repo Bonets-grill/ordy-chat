@@ -63,3 +63,4 @@ yarn-error.log*
 # ── Railway / Vercel metadata ──────────────────────────────
 .railway/
 .vercel
+whatsapp-agentkit/
