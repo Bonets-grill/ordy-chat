@@ -72,6 +72,23 @@ export default auth(async (req) => {
     }
   }
 
+  // Super admin nunca pasa por onboarding/dashboard/agent/billing/conversations:
+  // son rutas de tenant, no de plataforma. Signin default manda a /onboarding,
+  // que para un super admin sin tenant redirigía en bucle. Escapa a /admin.
+  // Query ?as_tenant=1 deja override explícito (dev/pruebas).
+  if (
+    isAuthed &&
+    isAdmin &&
+    req.nextUrl.searchParams.get("as_tenant") !== "1" &&
+    (pathname.startsWith("/onboarding") ||
+      pathname.startsWith("/dashboard") ||
+      pathname.startsWith("/agent") ||
+      pathname.startsWith("/billing") ||
+      pathname.startsWith("/conversations"))
+  ) {
+    return NextResponse.redirect(new URL("/admin", req.url));
+  }
+
   const protectedApp =
     pathname.startsWith("/dashboard") ||
     pathname.startsWith("/onboarding") ||
