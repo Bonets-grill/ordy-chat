@@ -506,8 +506,11 @@ async def _procesar_mensaje(tenant: TenantContext, provider: str, msg: MensajeEn
                             "image recibida",
                             extra={**log_extra, "event": "image_in", "size": len(raw_bytes), "mime": mime},
                         )
-            if not media_blocks:
-                # No pudimos procesar la media — respondemos amablemente.
+            if not media_blocks and not msg.texto:
+                # No pudimos procesar la media Y no hay texto rescatable (la rama
+                # audio/voice rellena msg.texto con la transcripción Whisper; ese
+                # caso NO debe caer aquí). Llegamos aquí solo para video/document/
+                # sticker o imagen que no se pudo descargar.
                 respuesta = (
                     f"Recibí tu {msg.tipo_no_texto}, pero por ahora solo sé leer texto "
                     "e imágenes. ¿Podrías escribirme lo que necesitas?"
