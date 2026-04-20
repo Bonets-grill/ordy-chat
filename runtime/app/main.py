@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
+from app.admin_resolver import manejar_admin_flow
 from app.brain import generar_respuesta
 from app.logging_config import configurar_logging
 from app.memory import (
@@ -473,6 +474,28 @@ async def _procesar_mensaje(tenant: TenantContext, provider: str, msg: MensajeEn
         historial = await obtener_historial(tenant.id, msg.telefono)
         # Texto efectivo: si hay imagen con caption, usamos el caption como prompt.
         texto_efectivo = msg.texto if msg.texto else caption_text
+
+        # ── Admin mode (C4 2026-04-20) ────────────────────────────────
+        # Si el remitente está en tenant_admins de este tenant, el flow
+        # admin toma el mensaje (PIN, auth, placeholder tools) y no llamamos
+        # al LLM cliente. Los mensajes admin NO pasan por warmup/anti-ban
+        # porque son esporádicos y no arriesgan baneo de WhatsApp.
+        pool = await inicializar_pool()
+        admin_took = await manejar_admin_flow(
+            pool,
+            tenant.id,
+            tenant.name,
+            msg.telefono,
+            texto_efectivo,
+            enviar=adapter.enviar_mensaje,
+        )
+        if admin_took:
+            logger.info(
+                "admin flow tomó el mensaje",
+                extra={**log_extra, "event": "admin_handled"},
+            )
+            return
+
         respuesta, tin, tout = await generar_respuesta(
             tenant,
             texto_efectivo,
