@@ -134,7 +134,28 @@ async def generar_respuesta_admin(
                     block.text for block in resp.content
                     if getattr(block, "type", None) == "text"
                 ).strip()
-                return texto_final or _fallback(), total_in, total_out
+                if not texto_final:
+                    # Edge case: stop_reason end_turn/max_tokens sin text block.
+                    # Pasa con content solo tool_use (orphan) o thinking. Loggea
+                    # tipos literales para diagnosticar y da un mensaje mejor
+                    # que "algo falló" — el usuario sabe que la tool se ejecutó.
+                    block_types = [getattr(b, "type", "?") for b in resp.content]
+                    logger.warning(
+                        "admin: respuesta sin text block",
+                        extra={
+                            "event": "admin_empty_text",
+                            "tenant_slug": tenant.slug,
+                            "admin_id": str(admin_id),
+                            "stop_reason": resp.stop_reason,
+                            "block_types": block_types,
+                        },
+                    )
+                    # Si hay tool_use sin texto posterior, la acción se
+                    # ejecutó (o lo intentó) — confirma genérico.
+                    if "tool_use" in block_types:
+                        return "Hecho. ¿Algo más?", total_in, total_out
+                    return _fallback(), total_in, total_out
+                return texto_final, total_in, total_out
 
             # Tool calls pendientes: ejecuta y devuelve resultados.
             messages.append({"role": "assistant", "content": resp.content})
