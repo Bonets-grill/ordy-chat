@@ -103,12 +103,16 @@ class ProveedorEvolution(ProveedorWhatsApp):
                     "sticker": "stickerMessage",
                 }
                 sub = msg_obj.get(sub_key_map[tipo], {}) if tipo in sub_key_map else {}
-                media_ref = sub.get("url") or sub.get("directPath") or mid
+                # Evolution /chat/getBase64FromMediaMessage necesita el message.key.id,
+                # NO la URL/directPath. Antes usábamos `sub.get("url") or directPath or mid`
+                # y en audioMessage/imageMessage Evolution emite "url" → pasábamos URL como
+                # key.id → endpoint no encontraba el mensaje → devolvíamos None → bot
+                # respondía "No pude descargar tu audio". Siempre usar mid.
                 caption = sub.get("caption") or None
                 mensajes.append(MensajeEntrante(
                     telefono=telefono, texto="", mensaje_id=mid, es_propio=propio,
                     tipo_no_texto=tipo,
-                    media_ref=media_ref or None,
+                    media_ref=mid or None,
                     caption=caption,
                 ))
         return mensajes
@@ -120,6 +124,16 @@ class ProveedorEvolution(ProveedorWhatsApp):
         api_key = os.getenv("EVOLUTION_API_KEY", "")
         base_url = os.getenv("EVOLUTION_API_URL", "").rstrip("/")
         if not (instance and api_key and base_url and media_ref):
+            logger.warning(
+                "descargar_media config incompleta",
+                extra={
+                    "event": "download_config_missing",
+                    "has_instance": bool(instance),
+                    "has_api_key": bool(api_key),
+                    "has_base_url": bool(base_url),
+                    "has_media_ref": bool(media_ref),
+                },
+            )
             return None
         client = _get_http()
         try:
@@ -129,14 +143,38 @@ class ProveedorEvolution(ProveedorWhatsApp):
                 headers={"Content-Type": "application/json", "apikey": api_key},
             )
             if r.status_code not in (200, 201):
+                logger.warning(
+                    "Evolution getBase64FromMediaMessage HTTP %d",
+                    r.status_code,
+                    extra={
+                        "event": "download_http_error",
+                        "status": r.status_code,
+                        "instance": instance,
+                        "key_id": media_ref[:40],
+                        "body_preview": r.text[:200] if hasattr(r, "text") else "",
+                    },
+                )
                 return None
             data = r.json()
             b64 = data.get("base64") or ""
             if not b64:
+                logger.warning(
+                    "Evolution devolvió 200 sin base64",
+                    extra={
+                        "event": "download_empty_base64",
+                        "instance": instance,
+                        "key_id": media_ref[:40],
+                        "keys": list(data.keys()) if isinstance(data, dict) else "non-dict",
+                    },
+                )
                 return None
             mime = data.get("mimetype") or "application/octet-stream"
             return _b64.b64decode(b64), mime
         except Exception:
+            logger.exception(
+                "descargar_media excepción",
+                extra={"event": "download_exception", "key_id": media_ref[:40]},
+            )
             return None
 
     async def enviar_presence_typing(self, telefono: str, duracion_ms: int = 1500) -> None:
