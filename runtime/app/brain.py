@@ -4,6 +4,7 @@ import json
 import logging
 from datetime import datetime
 from typing import Any
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from anthropic import AsyncAnthropic, APIStatusError, APIConnectionError
@@ -308,10 +309,72 @@ TOOLS: list[dict[str, Any]] = [
 ]
 
 
+def _sandbox_tool_stub(tool_name: str, tool_input: dict[str, Any]) -> str:
+    """Devuelve un JSON de éxito plausible sin ejecutar side-effects.
+
+    Se usa cuando el brain corre en modo sandbox (playground o validator):
+    no se inserta en orders/appointments/handoff_requests, no se notifica
+    al humano del tenant, no se persiste customer_name. El stub emula el
+    shape de cada tool real para que Claude siga la conversación como si
+    la acción hubiera funcionado.
+    """
+    stub_id = uuid4().hex[:12]
+    if tool_name == "recordar_cliente":
+        return json.dumps({"ok": True, "saved": True, "sandbox": True})
+    if tool_name == "crear_pedido":
+        return json.dumps({
+            "ok": True,
+            "order_id": f"sandbox-{stub_id}",
+            "total_eur": 0,
+            "currency": "EUR",
+            "payment_mode": "offline",
+            "payment_methods": [],
+            "payment_notes": "sandbox: pago simulado",
+            "instruccion_al_cliente": (
+                "(sandbox) confírmale el pedido al cliente de forma normal. "
+                "No menciones esta nota de sandbox."
+            ),
+            "sandbox": True,
+        })
+    if tool_name == "agendar_cita":
+        return json.dumps({
+            "ok": True,
+            "appointment_id": f"sandbox-{stub_id}",
+            "starts_at_iso": tool_input.get("starts_at_iso", ""),
+            "duration_min": int(tool_input.get("duration_min") or 30),
+            "title": (tool_input.get("title") or "").strip(),
+            "sandbox": True,
+        })
+    if tool_name == "mis_citas":
+        return json.dumps({"ok": True, "count": 0, "citas": [], "sandbox": True})
+    if tool_name == "solicitar_humano":
+        return json.dumps({
+            "ok": True,
+            "handoff_id": f"sandbox-{stub_id}",
+            "priority": tool_input.get("priority") or "normal",
+            "reason": (tool_input.get("reason") or "").strip(),
+            "notified_human_phone": False,
+            "sandbox": True,
+        })
+    return json.dumps({"ok": False, "error": f"tool desconocida: {tool_name}", "sandbox": True})
+
+
 async def _ejecutar_tool(
-    tenant: TenantContext, tool_name: str, tool_input: dict[str, Any], customer_phone: str
+    tenant: TenantContext,
+    tool_name: str,
+    tool_input: dict[str, Any],
+    customer_phone: str,
+    sandbox: bool = False,
 ) -> str:
-    """Ejecuta una tool solicitada por Claude y devuelve el resultado serializable."""
+    """Ejecuta una tool solicitada por Claude y devuelve el resultado serializable.
+
+    En modo sandbox cortocircuitamos ANTES del bloque oportunista de
+    `actualizar_nombre_cliente` para evitar contaminar `conversations` con
+    customer_phone ficticio, y devolvemos stubs JSON por cada tool.
+    """
+    if sandbox:
+        return _sandbox_tool_stub(tool_name, tool_input)
+
     # Persistencia oportunista del nombre: cualquier tool que lo reciba lo guarda.
     # Si la tool falla después, el nombre ya quedó — es info barata que no conviene perder.
     nombre_oportunista = tool_input.get("customer_name") or (
@@ -492,12 +555,19 @@ async def generar_respuesta(
     historial: list[dict],
     customer_phone: str = "",
     media_blocks: list[dict[str, Any]] | None = None,
+    sandbox: bool = False,
 ) -> tuple[str, int, int]:
     """
     Devuelve (respuesta, tokens_in, tokens_out).
     `media_blocks` es una lista de content blocks tipo {"type":"image","source":{"type":"base64",...}}
     que se adjuntan al mensaje del usuario. Si hay media SIN texto, se mete un
     placeholder "Mira esta imagen" para que Claude tenga contexto textual.
+
+    `sandbox=True` hace que las tools solicitadas por Claude devuelvan stubs
+    JSON sin ejecutar side-effects (no inserta en orders/appointments/
+    handoff_requests, no notifica al humano por WA, no persiste customer_name).
+    Úsalo para playground tenant y validator seeds — cualquier flujo que
+    pase un customer_phone ficticio.
     """
     texto_limpio = (mensaje_usuario or "").strip()
     has_media = bool(media_blocks)
@@ -650,7 +720,9 @@ async def generar_respuesta(
             tool_results: list[dict[str, Any]] = []
             for block in resp.content:
                 if getattr(block, "type", None) == "tool_use":
-                    resultado = await _ejecutar_tool(tenant, block.name, block.input, customer_phone)
+                    resultado = await _ejecutar_tool(
+                        tenant, block.name, block.input, customer_phone, sandbox=sandbox,
+                    )
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": block.id,
