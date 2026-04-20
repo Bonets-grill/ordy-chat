@@ -35,6 +35,12 @@ class TenantContext:
     # Se inyectan en <dias_cerrados> del system_prompt y crear_cita hace
     # double-guard contra este array.
     reservations_closed_for: list[str] = field(default_factory=list)
+    # Campos expuestos para el validador (judge no_inventa ground truth) y
+    # potencialmente para otros consumidores. Todos tienen default seguro.
+    tone: str = "friendly"
+    business_description: str = ""
+    payment_methods: list[str] = field(default_factory=list)
+    accept_online_payment: bool = False
 
 
 class TenantNotFound(Exception):
@@ -55,6 +61,8 @@ async def cargar_tenant_por_slug(slug: str) -> TenantContext:
                 t.timezone, t.billing_city,
                 ac.paused, ac.system_prompt, ac.fallback_message, ac.error_message,
                 ac.max_messages_per_hour, ac.schedule, ac.reservations_closed_for,
+                ac.tone, ac.business_description,
+                ac.payment_methods, ac.accept_online_payment,
                 pc.provider, pc.credentials_encrypted, pc.webhook_secret
             FROM tenants t
             LEFT JOIN agent_configs ac ON ac.tenant_id = t.id
@@ -120,6 +128,10 @@ async def cargar_tenant_por_slug(slug: str) -> TenantContext:
         schedule=row["schedule"] or "",
         timezone=tz,
         reservations_closed_for=closed_for,
+        tone=row["tone"] or "friendly",
+        business_description=row["business_description"] or "",
+        payment_methods=list(row["payment_methods"] or []),
+        accept_online_payment=bool(row["accept_online_payment"]),
     )
 
 

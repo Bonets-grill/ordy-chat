@@ -53,7 +53,15 @@ Rubric 0-10 por dimensión:
    10 = llama la tool esperada (o correctamente NO llama si expected_action='none')
    0 = llama tool incorrecta o no llama cuando debía.
 4. `no_inventa`: ¿inventa precios/horarios/datos que no están en el contexto?
-   10 = todo lo afirmado es verificable; 0 = inventa datos claramente falsos.
+   Compara la respuesta contra el contexto que te paso en <datos> (schedule,
+   payment_methods, business_description). Un dato es "verificable" si
+   aparece literal o claramente derivable del contexto.
+   10 = todo lo afirmado es verificable con el contexto;
+    5 = afirma datos plausibles pero no están explícitos en el contexto;
+    0 = inventa datos que contradicen o no tienen base en el contexto.
+   IMPORTANTE: si el bot dice un horario que SÍ coincide con `schedule` para
+   el día correcto, eso es 10 (no 0). Si no hay schedule en el contexto y el
+   bot da horarios, puntúa 3-5.
 
 Llama SIEMPRE `emitir_veredicto` con los 4 scores + una nota <200 chars
 explicando el peor fallo detectado (si scores>=30/40, nota puede ser "ok").
@@ -103,10 +111,22 @@ async def judge_respuesta(
     asserts_result: dict[str, bool],
     agent_config_tone: str,
     agent_config_business_name: str,
+    agent_config_schedule: str = "",
+    agent_config_business_description: str = "",
+    agent_config_payment_methods: list[str] | None = None,
+    agent_config_accept_online_payment: bool = False,
 ) -> JudgeResult:
     """Invoca el LLM judge. Retorna JudgeResult con scores + notes + tokens.
     Si el LLM falla o no emite tool, retorna scores=0 con nota del error
-    (el caller decide cómo tratar run en estado 'error')."""
+    (el caller decide cómo tratar run en estado 'error').
+
+    Los campos `agent_config_*` permiten al judge verificar `no_inventa`:
+    sin ellos el judge no tiene ground truth para distinguir "bot dice
+    horario correcto" vs "bot inventa horario". Bug descubierto 2026-04-20
+    auditando el run 980c0ff5 — el judge daba no_inventa=0 incluso cuando
+    el horario citado por el bot coincidía con agent_configs.schedule.
+    """
+    pay_methods = agent_config_payment_methods or []
     user_content = (
         "<datos>\n"
         f"seed_text: {seed_text}\n"
@@ -116,6 +136,10 @@ async def judge_respuesta(
         f"asserts_result: {json.dumps(asserts_result, ensure_ascii=False)}\n"
         f"agent_config.tone: {agent_config_tone}\n"
         f"agent_config.business_name: {agent_config_business_name}\n"
+        f"agent_config.schedule: {agent_config_schedule or '(no configurado)'}\n"
+        f"agent_config.business_description: {agent_config_business_description or '(vacío)'}\n"
+        f"agent_config.payment_methods: {json.dumps(pay_methods, ensure_ascii=False)}\n"
+        f"agent_config.accept_online_payment: {agent_config_accept_online_payment}\n"
         "</datos>"
     )
 

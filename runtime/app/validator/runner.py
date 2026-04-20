@@ -191,6 +191,15 @@ async def _evaluar_seed(
             # aunque el negocio sí tiene nombre. Bug descubierto 2026-04-20 en
             # el detalle del run da8fbf99 (9 de 20 seeds con mn=0).
             agent_config_business_name=getattr(tenant, "name", "") or "",
+            # Ground truth para `no_inventa`. Sin estos campos el judge marcaba
+            # no_inventa=0 aunque el bot citara horarios correctos de schedule
+            # (el judge no tenía con qué comparar). Bug descubierto 2026-04-20
+            # auditando el run a71da925 (uni-02 "¿A qué hora abrís hoy?"
+            # respuesta correcta pero judge = 0).
+            agent_config_schedule=getattr(tenant, "schedule", "") or "",
+            agent_config_business_description=getattr(tenant, "business_description", "") or "",
+            agent_config_payment_methods=list(getattr(tenant, "payment_methods", []) or []),
+            agent_config_accept_online_payment=bool(getattr(tenant, "accept_online_payment", False)),
         )
 
         scores = dict(judge["scores"])
