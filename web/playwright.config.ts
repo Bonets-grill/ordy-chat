@@ -1,4 +1,27 @@
 import { defineConfig, devices } from "@playwright/test";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+// Cargar .env.local en el proceso del test runner. Next.js lo hace
+// automáticamente para el webServer, pero los helpers e2e (que corren
+// en el runner, no en el browser) también necesitan acceso a
+// AUTH_SECRET, SUPER_ADMIN_EMAIL etc para inyectar JWT en cookies.
+// Parser mínimo sin dependencia de dotenv.
+try {
+  const envPath = resolve(__dirname, ".env.local");
+  const raw = readFileSync(envPath, "utf8");
+  for (const line of raw.split("\n")) {
+    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/i);
+    if (!m) continue;
+    const [, key, rawValue] = m;
+    if (process.env[key] !== undefined) continue;
+    // Strip surrounding quotes si las hay.
+    const value = rawValue.replace(/^["'](.*)["']$/, "$1");
+    process.env[key] = value;
+  }
+} catch {
+  // .env.local puede no existir en CI (vienen del workflow env). OK.
+}
 
 export default defineConfig({
   testDir: "./e2e",
