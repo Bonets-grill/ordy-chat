@@ -90,23 +90,68 @@ export async function GET(
   });
 }
 
+/** Construye un error legible "origin=razón, origin=razón" para cuando el
+ *  merger produjo canonicos vacío. La UI puede parsear la primera palabra
+ *  (`all_sources_blocked` / `sources_sin_datos` / `merger_empty`) como
+ *  subcódigo y mostrar un mensaje específico — ejemplo:
+ *    "all_sources_blocked: google=captcha_blocked: recaptcha, tripadvisor=captcha_blocked: datadome, website=ssrf_blocked: private_ip"
+ */
+function buildEmptySourcesError(rawSources: RawSource[], parseEmpty: string[]): string {
+  if (rawSources.length === 0) {
+    return "merger_empty: sin fuentes en el job";
+  }
+  const parts: string[] = [];
+  for (const src of rawSources) {
+    if (!src.ok) {
+      parts.push(`${src.origin}=${src.error ?? "unknown"}`);
+    } else if (parseEmpty.includes(src.origin)) {
+      parts.push(`${src.origin}=parse_empty`);
+    }
+  }
+  if (parts.length === 0) {
+    // Todas las sources están ok y tuvieron data parseada, pero el LLM
+    // (o el fallback) no logró emitir nada válido — caso raro.
+    return "merger_empty: fuentes con datos pero merger sin resultado";
+  }
+  const allBlocked = rawSources.every((s) => !s.ok);
+  const prefix = allBlocked ? "all_sources_blocked" : "sources_sin_datos";
+  return `${prefix}: ${parts.join(", ")}`.slice(0, 280);
+}
+
 async function runMergerForJob(jobId: string, currentResult: ScrapeResultJson | null): Promise<void> {
   const rawSources = currentResult?.sources ?? [];
   try {
-    // Parse cada HTML con su parser correspondiente.
+    // Parse cada HTML con su parser correspondiente. Trackeamos qué origin
+    // vino vacío tras parsear — necesario para el error estructurado cuando
+    // canonicos termina vacío (caso Bonets Grill: parsers devolvían {} y el
+    // frontend solo veía canonicos={} sin razón concreta).
     const parsed: SourceData[] = [];
+    const parseEmpty: string[] = [];
     for (const src of rawSources) {
       if (!src.ok || !src.html) continue;
-      if (src.origin === "google") {
-        parsed.push({ origin: "google", data: parseGoogleBusiness(src.html) });
-      } else if (src.origin === "tripadvisor") {
-        parsed.push({ origin: "tripadvisor", data: parseTripadvisor(src.html) });
-      } else if (src.origin === "website") {
-        parsed.push({ origin: "website", data: parseWebsite(src.html) });
+      let data: SourceData["data"] | null = null;
+      if (src.origin === "google") data = parseGoogleBusiness(src.html);
+      else if (src.origin === "tripadvisor") data = parseTripadvisor(src.html);
+      else if (src.origin === "website") data = parseWebsite(src.html);
+      if (!data) continue;
+      if (Object.keys(data).length === 0) {
+        parseEmpty.push(src.origin);
+      } else {
+        parsed.push({ origin: src.origin, data });
       }
     }
 
     const mergerOut = await mergeFuentes({ sources: parsed });
+
+    // Si canonicos quedó vacío construimos un error descriptivo por origin
+    // para que el frontend pueda mostrar la causa concreta (captcha,
+    // bot-block, SSRF, parse vacío) en lugar del genérico
+    // "No pudimos leer tus URLs". Mantenemos status='ready' para no romper
+    // el contrato actual — el frontend discrimina por `error != null`.
+    const canonicosEmpty = Object.keys(mergerOut.canonicos).length === 0;
+    const errorMessage = canonicosEmpty
+      ? buildEmptySourcesError(rawSources, parseEmpty)
+      : null;
 
     await db
       .update(onboardingJobs)
@@ -117,6 +162,7 @@ async function runMergerForJob(jobId: string, currentResult: ScrapeResultJson | 
           canonicos: mergerOut.canonicos,
           conflictos: mergerOut.conflictos,
         },
+        error: errorMessage,
         updatedAt: new Date(),
       })
       .where(eq(onboardingJobs.id, jobId));

@@ -5,12 +5,29 @@
 // API key, así que testando mergeDeterministic cubrimos el camino crítico.
 // La calidad del LLM se evalúa con Promptfoo (web/promptfoo/merger.eval.yaml).
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+// El módulo merger.ts importa @/lib/anthropic-key que importa @/lib/db,
+// y db/index.ts tira si DATABASE_URL no está en el entorno (caso típico
+// en CI unit). Mock test-scoped para romper esa cadena sin tocar código
+// de producción. Los tests de este bloque usan forceDeterministic:true
+// así que nunca tocan la resolución real de la key.
+vi.mock("@/lib/anthropic-key", () => ({
+  resolveAnthropicApiKey: vi.fn().mockRejectedValue(new Error("test-no-key")),
+  AnthropicKeyMissingError: class AnthropicKeyMissingError extends Error {
+    constructor(msg = "test") {
+      super(msg);
+      this.name = "AnthropicKeyMissingError";
+    }
+  },
+}));
+
 import {
   mergeDeterministic,
   equalNormalized,
   type SourceData,
 } from "@/lib/onboarding-fast/merger-deterministic";
+import { mergeFuentes } from "@/lib/onboarding-fast/merger";
 
 describe("equalNormalized", () => {
   it("strings con whitespace/mayúsculas distintos → iguales", () => {
@@ -151,6 +168,45 @@ describe("mergeDeterministic — casos borde", () => {
     ]);
     expect(out.canonicos).toEqual({});
     expect(out.conflictos).toEqual([]);
+  });
+});
+
+describe("mergeFuentes — guard C3 contra LLM con fuentes vacías", () => {
+  // Regresión del job 8a1ca351 (Bonets Grill): 3 fuentes llegaron con data={}
+  // tras CAPTCHA en Google/TripAdvisor + parser fallado en website. Sin el
+  // guard, el LLM se llamaba, no emitía tools, y canonicos={} se devolvía
+  // silencioso. El guard debe short-circuit a determinista ANTES de gastar
+  // tokens. Forzamos forceDeterministic para reproducir el camino sin API key.
+
+  it("sources=[] → canonicos vacío sin throw", async () => {
+    const out = await mergeFuentes({ sources: [], forceDeterministic: true });
+    expect(out.canonicos).toEqual({});
+    expect(out.conflictos).toEqual([]);
+  });
+
+  it("todas las sources con data={} → canonicos vacío sin throw", async () => {
+    const out = await mergeFuentes({
+      sources: [
+        { origin: "google", data: {} },
+        { origin: "tripadvisor", data: {} },
+        { origin: "website", data: {} },
+      ],
+      forceDeterministic: true,
+    });
+    expect(out.canonicos).toEqual({});
+    expect(out.conflictos).toEqual([]);
+  });
+
+  it("1 source con data útil + 2 vacías → canonicos contiene la útil", async () => {
+    const out = await mergeFuentes({
+      sources: [
+        { origin: "google", data: {} },
+        { origin: "tripadvisor", data: {} },
+        { origin: "website", data: { name: "Bonets Grill Icod" } },
+      ],
+      forceDeterministic: true,
+    });
+    expect(out.canonicos.name).toBe("Bonets Grill Icod");
   });
 
   it("arrays iguales semánticamente distintos → conflicto (determinista estricto)", () => {

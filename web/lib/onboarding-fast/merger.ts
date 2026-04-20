@@ -133,6 +133,19 @@ export async function mergeFuentes(input: MergerInput): Promise<MergerOutput> {
 }
 
 async function mergeWithLLM(input: MergerInput, apiKey: string): Promise<MergerOutput> {
+  // Guard anti-gasto-inútil: si NINGUNA fuente tiene datos, el LLM no tiene
+  // nada que fusionar. Sin este guard pagamos tokens por una respuesta
+  // predecible (Opus/Sonnet no emite tools) y caemos en el silent-fail del
+  // loop que devuelve canonicos={} sin throw. Reportado 2026-04-20 con el
+  // job 8a1ca351 (Bonets Grill): 3 fuentes llegaron al merger con data={}
+  // tras CAPTCHA en Google/TripAdvisor y parseo fallido del website.
+  const hasAnyData = input.sources.some(
+    (s) => s.data && Object.keys(s.data).length > 0,
+  );
+  if (!hasAnyData) {
+    return { canonicos: {}, conflictos: [] };
+  }
+
   const client = new Anthropic({ apiKey, maxRetries: 2, timeout: 45_000 });
   const model = input.model ?? DEFAULT_MODEL;
 
