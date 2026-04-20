@@ -33,10 +33,11 @@ TOOLS_ADMIN: list[dict[str, Any]] = [
     {
         "name": "deshabilitar_item",
         "description": (
-            "Marca un item del menú como NO disponible (sin stock). Se caduca "
-            "automáticamente mañana a las 00:00 salvo que indiques `permanente`. "
-            "USO: cuando el dueño dice 'sin pulpo', 'hoy no hay tortilla', etc. "
-            "Pide confirmación antes de llamar."
+            "Marca un item del menú como SIN STOCK / no disponible para los clientes. "
+            "El cliente dejará de poder pedirlo. Caduca mañana 00:00 salvo `permanente`. "
+            "USO literal: 'sin pulpo', 'hoy no hay tortilla', 'quita la X del menú', "
+            "'fuera la burger dakota', 'se acabó el X', 'ponme sin stock el X'. "
+            "ESTO NO ES habilitar_item. Pide confirmación antes de llamar."
         ),
         "input_schema": {
             "type": "object",
@@ -50,7 +51,12 @@ TOOLS_ADMIN: list[dict[str, Any]] = [
     },
     {
         "name": "habilitar_item",
-        "description": "Re-activa un item previamente deshabilitado. Borra su override del menú.",
+        "description": (
+            "VUELVE A PONER en el menú un item que estaba sin stock. Es lo "
+            "CONTRARIO de deshabilitar_item. USO literal: 'ya hay X otra vez', "
+            "'vuelve a haber X', 'reactiva la X', 'ya tenemos X'. "
+            "NO usar cuando el dueño quiera QUITAR un item — eso es deshabilitar_item."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
