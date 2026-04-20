@@ -33,6 +33,22 @@ MAX_INTENTOS = int(os.getenv("ADMIN_MAX_ATTEMPTS", "5"))
 PIN_REGEX = re.compile(r"^\s*(\d{4})\s*$")
 
 
+def normalizar_phone(phone: str | None) -> str:
+    """Convierte un phone al formato que guarda la DB: solo dígitos, sin +.
+
+    Evolution entrega 'from' sin el prefijo `+` (ej. "34604342381"),
+    pero la UI podría guardar con `+34604342381`. Esta función unifica
+    ambos caminos para que el lookup funcione independientemente.
+
+    - strip whitespace
+    - remove leading "+"
+    - remove any non-digit char (paranoia contra espacios/guiones de UI)
+    """
+    if not phone:
+        return ""
+    return re.sub(r"\D", "", phone.strip())
+
+
 @dataclass(frozen=True)
 class AdminStatus:
     """Estado del remitente frente a la tabla tenant_admins."""
@@ -66,13 +82,16 @@ async def resolver_admin(
         AdminStatus. Si is_admin=False → flujo cliente normal.
         Si is_admin=True y session_ok=False → pedir PIN (locked=True bloquea).
     """
+    phone_normalizado = normalizar_phone(phone_wa)
+    if not phone_normalizado:
+        return AdminStatus(is_admin=False, session_ok=False)
     row = await conn.fetchrow(
         """
         SELECT id, display_name, last_auth_at, auth_attempts
         FROM tenant_admins
         WHERE tenant_id = $1 AND phone_wa = $2
         """,
-        tenant_id, phone_wa,
+        tenant_id, phone_normalizado,
     )
     if not row:
         return AdminStatus(is_admin=False, session_ok=False)

@@ -19,6 +19,7 @@ from app.admin_resolver import (
     AdminStatus,
     es_pin_candidato,
     hash_pin,
+    normalizar_phone,
     resolver_admin,
     verificar_pin,
 )
@@ -74,6 +75,42 @@ def test_hash_pin_rechaza_vacio() -> None:
         hash_pin("")
     with pytest.raises(ValueError):
         hash_pin("   ")
+
+
+def test_normalizar_phone_varios_formatos() -> None:
+    # Evolution entrega "34604342381" sin +; UI guarda "+34604342381".
+    # Ambos deben normalizar al mismo string de solo dígitos.
+    assert normalizar_phone("+34604342381") == "34604342381"
+    assert normalizar_phone("34604342381") == "34604342381"
+    assert normalizar_phone("  +34 604 342 381  ") == "34604342381"
+    assert normalizar_phone("+34-604-342-381") == "34604342381"
+    assert normalizar_phone("") == ""
+    assert normalizar_phone(None) == ""  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_resolver_con_plus_y_sin_plus_encuentran_mismo_admin() -> None:
+    # Evolution entrega phone sin "+", UI guarda con "+". El resolver
+    # debe normalizar ambos al mismo string antes del query SQL.
+    captured: dict[str, str] = {}
+
+    def capture_row(tenant_id, phone_wa):  # noqa: ANN001
+        captured["query_phone"] = phone_wa
+        return None
+
+    conn = FakeConn(row_factory=capture_row)
+    await resolver_admin(conn, uuid4(), "+34604342381")  # type: ignore[arg-type]
+    assert captured["query_phone"] == "34604342381"
+    await resolver_admin(conn, uuid4(), "34604342381")  # type: ignore[arg-type]
+    assert captured["query_phone"] == "34604342381"
+
+
+@pytest.mark.asyncio
+async def test_resolver_phone_vacio_no_consulta_db() -> None:
+    # Defensa: phone vacío/None no debe llegar al fetchrow.
+    conn = FakeConn(row_factory=lambda *_: pytest.fail("no debería consultar"))
+    status = await resolver_admin(conn, uuid4(), "")  # type: ignore[arg-type]
+    assert status.is_admin is False
 
 
 def test_es_pin_candidato() -> None:
