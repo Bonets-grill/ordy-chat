@@ -14,6 +14,8 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { agentConfigs, tenants } from "@/lib/db/schema";
 import { ValidatorCard } from "./validator-card";
+import { RulesCard, type Rule } from "./rules-card";
+import { sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
@@ -65,11 +67,30 @@ export default async function AdminTenantDetailPage({
   const tenant = await loadTenant(id);
   if (!tenant) notFound();
 
-  const [agent, recentRuns, globalDefault] = await Promise.all([
+  const [agent, recentRuns, globalDefault, rulesRaw] = await Promise.all([
     loadAgent(id),
     getRuns({ tenantSearch: tenant.slug, limit: 5, sinceHours: 720 }),
     getFlag<"auto" | "manual" | "skip">("validation_mode_default").catch(() => "skip" as const),
+    db.execute(sql`
+      SELECT id::text AS id, rule_text, priority, created_at
+      FROM agent_rules
+      WHERE tenant_id = ${id}::uuid AND active = true
+      ORDER BY priority DESC, created_at
+    `),
   ]);
+
+  const rulesRows = (Array.isArray(rulesRaw) ? rulesRaw : (rulesRaw as { rows?: unknown[] }).rows ?? []) as Array<{
+    id: string;
+    rule_text: string;
+    priority: number;
+    created_at: Date | string;
+  }>;
+  const rules: Rule[] = rulesRows.map((r) => ({
+    id: r.id,
+    rule_text: r.rule_text,
+    priority: r.priority,
+    created_at: typeof r.created_at === "string" ? r.created_at : r.created_at.toISOString(),
+  }));
 
   const effectiveMode: "auto" | "manual" | "skip" =
     agent?.validationMode === "auto" || agent?.validationMode === "manual" || agent?.validationMode === "skip"
@@ -106,6 +127,8 @@ export default async function AdminTenantDetailPage({
           effectiveMode={effectiveMode}
           paused={Boolean(agent?.paused)}
         />
+
+        <RulesCard tenantId={tenant.id} rules={rules} />
 
         <Card>
           <CardHeader>
