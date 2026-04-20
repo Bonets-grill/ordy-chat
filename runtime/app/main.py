@@ -66,6 +66,14 @@ logger = logging.getLogger("ordychat.main")
 _warmup_notify_cache: dict[str, str] = {}
 _warmup_notify_lock = asyncio.Lock()
 
+# Dedupe independiente de avisos "cerca del cap" (umbral 80%). Mismo patrón
+# que _warmup_notify_cache: 1 aviso/día/tenant. La clave incluye el umbral
+# para que si cambiamos el threshold (futura config) no colisionemos.
+_warmup_warn_cache: dict[str, str] = {}
+_warmup_warn_lock = asyncio.Lock()
+
+WARMUP_WARN_THRESHOLD = 0.8  # aviso temprano cuando sent_today/cap >= 0.8
+
 
 async def _notificar_tenant_warmup_cap(
     tenant: TenantContext,
@@ -125,6 +133,76 @@ async def _notificar_tenant_warmup_cap(
         logger.exception(
             "warmup notify tenant falló",
             extra={"event": "warmup_notify_tenant_error", "tenant_id": str(tenant.id)},
+        )
+
+
+async def _avisar_tenant_warmup_cerca(
+    tenant: TenantContext,
+    adapter,
+    estado: dict,
+) -> None:
+    """Aviso temprano cuando sent_today/cap >= WARMUP_WARN_THRESHOLD.
+
+    Mismo patrón de dedupe que `_notificar_tenant_warmup_cap` pero con
+    caché independiente: un tenant que hoy se acerque al cap y luego
+    lo alcance recibe DOS mensajes distintos (80% → cap hit), no uno.
+    Eso es a propósito: el aviso temprano permite reaccionar con
+    warmup_override antes de que el bot se silencie.
+
+    Se llama SIEMPRE después de un mensaje enviado con éxito (no bloqueado)
+    para que el humano del tenant pueda actuar mientras el bot sigue vivo.
+    """
+    cap = estado.get("cap")
+    sent = estado.get("sent_today")
+    if cap is None or sent is None or cap <= 0:
+        return  # override activo, mature, o provider no-evolution → no aplica
+    ratio = sent / cap
+    if ratio < WARMUP_WARN_THRESHOLD:
+        return
+
+    pool = await inicializar_pool()
+    async with pool.acquire() as conn:
+        target_phone = await conn.fetchval(
+            "SELECT handoff_whatsapp_phone FROM agent_configs WHERE tenant_id = $1",
+            tenant.id,
+        )
+    target_phone = (target_phone or "").strip()
+    if not target_phone:
+        return
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    async with _warmup_warn_lock:
+        if _warmup_warn_cache.get(str(tenant.id)) == today:
+            return
+        _warmup_warn_cache[str(tenant.id)] = today
+
+    tier = estado.get("tier") or "?"
+    restantes = cap - sent
+    body = (
+        f"🟡 *Cerca del cap diario* — {tenant.name}\n\n"
+        f"Tu bot ha enviado {sent}/{cap} mensajes hoy (tier {tier}, "
+        f"{int(ratio * 100)}% del cap). Quedan {restantes} antes de silenciarse.\n\n"
+        f"Si esperas más tráfico, pide al administrador activar "
+        f"warmup_override antes de alcanzar el límite."
+    )
+    try:
+        await adapter.enviar_mensaje(target_phone, body)
+        logger.info(
+            "warmup warn tenant enviado",
+            extra={
+                "event": "warmup_warn_tenant",
+                "tenant_id": str(tenant.id),
+                "target_phone_tail": target_phone[-4:],
+                "tier": tier,
+                "cap": cap,
+                "sent_today": sent,
+                "ratio": round(ratio, 2),
+            },
+        )
+    except Exception:
+        logger.exception(
+            "warmup warn tenant falló",
+            extra={"event": "warmup_warn_tenant_error", "tenant_id": str(tenant.id)},
         )
 
 
@@ -819,6 +897,17 @@ async def _procesar_mensaje(tenant: TenantContext, provider: str, msg: MensajeEn
             pass
 
         await adapter.enviar_mensaje(msg.telefono, respuesta)
+
+        # Aviso temprano al humano del tenant cuando nos acercamos al cap
+        # diario. Best-effort: si falla, NUNCA afecta al envío real al
+        # cliente que acaba de completarse.
+        try:
+            await _avisar_tenant_warmup_cerca(tenant, adapter, estado)
+        except Exception:
+            logger.exception(
+                "warmup warn wrapper falló",
+                extra={**log_extra, "event": "warmup_warn_wrap_error"},
+            )
 
         logger.info(
             "mensaje procesado",
