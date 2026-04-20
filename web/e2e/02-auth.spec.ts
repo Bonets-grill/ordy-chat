@@ -2,16 +2,19 @@ import { expect, test } from "@playwright/test";
 import { freshEmail, loginDev } from "./helpers";
 
 test.describe("Auth (dev login)", () => {
-  // TODO(e2e-auth-redirect): test bloqueado por hydration glitch — Next 16 con
-  // <Suspense> + React client + Playwright → el click del toggle "Prefiero
-  // enlace mágico" no dispara setState a tiempo en dev; en prod-build tampoco
-  // (verificado local contra Neon branch). El flujo API-bypass (POST a
-  // /api/auth/callback/dev con csrfToken+cookies) funciona con curl pero
-  // Playwright no persiste el par csrf-cookie|body de forma coherente (errores
-  // observados: CredentialsSignin sin hit authorize, MissingCSRF con inject).
-  // Siguiente paso sugerido: o bien refactorizar signin page para no depender
-  // de <Suspense> (move useSearchParams fuera del Suspense boundary), o
-  // inyectar la session cookie directamente vía DrizzleAdapter en setup.
+  // TODO(e2e-dev-provider): refactorado el Suspense del signin (2026-04-21)
+  // no arregló el fallo. Observado con debug log en authorize(): el provider
+  // "dev" NUNCA recibe la llamada cuando el submit viene de Playwright —
+  // next-auth devuelve CredentialsSignin ANTES de llegar al authorize.
+  //
+  // Con curl manual sí funciona (302 → /onboarding + session-token cookie).
+  // Hipótesis restante: CSRF double-submit validation rechaza porque
+  // Playwright page.request guarda la cookie distinto vs cómo curl maneja
+  // Set-Cookie. Probado AUTH_TRUST_HOST=true sin efecto.
+  //
+  // Fix verdadero probable: crear una session cookie directamente vía
+  // DrizzleAdapter en e2e setup (evita el flujo auth completo). Scope
+  // de otra sesión. Workflow sigue continue-on-error para no bloquear.
   test.fixme("sign in redirige a onboarding tras el login", async ({ page }) => {
     const email = freshEmail("auth");
     await loginDev(page, email, "/onboarding");

@@ -3,23 +3,50 @@
 import { signIn } from "next-auth/react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 type AuthMode = "password" | "magic";
 
-function SignInForm() {
+type UrlState = { from: string; errorParam: string | null };
+
+/**
+ * Lee los search params y los entrega al parent via callback. Es un mini
+ * componente que solo existe para cumplir la regla Next de "useSearchParams
+ * debe estar dentro de un Suspense". Al aislarlo, el SignInForm puede quedar
+ * FUERA del Suspense y hidratar al instante — evita el hydration race que
+ * hacía que el click del toggle "Prefiero enlace mágico" no disparara
+ * setState en Playwright (bug e2e 2026-04-20).
+ */
+function SearchParamsSync({ onReady }: { onReady: (s: UrlState) => void }) {
   const params = useSearchParams();
-  const from = params.get("from") ?? params.get("next") ?? "/onboarding";
-  const errorParam = params.get("error");
+  useEffect(() => {
+    onReady({
+      from: params.get("from") ?? params.get("next") ?? "/onboarding",
+      errorParam: params.get("error"),
+    });
+  }, [params, onReady]);
+  return null;
+}
+
+function SignInForm() {
+  // Defaults seguros (/onboarding) hasta que SearchParamsSync actualice.
+  // El form usa `from` solo al submit — el user tarda bastantes ms en
+  // interactuar, tiempo más que suficiente para que el effect del sync corra.
+  const [from, setFrom] = useState("/onboarding");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState<AuthMode>("password");
-  const [error, setError] = useState<string | null>(
-    errorParam === "CredentialsSignin" ? "Email o contraseña incorrectos." : null,
-  );
+  const [error, setError] = useState<string | null>(null);
+
+  const handleParamsReady = useCallback((s: UrlState) => {
+    setFrom(s.from);
+    if (s.errorParam === "CredentialsSignin") {
+      setError("Email o contraseña incorrectos.");
+    }
+  }, []);
 
   const devMode =
     process.env.NODE_ENV === "development" || process.env.NEXT_PUBLIC_ALLOW_DEV_LOGIN === "1";
@@ -59,7 +86,11 @@ function SignInForm() {
   }
 
   return (
-    <form onSubmit={onSubmit} className="w-full max-w-sm space-y-4 rounded-2xl border border-neutral-200 bg-white p-8 shadow-sm">
+    <>
+      <Suspense fallback={null}>
+        <SearchParamsSync onReady={handleParamsReady} />
+      </Suspense>
+      <form onSubmit={onSubmit} className="w-full max-w-sm space-y-4 rounded-2xl border border-neutral-200 bg-white p-8 shadow-sm">
       <div>
         <h1 className="text-2xl font-semibold text-neutral-900">Entra a Ordy Chat</h1>
         <p className="mt-1 text-sm text-neutral-500">
@@ -144,16 +175,15 @@ function SignInForm() {
         Al entrar aceptas los <Link href="/terms" className="underline">términos</Link> y la{" "}
         <Link href="/privacy" className="underline">privacidad</Link>.
       </p>
-    </form>
+      </form>
+    </>
   );
 }
 
 export default function SignInPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-surface-subtle px-4">
-      <Suspense fallback={<div className="text-sm text-neutral-500">Cargando…</div>}>
-        <SignInForm />
-      </Suspense>
+      <SignInForm />
     </div>
   );
 }
