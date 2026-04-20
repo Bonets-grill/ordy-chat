@@ -162,6 +162,67 @@ async def onboarding_scrape_endpoint(request: Request):
 _VALIDATOR_TRIGGERS = {"onboarding_auto", "admin_manual", "autopatch_retry"}
 
 
+@app.post("/internal/playground/generate")
+async def internal_playground_generate(request: Request):
+    """Ejecuta brain.generar_respuesta con el sistema prompt real del tenant
+    pero SIN escribir a conversations/messages y SIN enviar a WhatsApp.
+    Uso: /dashboard/playground del tenant para probar el agente.
+
+    Body: {"tenant_slug": str, "messages": [{"role": "user"|"assistant", "content": str}]}
+    Devuelve: {"response": str, "tokens_in": int, "tokens_out": int}
+    """
+    _check_internal_secret(request)
+
+    body = await request.json()
+    tenant_slug = (body or {}).get("tenant_slug")
+    messages = (body or {}).get("messages") or []
+    if not tenant_slug:
+        raise HTTPException(status_code=400, detail="tenant_slug requerido")
+    if not isinstance(messages, list) or not messages:
+        raise HTTPException(status_code=400, detail="messages debe ser lista no vacía")
+    if len(messages) > 40:
+        raise HTTPException(status_code=400, detail="máximo 40 mensajes de historial")
+
+    # Última user message es la que respondemos; resto es historial.
+    last = messages[-1]
+    if not isinstance(last, dict) or last.get("role") != "user":
+        raise HTTPException(status_code=400, detail="último mensaje debe ser role=user")
+    user_text = str(last.get("content", "")).strip()
+    if len(user_text) < 1 or len(user_text) > 4000:
+        raise HTTPException(status_code=400, detail="content vacío o >4000 chars")
+
+    historial = [
+        {"role": m["role"], "content": m["content"]}
+        for m in messages[:-1]
+        if isinstance(m, dict) and m.get("role") in ("user", "assistant")
+    ]
+
+    from app.brain import generar_respuesta
+    from app.tenants import cargar_tenant_por_slug
+
+    try:
+        tenant = await cargar_tenant_por_slug(tenant_slug)
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"tenant: {type(e).__name__}")
+
+    try:
+        respuesta, tin, tout = await generar_respuesta(
+            tenant,
+            user_text,
+            historial,
+            customer_phone="playground-sandbox",
+            media_blocks=None,
+        )
+    except Exception as e:
+        logger.exception(
+            "playground generate error",
+            extra={"event": "playground_error", "tenant_slug": tenant_slug},
+        )
+        raise HTTPException(status_code=502, detail=f"brain: {type(e).__name__}")
+
+    return {"response": respuesta, "tokens_in": tin, "tokens_out": tout}
+
+
 @app.post("/internal/validator/run-seeds", status_code=202)
 async def internal_validator_run_seeds(request: Request):
     _check_internal_secret(request)

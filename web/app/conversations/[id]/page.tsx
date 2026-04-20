@@ -8,6 +8,12 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { conversations, messages } from "@/lib/db/schema";
 import { requireTenant } from "@/lib/tenant";
+import { LiveRefresh } from "./live-refresh";
+
+// force-dynamic: sin esto Next cachea el render y LiveRefresh no ve nuevos
+// mensajes aunque haga router.refresh(). Con force-dynamic el re-render
+// consulta la DB de verdad cada tick.
+export const dynamic = "force-dynamic";
 
 export default async function ConversationDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const session = await auth();
@@ -39,7 +45,10 @@ export default async function ConversationDetailPage({ params }: { params: Promi
           <h1 className="mt-2 text-3xl font-semibold text-neutral-900">{conv.customerName ?? conv.phone}</h1>
           <p className="mt-1 text-neutral-500">{conv.phone} · {msgs.length} mensajes</p>
         </div>
-        <Badge tone="muted">Inicio: {new Date(conv.createdAt).toLocaleDateString("es-ES")}</Badge>
+        <div className="flex items-center gap-2">
+          <LiveRefresh />
+          <Badge tone="muted">Inicio: {new Date(conv.createdAt).toLocaleDateString("es-ES")}</Badge>
+        </div>
       </div>
 
       <Card className="flex flex-col overflow-hidden" style={{ height: "calc(100vh - 16rem)" }}>

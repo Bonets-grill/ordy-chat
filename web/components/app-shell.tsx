@@ -1,4 +1,4 @@
-import { Bot, BookOpen, CalendarCheck, CalendarX, ChefHat, CreditCard, FileText, LayoutDashboard, MessageSquareText, Settings } from "lucide-react";
+import { Bot, BookOpen, CalendarCheck, CalendarX, ChefHat, CreditCard, FileText, FlaskConical, LayoutDashboard, MessageSquareText, Settings } from "lucide-react";
 import Link from "next/link";
 import type { Session } from "next-auth";
 import { Badge } from "./ui/badge";
@@ -8,6 +8,7 @@ type NavItem = { href: string; label: string; icon: React.ComponentType<{ classN
 const NAV: NavItem[] = [
   { href: "/dashboard", label: "Resumen", icon: LayoutDashboard },
   { href: "/conversations", label: "Conversaciones", icon: MessageSquareText },
+  { href: "/dashboard/playground", label: "Playground", icon: FlaskConical },
   { href: "/agent", label: "Mi agente", icon: Bot },
   { href: "/agent/knowledge", label: "Conocimiento", icon: BookOpen },
   { href: "/agent/kds", label: "KDS Cocina & Bar", icon: ChefHat },
