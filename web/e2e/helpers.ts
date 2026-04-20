@@ -10,15 +10,24 @@ export function freshEmail(prefix = "e2e"): string {
 /**
  * Login via dev provider. Requiere ALLOW_DEV_LOGIN=1 en .env.local.
  * Funciona desde cualquier página: navega a /signin, rellena email, envía.
+ *
+ * IMPORTANTE: el provider `dev` en `lib/auth.ts` SOLO acepta el email que
+ * coincide con `SUPER_ADMIN_EMAIL` (restricción de seguridad hasta que
+ * Resend esté configurado). Por eso, si `SUPER_ADMIN_EMAIL` está definido,
+ * ignoramos el email recibido y usamos ese — de lo contrario cada test
+ * fallaba con `CredentialsSignin` en CI. En desarrollo local sin
+ * SUPER_ADMIN_EMAIL, respetamos el email original para no cambiar el
+ * comportamiento que el dev espera.
  */
 export async function loginDev(page: Page, email: string, redirectTo = "/dashboard") {
+  const effectiveEmail = process.env.SUPER_ADMIN_EMAIL?.toLowerCase().trim() || email;
   await page.goto(`/signin?from=${encodeURIComponent(redirectTo)}`);
   await expect(page.getByRole("heading", { name: /Entra a Ordy Chat/i })).toBeVisible();
   // El signin ahora defaultea a modo password; el dev provider usa magic link,
   // así que cambiamos a magic mode antes de submit. En dev mode el botón sigue
   // siendo "Entrar" (no "Enviar enlace") por la rama devMode del signin page.
   await page.getByRole("button", { name: /Prefiero enlace mágico/i }).click();
-  await page.getByPlaceholder("tu@empresa.com").fill(email);
+  await page.getByPlaceholder("tu@empresa.com").fill(effectiveEmail);
   await page.getByRole("button", { name: /^Entrar$/i }).click();
   // El dev provider redirige inmediatamente al callbackUrl sin email real.
   await page.waitForURL((url) => !url.pathname.startsWith("/signin"), { timeout: 15_000 });
