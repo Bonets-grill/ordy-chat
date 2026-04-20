@@ -424,7 +424,69 @@ async def _procesar_mensaje(tenant: TenantContext, provider: str, msg: MensajeEn
         media_blocks: list[dict] = []
         caption_text = ""
         if msg.tipo_no_texto:
-            if msg.tipo_no_texto == "image" and msg.media_ref:
+            # Audio / voice note (PPT) → Whisper transcripción → tratar como texto.
+            # C4 2026-04-20: permite al admin y al cliente mandar audios. Evolution
+            # entrega audio/ogg;codecs=opus. Whisper API lo acepta directo <=25MB.
+            if msg.tipo_no_texto in ("audio", "voice") and msg.media_ref:
+                from app.audio import (
+                    AudioTooLargeError,
+                    OpenAIKeyMissingError,
+                    obtener_openai_api_key,
+                    transcribir_audio,
+                )
+                downloaded = await adapter.descargar_media(msg.media_ref)
+                if downloaded is not None:
+                    raw_bytes, mime = downloaded
+                    try:
+                        oai_key = await obtener_openai_api_key(tenant.credentials)
+                        transcripcion = await transcribir_audio(raw_bytes, mime, oai_key)
+                    except AudioTooLargeError:
+                        transcripcion = None
+                        _user_err = (
+                            "El audio es demasiado largo (>25 MB). "
+                            "¿Puedes mandar uno más corto o escribirlo?"
+                        )
+                    except OpenAIKeyMissingError:
+                        logger.error(
+                            "OPENAI_API_KEY ausente — audio no procesable",
+                            extra={**log_extra, "event": "audio_no_key"},
+                        )
+                        transcripcion = None
+                        _user_err = "No puedo procesar audios todavía. ¿Puedes escribirlo?"
+                    except Exception:
+                        logger.exception(
+                            "whisper fallo transcripción",
+                            extra={**log_extra, "event": "audio_whisper_error", "bytes": len(raw_bytes), "mime": mime},
+                        )
+                        transcripcion = None
+                        _user_err = "No pude entender tu audio. ¿Puedes repetirlo o escribirlo?"
+
+                    if transcripcion:
+                        # La transcripción reemplaza el texto del mensaje. El resto
+                        # del flujo (admin flow / cliente flow) lo usa como si el
+                        # user hubiera escrito directamente.
+                        msg.texto = transcripcion
+                        logger.info(
+                            "audio→texto OK",
+                            extra={**log_extra, "event": "audio_transcribed", "chars": len(transcripcion)},
+                        )
+                    else:
+                        # Sin transcripción utilizable → responder amable y return.
+                        estado = await esperar_con_warmup(tenant.id, msg.telefono)
+                        if not estado.get("blocked"):
+                            await adapter.enviar_mensaje(msg.telefono, _user_err)
+                        return
+                else:
+                    logger.warning(
+                        "no se pudo descargar audio",
+                        extra={**log_extra, "event": "audio_download_fail"},
+                    )
+                    await adapter.enviar_mensaje(
+                        msg.telefono,
+                        "No pude descargar tu audio. ¿Puedes volver a mandarlo o escribirlo?",
+                    )
+                    return
+            elif msg.tipo_no_texto == "image" and msg.media_ref:
                 downloaded = await adapter.descargar_media(msg.media_ref)
                 if downloaded is not None:
                     raw_bytes, mime = downloaded
