@@ -158,9 +158,10 @@ async def marcar_agente_pausado(
             await conn.execute(
                 """
                 INSERT INTO audit_log (tenant_id, action, entity, entity_id, metadata)
-                VALUES ($1, 'validator_pause_agent', 'agent_configs', $1::text, $2::jsonb)
+                VALUES ($1, 'validator_pause_agent', 'agent_configs', $2, $3::jsonb)
                 """,
                 tenant_id,
+                str(tenant_id),
                 json.dumps({"razon": razon}, ensure_ascii=False),
             )
 
@@ -191,9 +192,10 @@ async def aplicar_autopatch(
             await conn.execute(
                 """
                 INSERT INTO audit_log (tenant_id, action, entity, entity_id, metadata)
-                VALUES ($1, 'validator_autopatch_applied', 'agent_configs', $1::text, $2::jsonb)
+                VALUES ($1, 'validator_autopatch_applied', 'agent_configs', $2, $3::jsonb)
                 """,
                 tenant_id,
+                str(tenant_id),
                 json.dumps(
                     {
                         "prompt_anterior_len": len(prompt_anterior),
