@@ -113,7 +113,7 @@ export function AdminShell({
           </Link>
           <div className="flex items-center gap-3 text-sm">
             <Link
-              href="/dashboard"
+              href="/admin/tenants"
               className="hidden sm:inline-flex h-8 items-center rounded-lg px-3 transition-colors"
               style={{ background: "#e8e6dc", color: "#4d4c48" }}
             >
