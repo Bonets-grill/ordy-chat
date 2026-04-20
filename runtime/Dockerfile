@@ -2,12 +2,14 @@ FROM mcr.microsoft.com/playwright/python:v1.58.0-noble
 
 WORKDIR /app
 
-# Base image ya trae Chromium + deps. Solo añadimos nuestras libs Python.
-COPY requirements.txt .
+# Build context = raíz del repo (ver railway.toml en raíz). Por eso los COPY
+# llevan prefijo `runtime/`. Para build local desde runtime/ usar:
+#   docker build -f runtime/Dockerfile . (desde raíz del repo, no desde runtime/)
+COPY runtime/requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-COPY app ./app
+COPY runtime/app ./app
 
 EXPOSE 8000
 

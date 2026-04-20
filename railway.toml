@@ -1,0 +1,20 @@
+# railway.toml — Config de Railway para el servicio runtime (FastAPI + Python).
+#
+# Por qué en la raíz del repo y no en runtime/:
+# El service en Railway tiene rootDirectory=null (no se puede forzar desde
+# archivo de config, solo desde dashboard). Con rootDirectory=null el build
+# context es la raíz del repo y Railway ignora cualquier config que esté en
+# subcarpetas. Este archivo, al vivir en la raíz, sí se aplica.
+#
+# Nota 2026-04-20: Railway sin esta config auto-detectaba RAILPACK como
+# builder y producía builds que arrancaban con ModuleNotFoundError porque
+# `app.main` no quedaba en /app dentro del contenedor. 20 deploys FAILED
+# seguidos hasta que se forzó DOCKERFILE aquí.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "runtime/Dockerfile"
+
+[deploy]
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10

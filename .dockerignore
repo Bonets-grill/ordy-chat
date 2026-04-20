@@ -1,0 +1,39 @@
+# .dockerignore — Excluye paths que el Dockerfile de runtime/ NO necesita.
+#
+# El build de Railway corre con context = raíz del repo (ver railway.toml).
+# Sin este archivo el context incluiría web/node_modules, .next, .git, etc.
+# — fácilmente ~2GB que ralentizan cada build.
+
+# Frontend y mobile (builds separados)
+web/
+mobile/
+
+# Docs/meta (no código)
+docs/
+knowledge/
+.planning/
+.gstack/
+.claude/
+.github/
+
+# Git y artefactos de control
+.git/
+.gitignore
+
+# Venvs y caches Python (el Dockerfile instala fresh con pip)
+**/.venv/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+
+# Node (en caso de que alguien corra algo en runtime/)
+**/node_modules/
+
+# Env y secretos — los inyecta Railway al runtime, no al build
+.env
+.env.local
+.env.*.local
+SECRETS-GENERATED.txt
