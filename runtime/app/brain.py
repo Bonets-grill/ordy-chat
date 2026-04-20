@@ -405,6 +405,51 @@ async def _ejecutar_tool(
         return json.dumps({"ok": False, "error": str(e)[:300]})
 
 
+async def _build_menu_overrides_block(tenant_id: "UUID") -> str | None:  # noqa: F821
+    """Devuelve el bloque de disponibilidad del día para inyectar en el system.
+
+    Consulta menu_overrides activos (available=false, not caducados) y genera
+    texto XML que el LLM cliente lee para NO ofrecer esos items. Si no hay
+    overrides devuelve None y el caller no añade el bloque.
+
+    El bloque va tras el system_prompt base del tenant, que tiene el menú
+    completo — los overrides actúan como parche "hoy sin esto". El LLM
+    respeta XML tags semánticamente.
+    """
+    from app.memory import inicializar_pool
+    pool = await inicializar_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT item_name, note, active_until
+            FROM menu_overrides
+            WHERE tenant_id = $1
+              AND available = false
+              AND (active_until IS NULL OR active_until > NOW())
+            ORDER BY item_name
+            """,
+            tenant_id,
+        )
+    if not rows:
+        return None
+    lineas = []
+    for r in rows:
+        if r["active_until"]:
+            hasta = f"hasta {r['active_until'].strftime('%Y-%m-%d %H:%M UTC')}"
+        else:
+            hasta = "hasta reactivación manual del dueño"
+        extra = f" ({r['note']})" if r["note"] else ""
+        lineas.append(f"- {r['item_name']} — SIN STOCK{extra}, {hasta}")
+    return (
+        "<disponibilidad_hoy>\n"
+        "ATENCIÓN — items del menú que HOY no están disponibles. NO los ofrezcas "
+        "al cliente. Si preguntan por alguno, responde honestamente que hoy no "
+        "está disponible y sugiere una alternativa equivalente del menú.\n"
+        + "\n".join(lineas) +
+        "\n</disponibilidad_hoy>"
+    )
+
+
 async def generar_respuesta(
     tenant: TenantContext,
     mensaje_usuario: str,
@@ -492,6 +537,19 @@ async def generar_respuesta(
     if contexto_bloque:
         # Bloque NO cacheado: cambia por usuario y tras cada pedido/cita.
         system_blocks.append({"type": "text", "text": contexto_bloque})
+
+    # Menu overrides activos (C4 tanda 3d 2026-04-20). Si el admin deshabilitó
+    # items por WhatsApp ("sin pulpo hoy"), el LLM cliente DEBE saberlo para
+    # no ofrecerlos. Bloque NO cacheado — cambia cuando admin toca menu_overrides.
+    try:
+        overrides_block = await _build_menu_overrides_block(tenant.id)
+        if overrides_block:
+            system_blocks.append({"type": "text", "text": overrides_block})
+    except Exception:
+        logger.exception(
+            "menu_overrides_block falló (cliente sigue sin disponibilidad del día)",
+            extra={"tenant_slug": tenant.slug, "event": "overrides_block_error"},
+        )
 
     # Multi-agent orchestrator (best-effort). Solo activo si el tenant tiene
     # tenant_add_ons.multi_agent_enabled=true. Si el query falla o el flag
