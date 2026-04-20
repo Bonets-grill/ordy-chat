@@ -8,6 +8,7 @@ import { AdminAuthError, requireSuperAdmin } from "@/lib/admin/auth";
 import { getInstanceRows, type InstanceTier } from "@/lib/admin/queries";
 import { auth } from "@/lib/auth";
 import { UnburnButton } from "./unburn-button";
+import { WarmupOverrideButton } from "./warmup-override-button";
 
 export const dynamic = "force-dynamic";
 
@@ -140,6 +141,16 @@ export default async function AdminInstancesPage({
                           >
                             burned {r.burnedReason ? `· ${r.burnedReason}` : ""}
                           </span>
+                        ) : r.warmupOverride ? (
+                          <span
+                            className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700"
+                            title={r.warmupOverrideReason ?? ""}
+                          >
+                            override ·{" "}
+                            {r.warmupOverrideReason && r.warmupOverrideReason.length > 30
+                              ? `${r.warmupOverrideReason.slice(0, 30)}…`
+                              : r.warmupOverrideReason ?? "sin razón"}
+                          </span>
                         ) : (
                           <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700">
                             activa
@@ -147,7 +158,15 @@ export default async function AdminInstancesPage({
                         )}
                       </td>
                       <td className="text-right">
-                        {r.burned ? <UnburnButton tenantId={r.tenantId} /> : null}
+                        <div className="flex justify-end gap-2">
+                          {r.burned ? <UnburnButton tenantId={r.tenantId} /> : null}
+                          {!r.burned && r.provider === "evolution" ? (
+                            <WarmupOverrideButton
+                              tenantId={r.tenantId}
+                              enabled={r.warmupOverride}
+                            />
+                          ) : null}
+                        </div>
                       </td>
                     </tr>
                   ))}

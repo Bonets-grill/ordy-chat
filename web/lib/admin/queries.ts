@@ -81,6 +81,9 @@ export type InstanceRow = {
   burned: boolean;
   burnedAt: Date | null;
   burnedReason: string | null;
+  warmupOverride: boolean;
+  warmupOverrideReason: string | null;
+  warmupOverrideAt: Date | null;
 };
 
 export async function getInstanceRows(opts: {
@@ -122,7 +125,10 @@ export async function getInstanceRows(opts: {
       COALESCE(m.count_hoy, 0) AS msg_hoy,
       pc.burned,
       pc.burned_at,
-      pc.burned_reason
+      pc.burned_reason,
+      pc.warmup_override,
+      pc.warmup_override_reason,
+      pc.warmup_override_at
     FROM provider_credentials pc
     INNER JOIN tenants t ON t.id = pc.tenant_id
     LEFT JOIN (
@@ -166,6 +172,9 @@ export async function getInstanceRows(opts: {
     burned: Boolean(r.burned),
     burnedAt: r.burned_at ? new Date(String(r.burned_at)) : null,
     burnedReason: r.burned_reason ? String(r.burned_reason) : null,
+    warmupOverride: Boolean(r.warmup_override),
+    warmupOverrideReason: r.warmup_override_reason ? String(r.warmup_override_reason) : null,
+    warmupOverrideAt: r.warmup_override_at ? new Date(String(r.warmup_override_at)) : null,
   }));
 }
 

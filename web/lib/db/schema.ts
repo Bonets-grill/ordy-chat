@@ -169,6 +169,13 @@ export const providerCredentials = pgTable("provider_credentials", {
   burned: boolean("burned").notNull().default(false),
   burnedAt: timestamp("burned_at", { withTimezone: true }),
   burnedReason: text("burned_reason"),
+  // Migración 025: override per-tenant del cap diario del warmup.
+  // Si warmupOverride=true, chequear_warmup() devuelve blocked=false sin
+  // mirar sent_today/cap. No afecta a burned ni al throttle 1 msg/seg.
+  warmupOverride: boolean("warmup_override").notNull().default(false),
+  warmupOverrideReason: text("warmup_override_reason"),
+  warmupOverrideBy: uuid("warmup_override_by").references(() => users.id),
+  warmupOverrideAt: timestamp("warmup_override_at", { withTimezone: true }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
