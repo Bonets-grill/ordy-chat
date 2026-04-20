@@ -14,6 +14,18 @@ from app.validator.seeds import detectar_nicho
     ("Hamburguesas gourmet y patatas caseras", [], "restaurante"),
     ("Sushi y poke bowls", [], "restaurante"),
     ("Mejor paella de la ciudad", [], "restaurante"),
+    # Términos nuevos añadidos 2026-04-20 tras regresión Bonets Grill Icod
+    # (el validator lo clasificaba como "servicios" fallback).
+    ("Bonets Grill Icod where and when you want", [], "restaurante"),
+    ("Parrilla argentina en Madrid", [], "restaurante"),
+    ("Asador tradicional con carnes al fuego", [], "restaurante"),
+    ("Best steakhouse in town", [], "restaurante"),
+    ("Churrasco brasileño", [], "restaurante"),
+    ("Barbacoa weekend special", [], "restaurante"),
+    ("Tasca de toda la vida", [], "restaurante"),
+    ("Guachinche canario", [], "restaurante"),
+    ("Churros con chocolate desde 1950", [], "restaurante"),
+    ("Burger joint artesanal", [], "restaurante"),
 
     # Clínica
     ("Clínica dental familiar", [], "clinica"),

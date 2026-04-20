@@ -272,18 +272,52 @@ async def _h_habilitar_item(
     args: dict[str, Any],
     admin_id: UUID | None = None,
 ) -> dict[str, Any]:
+    """Habilita un item (DELETE del override). Matching:
+      1. Exact LOWER = LOWER (el usuario dijo el nombre canónico).
+      2. Si 0 matches exactos → fuzzy ILIKE '%item%' substring.
+         Si fuzzy devuelve 1 match → lo borra.
+         Si fuzzy devuelve >1 matches → ok=false + lista candidates para
+         que el LLM pida aclaración al admin.
+      3. Si 0 matches en ambas → ok=false con mensaje explícito.
+    Antes había solo match exacto LOWER: admin decía "habilita Dakota"
+    pero DB tenía "Dakota burger" → 0 matches → tool ok=false, y el LLM
+    ignoraba el error y decía "✓ habilitada" inventando.
+    """
     item = (args.get("item_name") or "").strip()
     if not item:
         return _err("item_name vacío")
-    result = await conn.execute(
-        "DELETE FROM menu_overrides WHERE tenant_id = $1 AND LOWER(item_name) = LOWER($2)",
+    # 1) match exacto case-insensitive
+    exact = await conn.fetchrow(
+        "SELECT item_name FROM menu_overrides "
+        "WHERE tenant_id = $1 AND LOWER(item_name) = LOWER($2) LIMIT 1",
         tenant_id, item,
     )
-    # asyncpg execute retorna 'DELETE N'. Si N=0 no había override.
-    borrados = int(result.split()[-1]) if result.startswith("DELETE") else 0
-    if borrados == 0:
-        return _err(f"'{item}' no estaba deshabilitado")
-    return _ok(item=item, available=True)
+    if exact:
+        await conn.execute(
+            "DELETE FROM menu_overrides WHERE tenant_id = $1 AND LOWER(item_name) = LOWER($2)",
+            tenant_id, item,
+        )
+        return _ok(item=exact["item_name"], available=True, match="exact")
+    # 2) fuzzy substring
+    fuzzy = await conn.fetch(
+        "SELECT item_name FROM menu_overrides "
+        "WHERE tenant_id = $1 AND item_name ILIKE '%' || $2 || '%' "
+        "ORDER BY length(item_name) ASC LIMIT 5",
+        tenant_id, item,
+    )
+    if len(fuzzy) == 1:
+        canon = fuzzy[0]["item_name"]
+        await conn.execute(
+            "DELETE FROM menu_overrides WHERE tenant_id = $1 AND item_name = $2",
+            tenant_id, canon,
+        )
+        return _ok(item=canon, available=True, match="fuzzy", query=item)
+    if len(fuzzy) > 1:
+        return _err(
+            f"'{item}' coincide con varios items: {', '.join(r['item_name'] for r in fuzzy)}. "
+            f"Pídele al admin el nombre exacto."
+        )
+    return _err(f"'{item}' no estaba deshabilitado (no hay override con ese nombre)")
 
 
 async def _h_listar_items_deshabilitados(
@@ -637,6 +671,56 @@ _HANDLERS = {
     "agregar_faq": _h_agregar_faq,
 }
 
+# Tools que mutan estado — cada ejecución deja rastro en audit_log.
+# Read-only tools (listar_*, resumen_*) se omiten para evitar inflar la tabla.
+_MUTATIVE_TOOLS = frozenset({
+    "deshabilitar_item",
+    "habilitar_item",
+    "cambiar_horario",
+    "pausar_bot",
+    "reanudar_bot",
+    "cancelar_reserva",
+    "cerrar_reservas_dia",
+    "pausar_conversacion",
+    "reanudar_conversacion",
+    "agregar_faq",
+})
+
+
+async def _log_audit(
+    conn: asyncpg.Connection,
+    tenant_id: UUID,
+    tool_name: str,
+    tool_input: dict[str, Any],
+    admin_id: UUID | None,
+    result: dict[str, Any],
+) -> None:
+    """Escribe una fila en audit_log por cada tool mutative. No tira — si
+    esto falla no debe romper la respuesta al admin."""
+    try:
+        import json
+        # admin_id es tenant_admins.id, no users.id → va en metadata, user_id NULL.
+        metadata = {
+            "admin_id": str(admin_id) if admin_id else None,
+            "tool_input": tool_input,
+            "tool_ok": bool(result.get("ok", False)),
+            "tool_error": result.get("error"),
+        }
+        await conn.execute(
+            """
+            INSERT INTO audit_log (tenant_id, user_id, action, entity, entity_id, metadata)
+            VALUES ($1, NULL, $2, 'tool_admin', NULL, $3::jsonb)
+            """,
+            tenant_id,
+            f"admin_tool:{tool_name}",
+            json.dumps(metadata, ensure_ascii=False, default=str),
+        )
+    except Exception:
+        logger.exception(
+            "audit_log write failed",
+            extra={"event": "audit_log_error", "tool": tool_name, "tenant_id": str(tenant_id)},
+        )
+
 
 async def ejecutar_tool_admin(
     pool: asyncpg.Pool,
@@ -646,13 +730,17 @@ async def ejecutar_tool_admin(
     admin_id: UUID | None = None,
 ) -> dict[str, Any]:
     """Despachador. Si el tool no existe o el handler lanza, captura y
-    devuelve un dict error legible para el LLM."""
+    devuelve un dict error legible para el LLM. Cada tool mutative deja
+    rastro en audit_log (P2 auditoría 2026-04-20)."""
     handler = _HANDLERS.get(tool_name)
     if handler is None:
         return _err(f"tool desconocida: {tool_name}")
     try:
         async with pool.acquire() as conn:
-            return await handler(conn, tenant_id, tool_input, admin_id)
+            result = await handler(conn, tenant_id, tool_input, admin_id)
+            if tool_name in _MUTATIVE_TOOLS:
+                await _log_audit(conn, tenant_id, tool_name, tool_input, admin_id, result)
+            return result
     except Exception as e:
         logger.exception(
             "tool admin falló",

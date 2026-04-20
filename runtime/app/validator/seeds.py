@@ -36,10 +36,16 @@ _NICHO_PATTERNS: list[tuple[Nicho, re.Pattern[str]]] = [
         re.compile(
             # Sufijos opcionales para plurales/derivados (pizzería, pizzas,
             # hamburguesas). Bar lleva \b por ambos lados para evitar
-            # "barra", "barbero", "Barcelona".
+            # "barra", "barbero", "Barcelona". "Burger" y "grill"/"parrilla"/
+            # "asador" añadidos 2026-04-20 porque Bonets Grill Icod quedó
+            # clasificado como "servicios" (fallback) en el primer run de
+            # validator. Otros términos canarios/regionales: "guachinche",
+            # "tasca", "churrascar[ií]a|steakhouse".
             r"(?:restaurant\w*|\bbar\b|cafeter[ií]as?|bodegas?|men[uú]s?|"
             r"cartas?|platos?|comidas?|cocinas?|pizz\w+|sushis?|tapas\b|"
-            r"hamburgues\w+|bistros?|paell\w+|postres?)",
+            r"hamburgues\w+|burger\w*|bistros?|paell\w+|postres?|"
+            r"grill|parrill\w+|asador\w*|steakhouse|churrasc\w+|"
+            r"barbacoa|guachinche|tasca|churros?)",
             re.IGNORECASE,
         ),
     ),

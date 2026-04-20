@@ -346,11 +346,19 @@ async def ejecutar_validator(
         tenant = await cargar_tenant_por_slug(slug)
         api_key = await obtener_anthropic_api_key(tenant.credentials)
 
-        # 2. Detectar nicho + cargar seeds
+        # 2. Detectar nicho + cargar seeds.
+        # El business_name a menudo contiene la señal más fuerte del nicho
+        # ("Bonets Grill Icod" → grill), así que lo concatenamos con la
+        # descripción como texto de entrada. Antes solo mirábamos desc +
+        # categorías — un Grill con description en inglés ("Order online")
+        # caía en "servicios" (fallback) y el validator cargaba seeds del
+        # nicho equivocado.
         business_description = getattr(tenant, "business_description", "") or ""
+        business_name = getattr(tenant, "name", "") or ""
+        combined_desc = f"{business_name} {business_description}".strip()
         categories = getattr(tenant, "categories", []) or []
         category_names = [c.get("name", "") for c in categories if isinstance(c, dict)]
-        nicho: Nicho = detectar_nicho(business_description, category_names)
+        nicho: Nicho = detectar_nicho(combined_desc, category_names)
         seeds = cargar_seeds(nicho)
 
         # 3. crear_run
