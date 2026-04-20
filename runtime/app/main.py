@@ -483,10 +483,10 @@ async def _procesar_mensaje(tenant: TenantContext, provider: str, msg: MensajeEn
         pool = await inicializar_pool()
         admin_took = await manejar_admin_flow(
             pool,
-            tenant.id,
-            tenant.name,
+            tenant,
             msg.telefono,
             texto_efectivo,
+            msg.mensaje_id,
             enviar=adapter.enviar_mensaje,
         )
         if admin_took:

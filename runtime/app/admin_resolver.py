@@ -20,11 +20,14 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Awaitable, Callable, Optional
+from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 from uuid import UUID
 
 import asyncpg
 import bcrypt
+
+if TYPE_CHECKING:  # pragma: no cover
+    from app.tenants import TenantContext
 
 logger = logging.getLogger("ordychat.admin_resolver")
 
@@ -190,10 +193,10 @@ def hash_pin(pin_plain: str) -> str:
 
 async def manejar_admin_flow(
     pool: "asyncpg.Pool",
-    tenant_id: UUID,
-    tenant_name: str,
+    tenant: "TenantContext",
     phone_wa: str,
     texto: str,
+    mensaje_id: str,
     enviar: "Callable[[str, str], Awaitable[None]]",
 ) -> bool:
     """Orquesta detección admin + PIN + respuesta. Interfaz que consume main.py.
@@ -202,25 +205,28 @@ async def manejar_admin_flow(
       1. Busca phone_wa en tenant_admins.
       2. Si no es admin → return False (caller sigue con flujo cliente).
       3. Si locked → mensaje de bloqueo + return True.
-      4. Si sesión válida → placeholder (tools admin llegan en tanda 3).
+      4. Si sesión válida → invoca generar_respuesta_admin (LLM con tools admin).
       5. Si sesión expirada + mensaje != PIN → pide PIN.
       6. Si sesión expirada + mensaje = PIN → verifica; confirma u otro intento.
 
     Args:
         pool: asyncpg pool (idempotente via inicializar_pool()).
-        tenant_id: tenant resuelto por provider phone_number_id.
-        tenant_name: para mostrar en el mensaje de PIN.
-        phone_wa: 'from' del WhatsApp (E.164).
+        tenant: TenantContext completo (id, name, credentials, system_prompt, ...).
+        phone_wa: 'from' del WhatsApp.
         texto: cuerpo del mensaje entrante.
-        enviar: callback async `(phone, texto) -> None` para responder. Typically
-            `lambda p, t: adapter.enviar_mensaje(p, t)`.
+        mensaje_id: id del mensaje para dedup + guardar_intercambio.
+        enviar: callback async `(phone, texto) -> None` para responder.
 
     Returns:
         True si el flow tomó el mensaje (el caller debe hacer `return` y NO
         llamar al LLM cliente). False si phone_wa NO es admin (flujo normal).
     """
+    # Imports lazy para evitar ciclos de import (brain_admin → brain → memory).
+    from app.brain_admin import generar_respuesta_admin
+    from app.memory import guardar_intercambio, obtener_historial
+
     async with pool.acquire() as conn:
-        status = await resolver_admin(conn, tenant_id, phone_wa)
+        status = await resolver_admin(conn, tenant.id, phone_wa)
 
         if not status.is_admin:
             return False
@@ -238,16 +244,39 @@ async def manejar_admin_flow(
             return True
 
         if status.session_ok:
-            nombre = status.display_name or "admin"
-            await enviar(
-                phone_wa,
-                f"👔 Hola {nombre}. Modo admin activo. Las herramientas para "
-                f"cambiar menú, horarios y reservas llegan en la próxima "
-                f"versión — mientras tanto hazlo desde el panel web.",
+            # Invoca el LLM admin con TOOLS_ADMIN. El historial se consulta por
+            # phone_wa (mismo número, misma conversación). Tanda 3: aquí vivía
+            # el placeholder "tools próxima versión"; ya no.
+            historial = await obtener_historial(tenant.id, phone_wa)
+            respuesta, tin, tout = await generar_respuesta_admin(
+                tenant=tenant,
+                admin_id=status.admin_id,  # type: ignore[arg-type]
+                admin_display_name=status.display_name,
+                mensaje_usuario=texto,
+                historial=historial,
+                pool=pool,
             )
+            await enviar(phone_wa, respuesta)
+            # Persistir turno admin en la misma tabla messages (aislamiento
+            # natural por customer_phone del admin).
+            try:
+                await guardar_intercambio(
+                    tenant.id, phone_wa, texto, respuesta,
+                    mensaje_id=mensaje_id, tokens_in=tin, tokens_out=tout,
+                )
+            except Exception:
+                logger.exception(
+                    "no se pudo guardar intercambio admin",
+                    extra={"event": "admin_save_error", "admin_id": str(status.admin_id)},
+                )
             logger.info(
-                "admin sesión válida — placeholder (tools pendientes tanda 3)",
-                extra={"event": "admin_placeholder", "admin_id": str(status.admin_id)},
+                "admin respondido por brain_admin",
+                extra={
+                    "event": "admin_brain_ok",
+                    "admin_id": str(status.admin_id),
+                    "tokens_in": tin,
+                    "tokens_out": tout,
+                },
             )
             return True
 
@@ -256,7 +285,7 @@ async def manejar_admin_flow(
         if pin is None:
             await enviar(
                 phone_wa,
-                f"Hola, soy el asistente de {tenant_name}. Te detecto como "
+                f"Hola, soy el asistente de {tenant.name}. Te detecto como "
                 f"admin pero tu sesión ha caducado o es tu primera vez aquí. "
                 f"Mándame tu PIN de 4 dígitos para autorizarte. "
                 f"Si no lo tienes, pídelo en el panel web.",
