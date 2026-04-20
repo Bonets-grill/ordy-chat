@@ -48,10 +48,18 @@ async def test_crear_run_inserta_con_running(mock_pool):
     run_id = await crear_run(tenant_id, "onboarding_auto", "restaurante")
     assert isinstance(run_id, UUID)
 
-    # Debió llamarse con SET LOCAL + INSERT.
+    # Debió llamarse con set_config(app.current_tenant_id, ..., true) + INSERT.
+    # Usamos set_config en vez de "SET LOCAL ... = $1" porque Postgres no
+    # acepta parámetros en SET LOCAL (syntax error at or near "$1"). Bug
+    # observado en prod 2026-04-20 cuando se disparó el primer run manual.
     calls = mock_pool.execute.call_args_list
     fetch_calls = mock_pool.fetchrow.call_args_list
-    assert any("SET LOCAL app.current_tenant_id" in str(c) for c in calls)
+    set_config_calls = [c for c in calls if "set_config" in str(c) and "app.current_tenant_id" in str(c)]
+    assert set_config_calls, f"Falta set_config('app.current_tenant_id', ...) en {calls}"
+    # Blindaje anti-regresión: ninguna llamada debe usar el patrón roto.
+    assert not any("SET LOCAL" in str(c) for c in calls), (
+        "SET LOCAL con $1 rompe en Postgres real (syntax error) — usa set_config"
+    )
     assert any("INSERT INTO validator_runs" in str(c) for c in fetch_calls)
     assert any("'running'" in str(c) for c in fetch_calls)
 
@@ -141,8 +149,9 @@ async def test_aplicar_autopatch_update_system_prompt(mock_pool):
 
 
 @pytest.mark.asyncio
-async def test_set_local_tenant_primera_linea_siempre(mock_pool):
-    """Regla no negociable: SET LOCAL antes de cualquier INSERT/UPDATE."""
+async def test_tenant_scope_primera_linea_siempre(mock_pool):
+    """Regla no negociable: set_config('app.current_tenant_id', $1, true) antes
+    de cualquier INSERT/UPDATE — NO "SET LOCAL ... = $1" (Postgres rechaza)."""
     from app.validator.persist import crear_run, guardar_mensaje, cerrar_run
 
     tid = uuid4()
@@ -157,6 +166,12 @@ async def test_set_local_tenant_primera_linea_siempre(mock_pool):
     await cerrar_run(run_id=uuid4(), tenant_id=tid, status="pass", summary={})
 
     calls = mock_pool.execute.call_args_list
-    # Cada uno de los 3 bloques debería tener un SET LOCAL. Contamos 3+.
-    set_local_count = sum(1 for c in calls if "SET LOCAL app.current_tenant_id" in str(c))
-    assert set_local_count >= 3, f"SET LOCAL missing: {set_local_count}"
+    set_config_count = sum(
+        1 for c in calls
+        if "set_config" in str(c) and "app.current_tenant_id" in str(c)
+    )
+    assert set_config_count >= 3, f"set_config missing: {set_config_count}"
+    # Blindaje: nadie puede regresar al patrón roto.
+    assert not any("SET LOCAL" in str(c) for c in calls), (
+        "SET LOCAL con $1 rompe en Postgres real. Usa set_config."
+    )

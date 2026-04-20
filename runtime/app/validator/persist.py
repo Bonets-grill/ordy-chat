@@ -1,8 +1,12 @@
 # runtime/app/validator/persist.py — INSERT/UPDATE a validator_runs + _messages.
 #
-# Todo INSERT hace SET LOCAL app.current_tenant_id = $1::text DENTRO de una
-# transacción, antes del INSERT. Respeta RLS (actualmente dormida con el owner
-# Neon — activará cuando se migre a non-superuser).
+# Todo INSERT fija app.current_tenant_id vía set_config(..., true) DENTRO de
+# una transacción, antes del INSERT. No usamos "SET LOCAL ... = $1" porque
+# PostgreSQL NO acepta parámetros en SET LOCAL (intentarlo → syntax error at
+# or near "$1"). set_config es una función SQL normal que sí los acepta y con
+# is_local=true su scope es la transacción, igual que SET LOCAL.
+# Respeta RLS (actualmente dormida con el owner Neon — activará cuando se
+# migre a non-superuser).
 
 from __future__ import annotations
 
@@ -27,7 +31,7 @@ async def crear_run(
     async with pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute(
-                "SET LOCAL app.current_tenant_id = $1",
+                "SELECT set_config('app.current_tenant_id', $1, true)",
                 str(tenant_id),
             )
             row = await conn.fetchrow(
@@ -60,7 +64,7 @@ async def guardar_mensaje(
     async with pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute(
-                "SET LOCAL app.current_tenant_id = $1",
+                "SELECT set_config('app.current_tenant_id', $1, true)",
                 str(tenant_id),
             )
             await conn.execute(
@@ -105,7 +109,7 @@ async def cerrar_run(
     async with pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute(
-                "SET LOCAL app.current_tenant_id = $1",
+                "SELECT set_config('app.current_tenant_id', $1, true)",
                 str(tenant_id),
             )
             await conn.execute(
@@ -140,7 +144,7 @@ async def marcar_agente_pausado(
     async with pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute(
-                "SET LOCAL app.current_tenant_id = $1",
+                "SELECT set_config('app.current_tenant_id', $1, true)",
                 str(tenant_id),
             )
             await conn.execute(
@@ -172,7 +176,7 @@ async def aplicar_autopatch(
     async with pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute(
-                "SET LOCAL app.current_tenant_id = $1",
+                "SELECT set_config('app.current_tenant_id', $1, true)",
                 str(tenant_id),
             )
             await conn.execute(
