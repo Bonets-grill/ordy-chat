@@ -19,6 +19,7 @@ from uuid import UUID
 
 import httpx
 
+from app.captcha_detect import detectar_captcha
 from app.memory import inicializar_pool
 from app.renderer import renderizar
 from app.url_safety import es_url_publica
@@ -179,11 +180,35 @@ async def _scrape_una(origin: str, url: str) -> dict[str, Any]:
 
     try:
         result = await renderizar(url_real, PER_URL_TIMEOUT_MS)
+        html = result.get("html", "")
+        # Detección de CAPTCHA/bot-block. HTTP 200 no garantiza contenido
+        # útil: Google devuelve reCAPTCHA, TripAdvisor DataDome, Cloudflare
+        # su challenge page, todos con status 200. Sin este guard el pipeline
+        # marcaba ok=True con HTML basura → merger canonicos={} silencioso
+        # (bug reportado 2026-04-20, job 8a1ca351).
+        captcha = detectar_captcha(html)
+        if captcha:
+            logger.warning(
+                "captcha detectado — marcando source como failed",
+                extra={
+                    "event": "scrape_captcha_block",
+                    "origin": origin,
+                    "provider": captcha,
+                    "final_url": result.get("url", url_real),
+                },
+            )
+            return {
+                "origin": origin,
+                "url": url,
+                "ok": False,
+                "error": f"captcha_blocked: {captcha}",
+                "final_url": result.get("url", url_real),
+            }
         return {
             "origin": origin,
             "url": url,
             "ok": True,
-            "html": result.get("html", ""),
+            "html": html,
             "final_url": result.get("url", url_real),
         }
     except Exception as e:
