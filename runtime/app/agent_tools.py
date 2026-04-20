@@ -108,7 +108,9 @@ async def crear_handoff(
     customer_name: str | None = None,
     conversation_id: UUID | None = None,
 ) -> dict[str, Any]:
-    """Registra solicitud de humano. El owner la verá en dashboard + (futuro) recibirá email/push."""
+    """Registra solicitud de humano + manda WhatsApp al teléfono humano que
+    el tenant configuró en agent_configs.handoff_whatsapp_phone. Si el
+    campo está vacío, solo queda la fila en handoff_requests (legacy)."""
     if priority not in ("low", "normal", "urgent"):
         priority = "normal"
     if not reason or len(reason.strip()) < 3:
@@ -125,11 +127,67 @@ async def crear_handoff(
             """,
             tenant_id, conversation_id, customer_phone, customer_name, reason.strip(), priority,
         )
+        # Cargar datos del tenant para el envío WA humano.
+        tenant_row = await conn.fetchrow(
+            """
+            SELECT t.name AS tenant_name,
+                   ac.handoff_whatsapp_phone,
+                   pc.provider, pc.credentials_encrypted
+            FROM tenants t
+            LEFT JOIN agent_configs ac ON ac.tenant_id = t.id
+            LEFT JOIN provider_credentials pc ON pc.tenant_id = t.id
+            WHERE t.id = $1
+            """,
+            tenant_id,
+        )
+
+    handoff_id = str(row["id"])
+    # Notificación WA al humano (best-effort; no rompe si falla).
+    target_phone = (tenant_row["handoff_whatsapp_phone"] or "").strip() if tenant_row else ""
+    if target_phone and tenant_row:
+        try:
+            import json
+            from app.crypto import descifrar
+            from app.providers import obtener_proveedor
+
+            creds: dict[str, Any] = {}
+            if tenant_row["credentials_encrypted"]:
+                try:
+                    creds = json.loads(descifrar(tenant_row["credentials_encrypted"]))
+                except Exception:
+                    creds = {}
+            adapter = obtener_proveedor(tenant_row["provider"] or "whapi", creds, "")
+            prio_label = {"low": "🟢", "normal": "🟡", "urgent": "🔴"}.get(priority, "🟡")
+            customer_label = customer_name or customer_phone or "cliente"
+            body = (
+                f"{prio_label} *Solicitud de atención* — {tenant_row['tenant_name']}\n\n"
+                f"Cliente: {customer_label}\n"
+                f"Motivo: {reason.strip()}\n"
+                f"Prioridad: {priority}\n"
+                f"Handoff id: {handoff_id[:8]}"
+            )
+            await adapter.enviar_mensaje(target_phone, body)
+            logger.info(
+                "handoff WA enviado",
+                extra={
+                    "event": "handoff_wa_notified",
+                    "tenant_id": str(tenant_id),
+                    "target_phone_tail": target_phone[-4:],
+                    "handoff_id": handoff_id,
+                },
+            )
+        except Exception:
+            logger.exception(
+                "handoff WA falló",
+                extra={"event": "handoff_wa_error", "tenant_id": str(tenant_id)},
+            )
+
     return {
         "ok": True,
-        "handoff_id": str(row["id"]),
+        "handoff_id": handoff_id,
         "priority": priority,
         "reason": reason.strip(),
+        "notified_human_phone": bool(target_phone),
     }
 
 

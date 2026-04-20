@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
@@ -8,6 +8,7 @@ import { db } from "@/lib/db";
 import { providerCredentials } from "@/lib/db/schema";
 import { requireTenant } from "@/lib/tenant";
 import { AgentEditor } from "./editor";
+import { HandoffCard } from "./handoff-card";
 
 export default async function AgentPage() {
   const session = await auth();
@@ -20,6 +21,17 @@ export default async function AgentPage() {
     .from(providerCredentials)
     .where(eq(providerCredentials.tenantId, bundle.tenant.id))
     .limit(1);
+
+  // handoff_whatsapp_phone no está en el schema Drizzle todavía — raw SQL.
+  const handoffRaw = await db.execute(sql`
+    SELECT handoff_whatsapp_phone
+    FROM agent_configs
+    WHERE tenant_id = ${bundle.tenant.id}::uuid
+  `);
+  const handoffRow = (Array.isArray(handoffRaw) ? handoffRaw[0] : (handoffRaw as { rows?: unknown[] }).rows?.[0]) as
+    | { handoff_whatsapp_phone: string | null }
+    | undefined;
+  const handoffPhone = handoffRow?.handoff_whatsapp_phone ?? null;
 
   const runtimeBase = process.env.RUNTIME_URL ?? "https://runtime.ordychat.com";
   const secret = creds?.webhookSecret ?? "";
@@ -66,6 +78,10 @@ export default async function AgentPage() {
           paused: bundle.config.paused,
         }}
       />
+
+      <div className="mt-6">
+        <HandoffCard initialPhone={handoffPhone} />
+      </div>
     </AppShell>
   );
 }
