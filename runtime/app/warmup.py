@@ -90,13 +90,21 @@ async def chequear_warmup(tenant_id: UUID) -> dict:
 
     Returns:
       {blocked: bool, reason: str|None, cap: int|None, sent_today: int|None,
-       days: int|None, tier: 'fresh'|'early'|'mid'|'mature'|'burned'|None}
+       days: int|None, tier: 'fresh'|'early'|'mid'|'mature'|'burned'|None,
+       override: bool}
+
+    Precedencia:
+      1. `burned=true` → bloquea siempre (kill-switch Evolution).
+      2. `warmup_override=true` → salta el cap diario. `tier` refleja la
+         edad real para observabilidad, `cap=None`, `override=true`.
+      3. provider != 'evolution' → sin cap.
+      4. Cap normal por tier.
     """
     pool = await inicializar_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            SELECT provider, burned,
+            SELECT provider, burned, warmup_override,
                    EXTRACT(DAY FROM (now() - instance_created_at))::int AS dias
             FROM provider_credentials
             WHERE tenant_id = $1
@@ -106,29 +114,36 @@ async def chequear_warmup(tenant_id: UUID) -> dict:
 
     if row is None:
         return {"blocked": False, "reason": None, "cap": None, "sent_today": None,
-                "days": None, "tier": None}
+                "days": None, "tier": None, "override": False}
+
+    days = int(row["dias"] or 0)
 
     if row["burned"]:
         return {"blocked": True, "reason": "burned", "cap": 0, "sent_today": None,
-                "days": int(row["dias"] or 0), "tier": "burned"}
+                "days": days, "tier": "burned", "override": False}
+
+    # Override formal: el super admin decidió saltar el cap para este tenant.
+    # Se prioriza sobre el cálculo normal pero NO sobre `burned`.
+    if bool(row["warmup_override"]):
+        return {"blocked": False, "reason": None, "cap": None, "sent_today": None,
+                "days": days, "tier": _tier_por_dias(days), "override": True}
 
     if row["provider"] != "evolution":
         return {"blocked": False, "reason": None, "cap": None, "sent_today": None,
-                "days": int(row["dias"] or 0), "tier": "mature"}
+                "days": days, "tier": "mature", "override": False}
 
-    days = int(row["dias"] or 0)
     cap = calcular_cap(days)
     tier = _tier_por_dias(days)
     if cap is None:
         return {"blocked": False, "reason": None, "cap": None, "sent_today": None,
-                "days": days, "tier": tier}
+                "days": days, "tier": tier, "override": False}
 
     sent = await mensajes_assistant_hoy(tenant_id)
     if sent >= cap:
         return {"blocked": True, "reason": "warmup_cap", "cap": cap, "sent_today": sent,
-                "days": days, "tier": tier}
+                "days": days, "tier": tier, "override": False}
     return {"blocked": False, "reason": None, "cap": cap, "sent_today": sent,
-            "days": days, "tier": tier}
+            "days": days, "tier": tier, "override": False}
 
 
 def _tier_por_dias(days: int) -> str:

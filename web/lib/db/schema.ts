@@ -169,6 +169,13 @@ export const providerCredentials = pgTable("provider_credentials", {
   burned: boolean("burned").notNull().default(false),
   burnedAt: timestamp("burned_at", { withTimezone: true }),
   burnedReason: text("burned_reason"),
+  // Migración 025: override per-tenant del cap diario del warmup.
+  // Si warmupOverride=true, chequear_warmup() devuelve blocked=false sin
+  // mirar sent_today/cap. No afecta a burned ni al throttle 1 msg/seg.
+  warmupOverride: boolean("warmup_override").notNull().default(false),
+  warmupOverrideReason: text("warmup_override_reason"),
+  warmupOverrideBy: uuid("warmup_override_by").references(() => users.id),
+  warmupOverrideAt: timestamp("warmup_override_at", { withTimezone: true }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -553,3 +560,116 @@ export type NewResellerCommission = typeof resellerCommissions.$inferInsert;
 export type ResellerPayout = typeof resellerPayouts.$inferSelect;
 export type NewResellerPayout = typeof resellerPayouts.$inferInsert;
 export type ResellerSelfBillingConsent = typeof resellerSelfBillingConsents.$inferSelect;
+
+// ── Tenant admins WA (migración 018) ────────────────────────
+export const tenantAdmins = pgTable("tenant_admins", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  phoneWa: text("phone_wa").notNull(),
+  displayName: text("display_name"),
+  pinHash: text("pin_hash").notNull(),
+  lastAuthAt: timestamp("last_auth_at", { withTimezone: true }),
+  authAttempts: integer("auth_attempts").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  createdBy: uuid("created_by"),
+});
+
+// ── Menu overrides (migración 019) ──────────────────────────
+export const menuOverrides = pgTable("menu_overrides", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  itemName: text("item_name").notNull(),
+  available: boolean("available").notNull().default(false),
+  priceOverrideCents: integer("price_override_cents"),
+  note: text("note"),
+  activeUntil: timestamp("active_until", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  createdByAdminId: uuid("created_by_admin_id").references(() => tenantAdmins.id, { onDelete: "set null" }),
+});
+
+// ── Paused conversations (migración 020) ────────────────────
+export const pausedConversations = pgTable(
+  "paused_conversations",
+  {
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    customerPhone: text("customer_phone").notNull(),
+    pausedAt: timestamp("paused_at", { withTimezone: true }).notNull().defaultNow(),
+    pausedByAdminId: uuid("paused_by_admin_id").references(() => tenantAdmins.id, { onDelete: "set null" }),
+    reason: text("reason"),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.tenantId, t.customerPhone] }),
+  }),
+);
+
+// ── Agent rules (migración 021) ─────────────────────────────
+// Reglas duras por tenant inyectadas como system block en el brain.
+// priority DESC decide el orden de render. 3 <= length(rule_text) <= 500.
+export const agentRules = pgTable("agent_rules", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  ruleText: text("rule_text").notNull(),
+  active: boolean("active").notNull().default(true),
+  priority: integer("priority").notNull().default(0),
+  createdByAdminId: uuid("created_by_admin_id").references(() => tenantAdmins.id, { onDelete: "set null" }),
+  createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ── Agent feedback (migración 022) ──────────────────────────
+// Thumbs up/down del playground que alimenta el auto-learning.
+export const agentFeedback = pgTable("agent_feedback", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  userMessage: text("user_message").notNull(),
+  botResponse: text("bot_response").notNull(),
+  verdict: text("verdict").notNull(), // 'up' | 'down'
+  reason: text("reason"),
+  source: text("source").notNull().default("free"),
+  superAdminNotified: boolean("super_admin_notified").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ── Learning runs + pending rules (migración 023) ───────────
+export const learningRuns = pgTable("learning_runs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  messagesAnalyzed: integer("messages_analyzed").notNull().default(0),
+  rulesProposed: integer("rules_proposed").notNull().default(0),
+  tokensIn: integer("tokens_in").notNull().default(0),
+  tokensOut: integer("tokens_out").notNull().default(0),
+  error: text("error"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const learnedRulesPending = pgTable("learned_rules_pending", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  ruleText: text("rule_text").notNull(),
+  evidence: text("evidence"),
+  suggestedPriority: integer("suggested_priority").notNull().default(50),
+  sourceWindowStart: timestamp("source_window_start", { withTimezone: true }),
+  sourceWindowEnd: timestamp("source_window_end", { withTimezone: true }),
+  status: text("status").notNull().default("pending"), // 'pending' | 'approved' | 'rejected'
+  appliedRuleId: uuid("applied_rule_id").references((): AnyPgColumn => agentRules.id, { onDelete: "set null" }),
+  reviewedByUserId: uuid("reviewed_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type TenantAdmin = typeof tenantAdmins.$inferSelect;
+export type NewTenantAdmin = typeof tenantAdmins.$inferInsert;
+export type MenuOverride = typeof menuOverrides.$inferSelect;
+export type NewMenuOverride = typeof menuOverrides.$inferInsert;
+export type PausedConversation = typeof pausedConversations.$inferSelect;
+export type NewPausedConversation = typeof pausedConversations.$inferInsert;
+export type AgentRule = typeof agentRules.$inferSelect;
+export type NewAgentRule = typeof agentRules.$inferInsert;
+export type AgentFeedback = typeof agentFeedback.$inferSelect;
+export type NewAgentFeedback = typeof agentFeedback.$inferInsert;
+export type LearningRun = typeof learningRuns.$inferSelect;
+export type NewLearningRun = typeof learningRuns.$inferInsert;
+export type LearnedRulePending = typeof learnedRulesPending.$inferSelect;
+export type NewLearnedRulePending = typeof learnedRulesPending.$inferInsert;

@@ -229,6 +229,9 @@ describe("Types", () => {
       burned: false,
       burnedAt: null,
       burnedReason: null,
+      warmupOverride: false,
+      warmupOverrideReason: null,
+      warmupOverrideAt: null,
     };
     expect(r.tier).toBe("fresh");
   });
