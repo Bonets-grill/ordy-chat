@@ -28,7 +28,7 @@ logger = logging.getLogger("ordychat.learning")
 
 MODEL_ID = "claude-opus-4-7"
 MAX_TOKENS = 2048
-TEMPERATURE = 0.2
+# Opus 4.7 deprecó temperature — no la pasamos al API.
 COOLDOWN_HOURS = 20
 MESSAGES_WINDOW_HOURS = 24
 MESSAGES_LIMIT = 200
@@ -203,7 +203,6 @@ async def learn_for_tenant(tenant_id: UUID, force: bool = False) -> dict[str, An
         resp = await client.messages.create(
             model=MODEL_ID,
             max_tokens=MAX_TOKENS,
-            temperature=TEMPERATURE,
             system=_SYSTEM_PROMPT,
             tools=_TOOLS,  # type: ignore[arg-type]
             messages=[{"role": "user", "content": user_content}],
