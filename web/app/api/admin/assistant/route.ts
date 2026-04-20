@@ -56,24 +56,38 @@ async function loadSystemContext(): Promise<string> {
     .leftJoin(agentConfigs, eq(agentConfigs.tenantId, tenants.id))
     .orderBy(desc(tenants.createdAt));
 
-  // Últimos 10 validator runs.
+  // Últimos 20 validator runs — joined con tenant_name para que el LLM
+  // pueda decir el nombre directamente sin hacer lookup manual.
   const recentRuns = await db
     .select({
       id: validatorRuns.id,
       tenantId: validatorRuns.tenantId,
+      tenantName: tenants.name,
+      tenantSlug: tenants.slug,
       nicho: validatorRuns.nicho,
       status: validatorRuns.status,
+      triggeredBy: validatorRuns.triggeredBy,
+      autopatchAttempts: validatorRuns.autopatchAttempts,
       summary: validatorRuns.summaryJson,
       createdAt: validatorRuns.createdAt,
     })
     .from(validatorRuns)
+    .leftJoin(tenants, eq(tenants.id, validatorRuns.tenantId))
     .orderBy(desc(validatorRuns.createdAt))
-    .limit(10);
+    .limit(20);
+
+  // Runs actualmente en fail — lista rápida para "¿qué está fallando?"
+  const failing = recentRuns.filter((r) => r.status === "fail");
+
+  // Tenants con agente paused — causa típica: validator fail post-autopatch.
+  const pausedTenants = tenantRows.filter((t) => t.paused === true);
 
   return JSON.stringify(
     {
       tenants: tenantRows,
       recent_validator_runs: recentRuns,
+      currently_failing_runs: failing,
+      paused_agents: pausedTenants,
       generated_at: new Date().toISOString(),
     },
     null,
@@ -106,6 +120,23 @@ const SYSTEM_PROMPT = `Eres el asistente del super admin de Ordy Chat (SaaS mult
 2. Mira sus últimos validator_runs: ¿fail? ¿passed? ¿razones?
 3. Mira si está paused.
 4. Propón diagnóstico + fix surgical. Prioriza reproducir el síntoma antes de tocar código.
+
+## Qué hacer cuando Mario pregunta "qué tenants están fallando"
+El <contexto_sistema> ya trae TRES listas listas para ti:
+  - currently_failing_runs: runs con status=fail (últimos 20 de la ventana).
+  - paused_agents: tenants con agent_configs.paused=true.
+  - recent_validator_runs: últimos 20 runs joined con tenant_name y tenant_slug.
+
+Respuesta ideal:
+  - Si hay failing runs: lista cada uno con el NOMBRE del tenant (no solo slug)
+    + último status + hora + link /admin/validator/[run_id].
+  - Si hay paused agents: lista aparte y menciona que probablemente vienen
+    de autopatch retry fail.
+  - Si no hay nada: di literalmente "ningún tenant está fallando ahora mismo"
+    y ofrece métricas agregadas (cuántos runs pass/review/fail en la ventana).
+
+NO pidas datos extra si ya están en el contexto. NO hagas lookup manual —
+usa tenantName/tenantSlug de recent_validator_runs directamente.
 
 ## Cuando Mario te pida modificar algo del sistema
 Para cambios en código/infra, sigue el ciclo Mario exige: audit previa → diff mínimo → test → audit posterior con output literal. Si es un cambio de prompt, recuerda que los evals Promptfoo son obligatorios antes.`;
