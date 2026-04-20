@@ -496,6 +496,33 @@ async def _procesar_mensaje(tenant: TenantContext, provider: str, msg: MensajeEn
             )
             return
 
+        # ── Handoff check (C4 tanda 3c) ───────────────────────────────
+        # Si esta conversación cliente<->bot está pausada por un admin,
+        # el bot NO responde. Guardamos el mensaje del cliente para que
+        # aparezca en el historial (y el admin pueda leerlo), pero ni
+        # LLM ni anti-ban se ejecutan.
+        async with pool.acquire() as _c:
+            pausada = await _c.fetchrow(
+                "SELECT 1 FROM paused_conversations WHERE tenant_id = $1 AND customer_phone = $2",
+                tenant.id, msg.telefono,
+            )
+        if pausada:
+            try:
+                await guardar_intercambio(
+                    tenant.id, msg.telefono, msg.texto, "",
+                    mensaje_id=msg.mensaje_id, tokens_in=0, tokens_out=0,
+                )
+            except Exception:
+                logger.exception(
+                    "no se pudo guardar mensaje en conversación pausada",
+                    extra={**log_extra, "event": "paused_save_error"},
+                )
+            logger.info(
+                "conversación pausada — bot silenciado",
+                extra={**log_extra, "event": "conv_paused_skip"},
+            )
+            return
+
         respuesta, tin, tout = await generar_respuesta(
             tenant,
             texto_efectivo,

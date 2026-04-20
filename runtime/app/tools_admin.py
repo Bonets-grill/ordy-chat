@@ -142,6 +142,45 @@ TOOLS_ADMIN: list[dict[str, Any]] = [
         "input_schema": {"type": "object", "properties": {}},
     },
 
+    # ── Cat Handoff (C4 tanda 3c) ────────────────────────────────────
+    {
+        "name": "pausar_conversacion",
+        "description": (
+            "Pausa el bot SOLO en la conversación con un cliente específico. "
+            "El bot deja de responder a ESE cliente hasta que lo reactives. "
+            "Usa cuando el admin quiera atender personalmente a un cliente. "
+            "Acepta el teléfono en cualquier formato (+34..., 34..., etc). "
+            "Pide confirmación antes de llamar."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "customer_phone": {"type": "string", "description": "Teléfono del cliente a pausar."},
+                "motivo": {"type": "string", "description": "Opcional: por qué se pausa (ej: 'queja compleja')."},
+            },
+            "required": ["customer_phone"],
+        },
+    },
+    {
+        "name": "reanudar_conversacion",
+        "description": (
+            "Reactiva el bot para una conversación que estaba pausada. "
+            "El admin lo usa cuando termina de atender personalmente."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "customer_phone": {"type": "string"},
+            },
+            "required": ["customer_phone"],
+        },
+    },
+    {
+        "name": "listar_conversaciones_pausadas",
+        "description": "Lista las conversaciones actualmente en handoff manual (bot silenciado por admin).",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+
     # ── Cat FAQ ──────────────────────────────────────────────────────
     {
         "name": "agregar_faq",
@@ -460,6 +499,94 @@ async def _h_resumen_operativo_hoy(
     )
 
 
+async def _h_pausar_conversacion(
+    conn: asyncpg.Connection,
+    tenant_id: UUID,
+    args: dict[str, Any],
+    admin_id: UUID | None = None,
+) -> dict[str, Any]:
+    from app.admin_resolver import normalizar_phone
+    phone = normalizar_phone(args.get("customer_phone") or "")
+    if not phone:
+        return _err("customer_phone vacío")
+    motivo = (args.get("motivo") or "").strip() or None
+    await conn.execute(
+        """
+        INSERT INTO paused_conversations
+            (tenant_id, customer_phone, paused_by_admin_id, reason)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (tenant_id, customer_phone) DO UPDATE SET
+            paused_at = NOW(),
+            paused_by_admin_id = EXCLUDED.paused_by_admin_id,
+            reason = EXCLUDED.reason
+        """,
+        tenant_id, phone, admin_id, motivo,
+    )
+    logger.info(
+        "conversación pausada por admin",
+        extra={
+            "event": "admin_conv_pause",
+            "tenant_id": str(tenant_id),
+            "customer_phone": phone,
+        },
+    )
+    return _ok(customer_phone=phone, paused=True, motivo=motivo)
+
+
+async def _h_reanudar_conversacion(
+    conn: asyncpg.Connection,
+    tenant_id: UUID,
+    args: dict[str, Any],
+    admin_id: UUID | None = None,
+) -> dict[str, Any]:
+    from app.admin_resolver import normalizar_phone
+    phone = normalizar_phone(args.get("customer_phone") or "")
+    if not phone:
+        return _err("customer_phone vacío")
+    result = await conn.execute(
+        "DELETE FROM paused_conversations WHERE tenant_id = $1 AND customer_phone = $2",
+        tenant_id, phone,
+    )
+    borrados = int(result.split()[-1]) if result.startswith("DELETE") else 0
+    if borrados == 0:
+        return _err(f"la conversación con {phone} no estaba pausada")
+    logger.info(
+        "conversación reactivada por admin",
+        extra={
+            "event": "admin_conv_resume",
+            "tenant_id": str(tenant_id),
+            "customer_phone": phone,
+        },
+    )
+    return _ok(customer_phone=phone, paused=False)
+
+
+async def _h_listar_conversaciones_pausadas(
+    conn: asyncpg.Connection,
+    tenant_id: UUID,
+    args: dict[str, Any],
+    admin_id: UUID | None = None,
+) -> dict[str, Any]:
+    rows = await conn.fetch(
+        """
+        SELECT customer_phone, paused_at, reason
+        FROM paused_conversations
+        WHERE tenant_id = $1
+        ORDER BY paused_at DESC
+        """,
+        tenant_id,
+    )
+    pausadas = [
+        {
+            "customer_phone": r["customer_phone"],
+            "paused_at": r["paused_at"].isoformat(),
+            "reason": r["reason"],
+        }
+        for r in rows
+    ]
+    return _ok(count=len(pausadas), conversaciones=pausadas)
+
+
 async def _h_agregar_faq(
     conn: asyncpg.Connection,
     tenant_id: UUID,
@@ -498,6 +625,9 @@ _HANDLERS = {
     "cerrar_reservas_dia": _h_cerrar_reservas_dia,
     "listar_pedidos_activos": _h_listar_pedidos_activos,
     "resumen_operativo_hoy": _h_resumen_operativo_hoy,
+    "pausar_conversacion": _h_pausar_conversacion,
+    "reanudar_conversacion": _h_reanudar_conversacion,
+    "listar_conversaciones_pausadas": _h_listar_conversaciones_pausadas,
     "agregar_faq": _h_agregar_faq,
 }
 
