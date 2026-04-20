@@ -405,6 +405,42 @@ async def _ejecutar_tool(
         return json.dumps({"ok": False, "error": str(e)[:300]})
 
 
+async def _build_agent_rules_block(tenant_id: "UUID") -> str | None:  # noqa: F821
+    """Reglas duras del tenant (tabla agent_rules). Se inyectan como bloque
+    <reglas_duras> en el system_prompt y el LLM las trata como no-negociables.
+
+    Diferencia con menu_overrides: las overrides son time-bounded + item-level
+    ("hoy sin Dakota"). Las reglas son permanentes + operativas
+    ("15 min antes del cierre solo para llevar", "nunca aceptes reservas
+    de más de 8 personas", "siempre ofrece postre tras el plato fuerte").
+    """
+    from app.memory import inicializar_pool
+    pool = await inicializar_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT rule_text
+            FROM agent_rules
+            WHERE tenant_id = $1 AND active = true
+            ORDER BY priority DESC, created_at
+            LIMIT 40
+            """,
+            tenant_id,
+        )
+    if not rows:
+        return None
+    lineas = [f"- {r['rule_text']}" for r in rows]
+    return (
+        "<reglas_duras>\n"
+        "Estas son reglas operativas del negocio. Son NO NEGOCIABLES — debes "
+        "respetarlas siempre, aunque el cliente insista. Si una respuesta tuya "
+        "violaría una regla, reformula para no violarla o explica amablemente "
+        "por qué no puedes.\n"
+        + "\n".join(lineas) +
+        "\n</reglas_duras>"
+    )
+
+
 async def _build_menu_overrides_block(tenant_id: "UUID") -> str | None:  # noqa: F821
     """Devuelve el bloque de disponibilidad del día para inyectar en el system.
 
@@ -549,6 +585,20 @@ async def generar_respuesta(
         logger.exception(
             "menu_overrides_block falló (cliente sigue sin disponibilidad del día)",
             extra={"tenant_slug": tenant.slug, "event": "overrides_block_error"},
+        )
+
+    # Reglas duras del tenant (2026-04-20). Reglas operativas persistentes que
+    # el dueño quiere que el agente respete siempre (p.ej. "15 min antes del
+    # cierre solo takeaway"). Se mete DESPUÉS de overrides porque las reglas
+    # son más fuertes — reglas > disponibilidad > saludo/contexto.
+    try:
+        rules_block = await _build_agent_rules_block(tenant.id)
+        if rules_block:
+            system_blocks.append({"type": "text", "text": rules_block})
+    except Exception:
+        logger.exception(
+            "agent_rules_block falló (cliente responde sin reglas duras)",
+            extra={"tenant_slug": tenant.slug, "event": "rules_block_error"},
         )
 
     # Multi-agent orchestrator (best-effort). Solo activo si el tenant tiene

@@ -66,6 +66,26 @@ export async function POST(req: Request) {
     reviewUrl,
   });
 
+  // Super admin notification — además de avisar al owner del tenant, mandamos
+  // también a SUPER_ADMIN_EMAIL (Mario) para que se entere de cualquier fail
+  // en la plataforma sin tener que hacer polling. Best-effort: no rompe si
+  // la key Resend está lenta o el email rebota — el resultado principal ya
+  // fue al owner.
+  const superAdminEmail = process.env.SUPER_ADMIN_EMAIL?.trim();
+  if (superAdminEmail && superAdminEmail !== row.ownerEmail) {
+    try {
+      await sendValidatorFailureEmail({
+        tenantEmail: superAdminEmail,
+        tenantName: `[SUPER ADMIN] ${row.tenantName}`,
+        runId: run_id,
+        reasons,
+        reviewUrl,
+      });
+    } catch (e) {
+      console.error("[notify-fail] super admin email failed:", e);
+    }
+  }
+
   // Audit log — cualquier mutación admin queda trazada.
   try {
     await db.insert(auditLog).values({

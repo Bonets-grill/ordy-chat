@@ -203,6 +203,60 @@ TOOLS_ADMIN: list[dict[str, Any]] = [
             "required": ["pregunta", "respuesta"],
         },
     },
+
+    # ── Cat REGLAS DURAS (persistentes, no time-bounded) ─────────────
+    {
+        "name": "agregar_regla",
+        "description": (
+            "Añade una REGLA DURA operativa del negocio — no negociable, "
+            "persistente. El agente cliente la respetará siempre. Uso: "
+            "'15 minutos antes del cierre de cocina solo aceptamos pedidos "
+            "para llevar', 'nunca aceptamos reservas de más de 8 personas', "
+            "'siempre ofrece postre tras el plato fuerte'. Distinto de "
+            "deshabilitar_item (item-level) y de cambiar_horario (horario "
+            "general). Pide confirmación antes de llamar."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "rule_text": {
+                    "type": "string",
+                    "description": "Texto claro en imperativo, <=500 chars.",
+                },
+                "priority": {
+                    "type": "integer",
+                    "description": "Prioridad 0-100 (higher first). Default 0.",
+                },
+            },
+            "required": ["rule_text"],
+        },
+    },
+    {
+        "name": "listar_reglas",
+        "description": (
+            "Lista las reglas duras activas del negocio. READ — no pide "
+            "confirmación. Útil antes de añadir o eliminar para no duplicar."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "eliminar_regla",
+        "description": (
+            "Desactiva una regla dura por substring del texto. Ej. 'quita la "
+            "regla de takeaway' → busca 'takeaway' en las reglas activas. Si "
+            "coincide con >1, pide aclaración. Pide confirmación antes."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pattern": {
+                    "type": "string",
+                    "description": "Substring a buscar en rule_text (case-insensitive).",
+                },
+            },
+            "required": ["pattern"],
+        },
+    },
 ]
 
 
@@ -648,6 +702,111 @@ async def _h_agregar_faq(
     return _ok(id=str(row["id"]), pregunta=pregunta)
 
 
+async def _h_agregar_regla(
+    conn: asyncpg.Connection,
+    tenant_id: UUID,
+    args: dict[str, Any],
+    admin_id: UUID | None = None,
+) -> dict[str, Any]:
+    rule = (args.get("rule_text") or "").strip()
+    if len(rule) < 3:
+        return _err("rule_text muy corto (<3 chars)")
+    if len(rule) > 500:
+        return _err("rule_text muy largo (>500 chars)")
+    priority = int(args.get("priority") or 0)
+    if priority < 0 or priority > 100:
+        priority = max(0, min(100, priority))
+    row = await conn.fetchrow(
+        """
+        INSERT INTO agent_rules (tenant_id, rule_text, priority, created_by_admin_id)
+        VALUES ($1, $2, $3, $4)
+        RETURNING id
+        """,
+        tenant_id, rule, priority, admin_id,
+    )
+    logger.info(
+        "regla añadida por admin",
+        extra={
+            "event": "admin_add_rule",
+            "tenant_id": str(tenant_id),
+            "rule_preview": rule[:60],
+        },
+    )
+    return _ok(id=str(row["id"]), rule_text=rule, priority=priority)
+
+
+async def _h_listar_reglas(
+    conn: asyncpg.Connection,
+    tenant_id: UUID,
+    args: dict[str, Any],
+    admin_id: UUID | None = None,
+) -> dict[str, Any]:
+    rows = await conn.fetch(
+        """
+        SELECT id, rule_text, priority, created_at
+        FROM agent_rules
+        WHERE tenant_id = $1 AND active = true
+        ORDER BY priority DESC, created_at
+        """,
+        tenant_id,
+    )
+    reglas = [
+        {
+            "id": str(r["id"]),
+            "rule_text": r["rule_text"],
+            "priority": r["priority"],
+            "created_at": r["created_at"].isoformat(),
+        }
+        for r in rows
+    ]
+    return _ok(count=len(reglas), reglas=reglas)
+
+
+async def _h_eliminar_regla(
+    conn: asyncpg.Connection,
+    tenant_id: UUID,
+    args: dict[str, Any],
+    admin_id: UUID | None = None,
+) -> dict[str, Any]:
+    pattern = (args.get("pattern") or "").strip()
+    if len(pattern) < 3:
+        return _err("pattern muy corto (<3 chars)")
+    # Buscar candidatos activos que contengan el substring.
+    candidatos = await conn.fetch(
+        """
+        SELECT id, rule_text FROM agent_rules
+        WHERE tenant_id = $1 AND active = true
+          AND rule_text ILIKE '%' || $2 || '%'
+        ORDER BY priority DESC, created_at
+        LIMIT 5
+        """,
+        tenant_id, pattern,
+    )
+    if len(candidatos) == 0:
+        return _err(f"ninguna regla activa coincide con '{pattern}'")
+    if len(candidatos) > 1:
+        return _err(
+            f"'{pattern}' coincide con varias reglas: "
+            + "; ".join(f'"{r["rule_text"]}"' for r in candidatos)
+            + ". Pide al admin el texto más específico."
+        )
+    target = candidatos[0]
+    # Soft delete: active=false conserva historial y permite rollback.
+    await conn.execute(
+        "UPDATE agent_rules SET active = false, updated_at = NOW() WHERE id = $1",
+        target["id"],
+    )
+    logger.info(
+        "regla desactivada por admin",
+        extra={
+            "event": "admin_remove_rule",
+            "tenant_id": str(tenant_id),
+            "rule_id": str(target["id"]),
+        },
+    )
+    return _ok(id=str(target["id"]), rule_text=target["rule_text"], active=False)
+
+
 # ══════════════════════════════════════════════════════════════════════
 # Dispatch — el LLM envía tool_use.name + tool_use.input; el router
 # localiza el handler y lo ejecuta dentro de la conexión del pool.
@@ -669,6 +828,9 @@ _HANDLERS = {
     "reanudar_conversacion": _h_reanudar_conversacion,
     "listar_conversaciones_pausadas": _h_listar_conversaciones_pausadas,
     "agregar_faq": _h_agregar_faq,
+    "agregar_regla": _h_agregar_regla,
+    "listar_reglas": _h_listar_reglas,
+    "eliminar_regla": _h_eliminar_regla,
 }
 
 # Tools que mutan estado — cada ejecución deja rastro en audit_log.
@@ -684,6 +846,8 @@ _MUTATIVE_TOOLS = frozenset({
     "pausar_conversacion",
     "reanudar_conversacion",
     "agregar_faq",
+    "agregar_regla",
+    "eliminar_regla",
 })
 
 

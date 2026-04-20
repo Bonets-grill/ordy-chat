@@ -15,6 +15,10 @@ import {
   type ValidatorRunStatus,
 } from "@/lib/admin/validator-queries";
 import { Filters } from "./filters";
+import { RunButton } from "./run-button";
+import { db as _db } from "@/lib/db";
+import { tenants as tenantsTbl } from "@/lib/db/schema";
+import { desc as _desc } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
@@ -74,21 +78,27 @@ export default async function AdminValidatorPage({
     : 168;
   const tenantSearch = sp.tenant?.trim() || undefined;
 
-  const [runs, kpi] = await Promise.all([
+  const [runs, kpi, tenantOptions] = await Promise.all([
     getRuns({ statusFilter, tenantSearch, sinceHours, limit: 100 }),
     getRunsKpi24h(),
+    _db
+      .select({ id: tenantsTbl.id, slug: tenantsTbl.slug, name: tenantsTbl.name })
+      .from(tenantsTbl)
+      .orderBy(_desc(tenantsTbl.createdAt))
+      .limit(50),
   ]);
 
   return (
     <AdminShell session={session}>
       <div className="space-y-6">
-        <div className="flex items-center justify-between">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Validador</h1>
             <p className="text-sm text-neutral-500">
               Runs recientes del validador de agentes por tenant.
             </p>
           </div>
+          <RunButton tenants={tenantOptions} />
         </div>
 
         <div className="grid gap-3 sm:grid-cols-5">

@@ -169,5 +169,7 @@ def test_mutative_set_cubre_tools_destructivas() -> None:
         "pausar_conversacion",
         "reanudar_conversacion",
         "agregar_faq",
+        "agregar_regla",
+        "eliminar_regla",
     }
     assert _MUTATIVE_TOOLS == destructivas_esperadas
