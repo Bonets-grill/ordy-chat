@@ -184,8 +184,13 @@ async def _evaluar_seed(
             response_text=respuesta,
             tools_called=[],  # brain.generar_respuesta no expone tools usadas — extensión futura
             asserts_result=asserts_result,
-            agent_config_tone=tenant.tone if hasattr(tenant, "tone") else "friendly",
-            agent_config_business_name=tenant.business_name if hasattr(tenant, "business_name") else "",
+            agent_config_tone=getattr(tenant, "tone", "") or "friendly",
+            # TenantContext expone el nombre como `name` (viene de tenants.name).
+            # Antes mirábamos `.business_name` que NO existe en el dataclass →
+            # pasaba "" y el judge penalizaba "menciona_negocio=0 (config vacío)"
+            # aunque el negocio sí tiene nombre. Bug descubierto 2026-04-20 en
+            # el detalle del run da8fbf99 (9 de 20 seeds con mn=0).
+            agent_config_business_name=getattr(tenant, "name", "") or "",
         )
 
         scores = dict(judge["scores"])
@@ -416,7 +421,9 @@ async def ejecutar_validator(
                 api_key=api_key,
                 system_prompt_actual=tenant.system_prompt,
                 fails=fails_for_patch,
-                business_name=getattr(tenant, "business_name", "") or slug,
+                # Mismo bug que arriba: usar tenant.name (atributo real), no
+                # business_name (inexistente en TenantContext).
+                business_name=getattr(tenant, "name", "") or slug,
             )
             if nuevo_prompt:
                 previous_prompt = tenant.system_prompt
