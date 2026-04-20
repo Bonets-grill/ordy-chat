@@ -15,6 +15,7 @@ import hmac
 import logging
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from uuid import UUID
 
 from dotenv import load_dotenv
@@ -57,6 +58,74 @@ def _check_internal_secret(request: Request) -> None:
 load_dotenv()
 configurar_logging()
 logger = logging.getLogger("ordychat.main")
+
+
+# Dedupe in-memory de avisos de warmup al tenant humano: {tenant_id_str: "YYYY-MM-DD"}.
+# Una notificación por tenant por día. Si reinicia el proceso, una notificación
+# extra en el día no es spam. Si hace falta durabilidad futura, migrar a DB.
+_warmup_notify_cache: dict[str, str] = {}
+_warmup_notify_lock = asyncio.Lock()
+
+
+async def _notificar_tenant_warmup_cap(
+    tenant: TenantContext,
+    adapter,
+    estado: dict,
+) -> None:
+    """Manda WhatsApp al humano del tenant avisando que el bot se ha
+    silenciado por warmup. Dedupe por tenant+día (máx 1 notificación/día).
+
+    El cliente final NUNCA recibe aviso — exponer el cap del warmup era
+    detalle técnico que erosionaba confianza. En su lugar, el humano del
+    tenant puede atender manualmente desde su WhatsApp hasta el reset
+    diario del cap o hasta que se active un `warmup_override`.
+    """
+    pool = await inicializar_pool()
+    async with pool.acquire() as conn:
+        target_phone = await conn.fetchval(
+            "SELECT handoff_whatsapp_phone FROM agent_configs WHERE tenant_id = $1",
+            tenant.id,
+        )
+    target_phone = (target_phone or "").strip()
+    if not target_phone:
+        return
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    async with _warmup_notify_lock:
+        if _warmup_notify_cache.get(str(tenant.id)) == today:
+            return
+        _warmup_notify_cache[str(tenant.id)] = today
+
+    tier = estado.get("tier") or "?"
+    cap = estado.get("cap") or 0
+    sent = estado.get("sent_today") or 0
+    body = (
+        f"⚠️ *Warmup cap alcanzado* — {tenant.name}\n\n"
+        f"Tu bot de WhatsApp se ha silenciado por protección anti-ban "
+        f"(tier {tier}, {sent}/{cap} mensajes hoy).\n\n"
+        f"Mientras tanto, responde manualmente a tus clientes desde WhatsApp. "
+        f"El bot volverá mañana con el cap renovado.\n\n"
+        f"Si tu volumen real es alto, pide al administrador de la plataforma "
+        f"que active warmup_override para tu cuenta."
+    )
+    try:
+        await adapter.enviar_mensaje(target_phone, body)
+        logger.info(
+            "warmup notify tenant enviado",
+            extra={
+                "event": "warmup_notify_tenant",
+                "tenant_id": str(tenant.id),
+                "target_phone_tail": target_phone[-4:],
+                "tier": tier,
+                "cap": cap,
+                "sent_today": sent,
+            },
+        )
+    except Exception:
+        logger.exception(
+            "warmup notify tenant falló",
+            extra={"event": "warmup_notify_tenant_error", "tenant_id": str(tenant.id)},
+        )
 
 
 @asynccontextmanager
@@ -718,18 +787,17 @@ async def _procesar_mensaje(tenant: TenantContext, provider: str, msg: MensajeEn
                        "tier": estado.get("tier"), "cap": estado.get("cap"),
                        "sent_today": estado.get("sent_today")},
             )
-            # Solo en fase "fresh" (día 1-3) avisamos al cliente. Días 4+
-            # silenciosos para no exponer el cap del warmup al usuario final.
-            if estado.get("tier") == "fresh":
-                try:
-                    await adapter.enviar_mensaje(
-                        msg.telefono,
-                        "He llegado al límite de mensajes por hoy. Mañana retomamos. "
-                        "Gracias por tu paciencia.",
-                    )
-                except Exception:
-                    logger.exception("fallo enviando aviso warmup",
-                                     extra={**log_extra, "event": "warmup_notice_fail"})
+            # El cliente NUNCA recibe aviso (exponerle el cap del warmup es
+            # detalle técnico que erosiona confianza y parece bot roto).
+            # En su lugar notificamos UNA vez al día al humano del tenant
+            # para que atienda manualmente.
+            try:
+                await _notificar_tenant_warmup_cap(tenant, adapter, estado)
+            except Exception:
+                logger.exception(
+                    "warmup notify tenant wrapper falló",
+                    extra={**log_extra, "event": "warmup_tenant_notify_wrap_error"},
+                )
             return
 
         waited = estado.get("waited", 0.0)
