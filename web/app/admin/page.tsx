@@ -56,28 +56,43 @@ export default async function AdminHome() {
 
   return (
     <AdminShell session={session}>
-      <div className="space-y-8">
-        <header>
-          <div className="flex items-center gap-3">
-            <h1 className="text-3xl font-semibold text-neutral-900">Super Admin</h1>
-            <Badge tone="new">Owner</Badge>
+      <div className="space-y-10">
+        <header className="flex items-end justify-between gap-4 flex-wrap">
+          <div>
+            <div className="flex items-center gap-3">
+              <h1 className="text-3xl font-semibold text-neutral-900">Super Admin</h1>
+              <Badge tone="new">Owner</Badge>
+            </div>
+            <p className="mt-1 text-sm text-neutral-500">Panel global de la plataforma.</p>
           </div>
-          <p className="mt-1 text-neutral-500">Panel global de la plataforma.</p>
+          <Link
+            href="/admin/assistant"
+            className="inline-flex items-center gap-2 rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
+          >
+            Asistente Opus 4.7 →
+          </Link>
         </header>
 
-        <div className="grid gap-4 md:grid-cols-3">
-          <Stat label="Tenants totales" value={tenantsCount?.n ?? 0} />
-          <Stat label="Con suscripción activa" value={activeCount?.n ?? 0} />
-          <Stat label="En trial" value={trialingCount?.n ?? 0} />
-          <Stat label="Usuarios" value={usersCount?.n ?? 0} />
-          <Stat label="Conversaciones totales" value={convsCount?.n ?? 0} />
-          <Stat label="Mensajes totales" value={messagesCount?.n ?? 0} />
-        </div>
+        <section>
+          <h2 className="mb-3 text-xs uppercase tracking-wide text-neutral-500">Plataforma</h2>
+          <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            <Stat label="Tenants" value={tenantsCount?.n ?? 0} />
+            <Stat label="Activos" value={activeCount?.n ?? 0} />
+            <Stat label="En trial" value={trialingCount?.n ?? 0} />
+            <Stat label="Usuarios" value={usersCount?.n ?? 0} />
+            <Stat label="Conversaciones" value={convsCount?.n ?? 0} />
+            <Stat label="Mensajes" value={messagesCount?.n ?? 0} />
+          </div>
+        </section>
 
-        <div>
-          <h2 className="text-lg font-semibold text-neutral-900">Operaciones (últimas 24h)</h2>
-          <p className="text-sm text-neutral-500">Visibilidad del onboarding-fast + warm-up anti-ban.</p>
-          <div className="mt-3 grid gap-4 md:grid-cols-4">
+        <section>
+          <h2 className="mb-1 text-xs uppercase tracking-wide text-neutral-500">
+            Operaciones (últimas 24h)
+          </h2>
+          <p className="mb-3 text-sm text-neutral-500">
+            Onboarding fast + warm-up anti-ban + validador.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
             <StatLink
               label="Onboarding jobs 24h"
               value={Object.values(onboardingKpis.by_status).reduce((a, b) => a + b, 0)}
@@ -127,59 +142,71 @@ export default async function AdminHome() {
               accent={validatorKpi.byStatus.fail > 0 ? "red" : "neutral"}
             />
           </div>
-        </div>
+        </section>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Tenants recientes</CardTitle>
-            <CardDescription>Los últimos 10 tenants creados.</CardDescription>
-          </CardHeader>
-          <CardContent>
+        <section>
+          <div className="mb-3 flex items-end justify-between">
+            <div>
+              <h2 className="text-xs uppercase tracking-wide text-neutral-500">
+                Tenants recientes
+              </h2>
+              <p className="text-sm text-neutral-500">Los últimos 10 creados.</p>
+            </div>
+            <Link
+              href="/admin/tenants"
+              className="text-sm text-neutral-600 hover:text-neutral-900"
+            >
+              Ver todos →
+            </Link>
+          </div>
+          <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white">
             <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-neutral-100 text-left text-xs uppercase text-neutral-500">
-                  <th className="py-2">Slug</th>
-                  <th>Nombre</th>
-                  <th>Estado</th>
-                  <th>Trial vence</th>
-                  <th>Creado</th>
+              <thead className="bg-neutral-50">
+                <tr className="text-left text-xs uppercase text-neutral-500">
+                  <th className="px-4 py-2.5 font-medium">Slug</th>
+                  <th className="py-2.5 font-medium">Nombre</th>
+                  <th className="py-2.5 font-medium">Estado</th>
+                  <th className="py-2.5 font-medium">Trial</th>
+                  <th className="py-2.5 font-medium">Creado</th>
                 </tr>
               </thead>
-              <tbody>
-                {recent.map((t) => (
-                  <tr key={t.id} className="border-b border-neutral-50 last:border-0">
-                    <td className="py-2 font-mono text-xs text-brand-600">{t.slug}</td>
-                    <td>{t.name}</td>
-                    <td><Badge tone={t.subscriptionStatus === "active" ? "success" : "warn"}>{t.subscriptionStatus}</Badge></td>
-                    <td className="text-xs text-neutral-500">{new Date(t.trialEndsAt).toLocaleDateString("es-ES")}</td>
-                    <td className="text-xs text-neutral-500">{new Date(t.createdAt).toLocaleDateString("es-ES")}</td>
+              <tbody className="divide-y divide-neutral-100">
+                {recent.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-6 text-center text-sm text-neutral-500">
+                      Aún no hay tenants creados.
+                    </td>
                   </tr>
-                ))}
+                ) : (
+                  recent.map((t) => (
+                    <tr key={t.id} className="hover:bg-neutral-50">
+                      <td className="px-4 py-2.5">
+                        <Link
+                          href={`/admin/tenants/${t.id}`}
+                          className="font-mono text-xs text-neutral-700 hover:underline"
+                        >
+                          {t.slug}
+                        </Link>
+                      </td>
+                      <td className="py-2.5">{t.name}</td>
+                      <td className="py-2.5">
+                        <Badge tone={t.subscriptionStatus === "active" ? "success" : "warn"}>
+                          {t.subscriptionStatus}
+                        </Badge>
+                      </td>
+                      <td className="py-2.5 text-xs text-neutral-500">
+                        {new Date(t.trialEndsAt).toLocaleDateString("es-ES")}
+                      </td>
+                      <td className="py-2.5 text-xs text-neutral-500">
+                        {new Date(t.createdAt).toLocaleDateString("es-ES")}
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
-          </CardContent>
-        </Card>
-
-        <div className="flex flex-wrap gap-3">
-          <Link href="/admin/tenants" className="inline-flex h-11 items-center rounded-full bg-neutral-900 px-5 text-sm font-medium text-white hover:bg-neutral-800">
-            Tenants
-          </Link>
-          <Link href="/admin/onboarding-jobs" className="inline-flex h-11 items-center rounded-full border border-neutral-200 bg-white px-5 text-sm font-medium text-neutral-900 hover:bg-neutral-50">
-            Onboarding jobs
-          </Link>
-          <Link href="/admin/instances" className="inline-flex h-11 items-center rounded-full border border-neutral-200 bg-white px-5 text-sm font-medium text-neutral-900 hover:bg-neutral-50">
-            Instancias
-          </Link>
-          <Link href="/admin/validator" className="inline-flex h-11 items-center rounded-full border border-neutral-200 bg-white px-5 text-sm font-medium text-neutral-900 hover:bg-neutral-50">
-            Validador
-          </Link>
-          <Link href="/admin/flags" className="inline-flex h-11 items-center rounded-full border border-neutral-200 bg-white px-5 text-sm font-medium text-neutral-900 hover:bg-neutral-50">
-            Feature flags
-          </Link>
-          <Link href="/admin/settings" className="inline-flex h-11 items-center rounded-full border border-neutral-200 bg-white px-5 text-sm font-medium text-neutral-900 hover:bg-neutral-50">
-            API keys
-          </Link>
-        </div>
+          </div>
+        </section>
       </div>
     </AdminShell>
   );
@@ -187,12 +214,12 @@ export default async function AdminHome() {
 
 function Stat({ label, value }: { label: string; value: number }) {
   return (
-    <Card>
-      <CardHeader>
-        <CardDescription>{label}</CardDescription>
-        <CardTitle className="text-3xl">{value}</CardTitle>
-      </CardHeader>
-    </Card>
+    <div className="rounded-xl border border-neutral-200 bg-white p-4">
+      <div className="text-[11px] uppercase tracking-wide text-neutral-500">{label}</div>
+      <div className="mt-1 text-2xl font-semibold tabular-nums text-neutral-900">
+        {value}
+      </div>
+    </div>
   );
 }
 
@@ -207,16 +234,19 @@ function StatLink({
   href: string;
   accent: "neutral" | "blue" | "red";
 }) {
-  const accentClass =
-    accent === "red" ? "text-red-700" : accent === "blue" ? "text-blue-700" : "text-neutral-900";
+  const tone =
+    accent === "red"
+      ? "border-red-200 bg-red-50 text-red-700"
+      : accent === "blue"
+      ? "border-blue-200 bg-blue-50 text-blue-700"
+      : "border-neutral-200 bg-white text-neutral-900";
   return (
-    <Link href={href} className="block">
-      <Card className="hover:border-neutral-400 transition-colors">
-        <CardHeader>
-          <CardDescription>{label}</CardDescription>
-          <CardTitle className={`text-3xl ${accentClass}`}>{value}</CardTitle>
-        </CardHeader>
-      </Card>
+    <Link
+      href={href}
+      className={`block rounded-xl border p-4 transition-colors hover:border-neutral-400 ${tone}`}
+    >
+      <div className="text-[11px] uppercase tracking-wide opacity-70">{label}</div>
+      <div className="mt-1 text-2xl font-semibold tabular-nums">{value}</div>
     </Link>
   );
 }
