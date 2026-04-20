@@ -3,12 +3,15 @@
 # Objetivo: que el bot DEJE DE MENTIR. Antes decía "tu cita queda agendada" sin
 # guardar nada. Ahora cada tool persiste el evento en Postgres con tenant_id.
 
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from app.memory import inicializar_pool
+
+logger = logging.getLogger("ordychat.agent_tools")
 
 # Máximo horizonte de reserva: 90 días. Más allá casi siempre es modelo que
 # confabuló un año equivocado (observado: 2027 en lugar de 2026).
