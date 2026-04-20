@@ -9,6 +9,13 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Opt-in a Node 24 para las JS actions internas (actions/checkout, setup-node,
+# cache, upload-artifact, pnpm/action-setup). GitHub forzará Node 24 por
+# default desde junio 2026; esto silencia el warning "Node.js 20 actions are
+# deprecated" y adelanta la migración sin cambios funcionales.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   web:
     name: web — typecheck & build
