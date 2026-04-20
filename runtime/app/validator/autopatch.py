@@ -16,7 +16,12 @@ logger = logging.getLogger("ordychat.validator.autopatch")
 MODEL_ID = "claude-sonnet-4-6"
 MAX_TOKENS = 2048
 TEMPERATURE = 0.2
-MAX_EXTRA_CHARS = 500
+# Cap anti-drift: el nuevo prompt no puede crecer más que esto sobre el
+# original. 2026-04-20 subido de 500 a 1500: con 500 todos los autopatches
+# de Bonets quedaban rechazados por "too_long" (el bloque de correcciones
+# típico para 6-8 fallos pasa de 500 chars fácil). 1500 permite correcciones
+# reales sin permitir reescrituras completas.
+MAX_EXTRA_CHARS = 1500
 
 
 _SYSTEM_PROMPT = """Eres un experto en redacción de prompts para bots WhatsApp de negocios.
@@ -34,7 +39,7 @@ REGLAS INNEGOCIABLES:
 2. NO elimines reglas existentes que sigan siendo válidas.
 3. NO traduzcas el prompt — mantén el mismo idioma del original.
 4. Los cambios deben ser AÑADIDOS al final como bloque "## Correcciones" o
-   refuerzos dentro de secciones existentes. Máximo +500 caracteres sobre
+   refuerzos dentro de secciones existentes. Máximo +1500 caracteres sobre
    el prompt original.
 5. Si los fallos son ambiguos o contradictorios, emite el prompt sin cambios
    y en `notes` explica por qué no pudiste mejorar.

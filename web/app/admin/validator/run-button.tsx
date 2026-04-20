@@ -20,13 +20,33 @@ export function RunButton({ tenants }: { tenants: TenantOption[] }) {
 
   if (tenants.length === 0) return null;
 
+  function friendlyError(raw: string): string {
+    // Rate limit del runtime: "INTERNAL: runtime HTTP 429: {...}"
+    if (raw.includes("HTTP 429") && raw.includes("rate_limit")) {
+      return "Ya has lanzado 3 runs manuales en la última hora. Espera un rato y vuelve a intentar.";
+    }
+    // Rate limit del propio action (pre-runtime).
+    if (raw.toLowerCase().includes("límite 3 runs manuales")) {
+      return "Ya has lanzado 3 runs manuales en la última hora. Espera un rato y vuelve a intentar.";
+    }
+    if (raw.includes("runtime unreachable")) {
+      return "El runtime no responde. Revisa si Railway está caído.";
+    }
+    // Fallback: prefijo limpio, sin jerga INTERNAL/VALIDATION.
+    return raw
+      .replace(/^INTERNAL:\s*/i, "")
+      .replace(/^VALIDATION:\s*/i, "")
+      .slice(0, 200);
+  }
+
   function fire() {
     if (!selected) return;
     setMsg(null);
     startTransition(async () => {
       const res = await triggerManualRunAction(selected);
       if (res && typeof res === "object" && "ok" in res && res.ok === false) {
-        setMsg(`Error: ${(res as { error?: string }).error ?? "no se pudo disparar"}`);
+        const raw = (res as { error?: string }).error ?? "no se pudo disparar";
+        setMsg(friendlyError(raw));
         return;
       }
       setMsg("Run lanzado. Se refrescará en unos segundos…");
