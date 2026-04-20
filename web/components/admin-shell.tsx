@@ -39,6 +39,7 @@ const NAV: NavItem[] = [
   { href: "/admin", label: "Resumen", icon: LayoutDashboard, group: "core" },
   { href: "/admin/tenants", label: "Tenants", icon: Users, group: "core" },
   { href: "/admin/validator", label: "Validador", icon: ShieldCheck, group: "core" },
+  { href: "/admin/learning", label: "Reglas aprendidas", icon: Sparkles, group: "core" },
   { href: "/admin/assistant", label: "Asistente (Opus 4.7)", icon: MessageSquare, group: "core" },
   // OPS
   { href: "/admin/onboarding-jobs", label: "Onboarding jobs", icon: Sparkles, group: "ops" },

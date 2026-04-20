@@ -162,6 +162,53 @@ async def onboarding_scrape_endpoint(request: Request):
 _VALIDATOR_TRIGGERS = {"onboarding_auto", "admin_manual", "autopatch_retry"}
 
 
+@app.post("/internal/learning/run")
+async def internal_learning_run(request: Request):
+    """Dispara el ciclo de auto-aprendizaje para un tenant o para todos.
+
+    Body: {"tenant_id": "<uuid>"} → solo ese tenant (pruebas manuales)
+          {"all": true}          → todos los tenants activos (cron diario)
+          {"force": true}        → ignora cooldown de 20h (solo para pruebas)
+    """
+    _check_internal_secret(request)
+
+    body = await request.json() if request.headers.get("content-length") else {}
+    body = body or {}
+    tenant_id_raw = body.get("tenant_id")
+    run_all = bool(body.get("all"))
+    force = bool(body.get("force"))
+
+    from app.learning.learn_from_chats import learn_for_tenant
+
+    if run_all:
+        pool = await inicializar_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT id FROM tenants WHERE subscription_status IN ('active', 'trialing')"
+            )
+        results = []
+        for r in rows:
+            try:
+                res = await learn_for_tenant(r["id"], force=force)
+                results.append({"tenant_id": str(r["id"]), **res})
+            except Exception as e:
+                logger.exception(
+                    "learning fallo por tenant",
+                    extra={"event": "learning_tenant_error", "tenant_id": str(r["id"])},
+                )
+                results.append({"tenant_id": str(r["id"]), "ok": False, "reason": f"exception:{type(e).__name__}"})
+        return {"status": "done", "tenants": len(results), "results": results}
+
+    if not tenant_id_raw:
+        raise HTTPException(status_code=400, detail="tenant_id requerido (o all=true)")
+    try:
+        tenant_id = UUID(str(tenant_id_raw))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="tenant_id no es UUID")
+    res = await learn_for_tenant(tenant_id, force=force)
+    return {"status": "done", "tenant_id": str(tenant_id), **res}
+
+
 @app.post("/internal/playground/generate")
 async def internal_playground_generate(request: Request):
     """Ejecuta brain.generar_respuesta con el sistema prompt real del tenant
