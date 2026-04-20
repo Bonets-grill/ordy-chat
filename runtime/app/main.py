@@ -259,6 +259,7 @@ async def internal_playground_generate(request: Request):
             historial,
             customer_phone="playground-sandbox",
             media_blocks=None,
+            sandbox=True,
         )
     except Exception as e:
         logger.exception(

@@ -133,6 +133,7 @@ async def _evaluar_seed(
                 [],
                 customer_phone=VALIDATOR_PHONE,
                 media_blocks=None,
+                sandbox=True,
             )
         except Exception as e:
             logger.exception(
