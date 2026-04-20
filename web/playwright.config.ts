@@ -19,9 +19,19 @@ export default defineConfig({
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
   ],
   webServer: {
-    command: "pnpm dev",
+    // Usamos build + start en vez de dev para que Playwright teste el
+    // bundle real de producción. Esto evita el hydration glitch donde
+    // Suspense + React dev-mode doble-render provocan que clicks de
+    // Playwright lleguen al DOM antes de que los handlers estén vivos
+    // (observado en 02-auth: toggle "Prefiero enlace mágico" no
+    // disparaba setState aunque el DOM lo listara).
+    //
+    // Coste: build tarda ~30-90s la primera vez. reuseExistingServer
+    // sigue activo, así que en dev local puedes `pnpm build && pnpm start`
+    // en otra ventana y Playwright reusa la instancia.
+    command: "pnpm build && pnpm start -p 3000",
     url: "http://localhost:3000",
     reuseExistingServer: true,
-    timeout: 120_000,
+    timeout: 240_000,
   },
 });
