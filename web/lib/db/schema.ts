@@ -138,6 +138,9 @@ export const agentConfigs = pgTable("agent_configs", {
   validationMode: text("validation_mode"),
   // Fechas cerradas (migración 015). Inyectado en system_prompt y guard de crear_cita.
   reservationsClosedFor: date("reservations_closed_for").array().notNull().default(_sqlTag`ARRAY[]::date[]`),
+  // Migración 024: número WhatsApp del humano al que el bot escribe en solicitar_humano.
+  // NULL = sin aviso WA (solo queda la fila en handoff_requests).
+  handoffWhatsappPhone: text("handoff_whatsapp_phone"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

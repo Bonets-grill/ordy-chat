@@ -1,11 +1,11 @@
 "use server";
 
-import { sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { auditLog } from "@/lib/db/schema";
+import { agentConfigs, auditLog } from "@/lib/db/schema";
 import { requireTenant } from "@/lib/tenant";
 
 // Permite número con o sin +, validamos solo dígitos + longitud razonable.
@@ -29,11 +29,10 @@ export async function setHandoffPhoneAction(rawPhone: string) {
   const normalized = parsed.data.replace(/^\+/, "").trim();
   const value: string | null = normalized.length === 0 ? null : normalized;
 
-  await db.execute(sql`
-    UPDATE agent_configs
-    SET handoff_whatsapp_phone = ${value}, updated_at = NOW()
-    WHERE tenant_id = ${bundle.tenant.id}::uuid
-  `);
+  await db
+    .update(agentConfigs)
+    .set({ handoffWhatsappPhone: value, updatedAt: new Date() })
+    .where(eq(agentConfigs.tenantId, bundle.tenant.id));
 
   await db.insert(auditLog).values({
     tenantId: bundle.tenant.id,
