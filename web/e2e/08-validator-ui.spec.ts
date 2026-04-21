@@ -25,7 +25,7 @@ test.describe("Validador UI", () => {
   });
 
   test("super admin ve /admin/validator con KPIs y filtros", async ({ page }) => {
-    await loginDev(page, SUPER_EMAIL, "/admin/validator");
+    await loginDev(page, SUPER_EMAIL, "/admin/validator", { role: "super_admin" });
     await expect(page.getByRole("heading", { name: /Validador/i })).toBeVisible();
     await expect(page.getByLabel(/Estado/i)).toBeVisible();
     await expect(page.getByLabel(/Ventana/i)).toBeVisible();
@@ -33,14 +33,14 @@ test.describe("Validador UI", () => {
   });
 
   test("super admin ve KPIs validator en /admin home", async ({ page }) => {
-    await loginDev(page, SUPER_EMAIL, "/admin");
+    await loginDev(page, SUPER_EMAIL, "/admin", { role: "super_admin" });
     await expect(page.getByText(/Validator runs 24h/i)).toBeVisible();
     await expect(page.getByText(/Validator fail 24h/i)).toBeVisible();
     await expect(page.getByRole("link", { name: /^Validador$/ })).toBeVisible();
   });
 
   test("/admin/validator/<uuid-no-existe> muestra 404 o redirige a signin (no 500)", async ({ page }) => {
-    await loginDev(page, SUPER_EMAIL, "/admin");
+    await loginDev(page, SUPER_EMAIL, "/admin", { role: "super_admin" });
     const r = await page.goto("/admin/validator/00000000-0000-0000-0000-000000000000");
     expect(r?.status()).toBeLessThan(500);
   });

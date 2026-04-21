@@ -1,6 +1,15 @@
 import { expect, test } from "@playwright/test";
+import { acceptCookiesUpfront } from "./helpers";
 
 test.describe("Landing", () => {
+  // Pre-inyecta el cookie de consentimiento en cada test de la suite para
+  // que el banner nunca se pinte y no intercepte clicks sobre CTAs / chips.
+  // Observado en CI headless: el banner aparece con delay y bloquea el click
+  // en "Restaurante" (test 3).
+  test.beforeEach(async ({ page }) => {
+    await acceptCookiesUpfront(page);
+  });
+
   test("hero carga con título, pricing y CTA primario", async ({ page }) => {
     await page.goto("/");
     // H1 actualizado 2026-04-20: "El agente de WhatsApp — que entiende tu restaurante".
@@ -13,13 +22,20 @@ test.describe("Landing", () => {
   });
 
   test("navegación interna y páginas legales responden 200", async ({ page }) => {
-    await page.goto("/pricing");
-    await expect(page.getByRole("heading", { name: /Un precio\. Sin trucos\./i })).toBeVisible();
+    // waitUntil "domcontentloaded" evita net::ERR_ABORTED cuando Playwright
+    // inicia el siguiente goto() mientras aún hay requests en vuelo del
+    // anterior (client JS del cookie-consent, prefetch, analytics).
+    // El heading H1 se emite en el HTML inicial, no necesitamos "load".
+    await page.goto("/pricing", { waitUntil: "domcontentloaded" });
+    // H1 actual: "Un precio base. *Crece con add-ons.*" (post-pivot add-ons
+    // 2026-04-20). Matcheamos el trozo estable "Un precio" que aguanta
+    // ambos copys (anterior "Un precio. Sin trucos." y actual con add-ons).
+    await expect(page.getByRole("heading", { name: /Un precio/i })).toBeVisible();
 
-    await page.goto("/terms");
+    await page.goto("/terms", { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("heading", { name: /Términos y condiciones/i })).toBeVisible();
 
-    await page.goto("/privacy");
+    await page.goto("/privacy", { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("heading", { name: /Política de privacidad/i })).toBeVisible();
   });
 
@@ -27,6 +43,13 @@ test.describe("Landing", () => {
     await page.goto("/");
     const textarea = page.locator("form textarea").first();
     await expect(textarea).toHaveValue("");
+
+    // Espera a que React 19 + Next 15 App Router terminen la hidratación:
+    // el onClick del chip no está attacheado hasta post-hydration, y sin
+    // él la click() llega al botón pero no dispara setValue. Se observa
+    // como textarea="" tras 14 polls de 700ms. networkidle + 500ms margen.
+    await page.waitForLoadState("networkidle");
+    await page.waitForTimeout(500);
 
     await page.getByRole("button", { name: "Restaurante" }).click();
     await expect(textarea).toHaveValue(/restaurante/i);

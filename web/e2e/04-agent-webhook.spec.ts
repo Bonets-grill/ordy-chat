@@ -1,10 +1,10 @@
 import { expect, test } from "@playwright/test";
-import { completarWizard, freshEmail, loginDev } from "./helpers";
+import { completarWizard, seedUser, loginDev } from "./helpers";
 
 test.describe("Panel del agente", () => {
   test("URL del webhook incluye el token ?s= y apunta al runtime", async ({ page }) => {
-    const email = freshEmail("webhook");
-    await loginDev(page, email, "/onboarding");
+    const user = await seedUser("webhook");
+    await loginDev(page, user.email, "/onboarding?legacy=1", { userId: user.id });
     await completarWizard(page, { businessName: "Webhook Negocio", agentName: "Bot" });
 
     await page.goto("/agent");
@@ -18,8 +18,8 @@ test.describe("Panel del agente", () => {
   });
 
   test("pausa y reactiva el agente sin navegar", async ({ page }) => {
-    const email = freshEmail("pause");
-    await loginDev(page, email, "/onboarding");
+    const user = await seedUser("pause");
+    await loginDev(page, user.email, "/onboarding?legacy=1", { userId: user.id });
     await completarWizard(page, { businessName: "Pausa Negocio", agentName: "Luna" });
 
     await page.goto("/agent");
