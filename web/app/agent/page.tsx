@@ -1,11 +1,11 @@
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { providerCredentials } from "@/lib/db/schema";
+import { agentConfigs, providerCredentials } from "@/lib/db/schema";
 import { requireTenant } from "@/lib/tenant";
 import { AgentEditor } from "./editor";
 import { HandoffCard } from "./handoff-card";
@@ -22,16 +22,12 @@ export default async function AgentPage() {
     .where(eq(providerCredentials.tenantId, bundle.tenant.id))
     .limit(1);
 
-  // handoff_whatsapp_phone no está en el schema Drizzle todavía — raw SQL.
-  const handoffRaw = await db.execute(sql`
-    SELECT handoff_whatsapp_phone
-    FROM agent_configs
-    WHERE tenant_id = ${bundle.tenant.id}::uuid
-  `);
-  const handoffRow = (Array.isArray(handoffRaw) ? handoffRaw[0] : (handoffRaw as { rows?: unknown[] }).rows?.[0]) as
-    | { handoff_whatsapp_phone: string | null }
-    | undefined;
-  const handoffPhone = handoffRow?.handoff_whatsapp_phone ?? null;
+  const [handoffRow] = await db
+    .select({ handoffWhatsappPhone: agentConfigs.handoffWhatsappPhone })
+    .from(agentConfigs)
+    .where(eq(agentConfigs.tenantId, bundle.tenant.id))
+    .limit(1);
+  const handoffPhone = handoffRow?.handoffWhatsappPhone ?? null;
 
   const runtimeBase = process.env.RUNTIME_URL ?? "https://runtime.ordychat.com";
   const secret = creds?.webhookSecret ?? "";
