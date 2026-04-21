@@ -24,11 +24,29 @@ refactor, estos tests fallan antes de que el bug llegue a producción.
 from __future__ import annotations
 
 from app.brain import TOOLS
+from app.prompt_wrapper import PROMPT_WRAPPER
 
 
 def _solicitar_humano_desc() -> str:
     tool = next(t for t in TOOLS if t["name"] == "solicitar_humano")
     return tool["description"]
+
+
+def test_hard_rules_mandan_seguir_atendiendo_tras_handoff() -> None:
+    """El wrapper debe tener una hard_rule explícita que obligue a seguir
+    respondiendo preguntas factuales tras un handoff. La tool description
+    sola no basta — el modelo la trata como guidance y no como ley. Las
+    <hard_rules> son el mecanismo anti-regresión más fuerte del wrapper.
+    """
+    p = PROMPT_WRAPPER.lower()
+    # La rule existe y es incondicional.
+    assert "tras un handoff" in p or "tras el handoff" in p, (
+        "Falta hard_rule explícita sobre comportamiento post-handoff"
+    )
+    # Menciona explícitamente que sigue atendiendo.
+    assert "sigues atendiendo" in p or "sigue atendiendo" in p
+    # Prohibición directa de respuesta sticky.
+    assert "no contestes" in p and "alguien te escribirá" in p
 
 
 def test_solicitar_humano_confirmacion_es_solo_ese_turno() -> None:
