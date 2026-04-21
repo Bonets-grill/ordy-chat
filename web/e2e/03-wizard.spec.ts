@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { completarWizard, seedUser, loginDev } from "./helpers";
+import { completarWizard, seedUser, loginDev, typeInto } from "./helpers";
 
 test.describe("Onboarding wizard", () => {
   test("crea tenant end-to-end y aterriza en el dashboard", async ({ page }) => {
@@ -19,10 +19,10 @@ test.describe("Onboarding wizard", () => {
     const next = page.getByRole("button", { name: /Siguiente/i });
     await expect(next).toBeDisabled();
 
-    await page.getByPlaceholder("Nombre del negocio").fill("X"); // 1 char, min 2
+    await typeInto(page.getByPlaceholder("Nombre del negocio"), "X"); // 1 char, min 2
     await expect(next).toBeDisabled();
 
-    await page.getByPlaceholder("Nombre del negocio").fill("Acme");
+    await typeInto(page.getByPlaceholder("Nombre del negocio"), "Acme");
     await expect(next).toBeEnabled();
   });
 });

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { seedUser, loginDev } from "./helpers";
+import { seedUser, loginDev, typeInto } from "./helpers";
 
 test.describe("Wizard paso 7 — Knowledge", () => {
   test("entra en modo web, permite conmutar a manual y volver", async ({ page }) => {
@@ -15,19 +15,19 @@ test.describe("Wizard paso 7 — Knowledge", () => {
     };
 
     // Avanzar hasta el paso 7
-    await page.getByPlaceholder("Nombre del negocio").fill("Knowledge Test");
+    await typeInto(page.getByPlaceholder("Nombre del negocio"), "Knowledge Test");
     await next();
-    await page.getByPlaceholder(/Qué vendes/i).fill("Descripción de prueba para llegar al paso 7.");
+    await typeInto(page.getByPlaceholder(/Qué vendes/i), "Descripción de prueba para llegar al paso 7.");
     await next();
     await page.getByRole("button", { name: "Responder preguntas frecuentes" }).click();
     await next();
-    await page.getByPlaceholder("Nombre del agente").fill("KB");
+    await typeInto(page.getByPlaceholder("Nombre del agente"), "KB");
     await next();
     // Paso 5 — tono (seleccionar Amigable explícito)
     await page.getByRole("button", { name: "Amigable", exact: false }).first().click();
     await next();
     // Paso 6 — horario (min 3 chars)
-    await page.getByPlaceholder(/Lunes a Viernes/i).fill("L-V 10-18");
+    await typeInto(page.getByPlaceholder(/Lunes a Viernes/i), "L-V 10-18");
     await next();
 
     // Estamos en el paso 7 — modo web por defecto
@@ -47,7 +47,7 @@ test.describe("Wizard paso 7 — Knowledge", () => {
     await expect(page.getByRole("button", { name: "Escanear" })).toBeDisabled();
 
     // Poner una URL habilita el botón
-    await page.getByPlaceholder(/mirestaurante\.com/i).fill("https://example.com");
+    await typeInto(page.getByPlaceholder(/mirestaurante\.com/i), "https://example.com");
     await expect(page.getByRole("button", { name: "Escanear" })).toBeEnabled();
   });
 

@@ -150,17 +150,37 @@ export async function loginDev(
  */
 export async function acceptCookiesUpfront(page: Page): Promise<void> {
   // Playwright.addCookies acepta `url` XOR `domain+path`, nunca ambos.
-  // Pasar ambos en CI (Playwright 1.x) revienta con:
-  //   "Cookie should have either url or path"
-  // El form `url` ya implica path=/ para el host/puerto dado.
+  // Form `domain + path` es más robusto en CI headless (servidor puede
+  // responder con distintos Set-Cookie que confunden la forma de `url`).
   await page.context().addCookies([
     {
       name: "ordy_consent_v1",
       value: "accepted",
-      url: "http://localhost:3000",
+      domain: "localhost",
+      path: "/",
       sameSite: "Lax",
     },
   ]);
+}
+
+/**
+ * Llena un input React controlado forzando change events por cada
+ * carácter. Más robusto que .fill() en React 19 + Next 15 prod build
+ * headless, donde .fill() a veces dispatcha input pero el re-render
+ * con concurrent features se difiere y canNext del wizard no se
+ * recomputa a tiempo. pressSequentially simula keystrokes reales y
+ * garantiza un onChange por cada char.
+ */
+export async function typeInto(
+  locator: ReturnType<Page["locator"]>,
+  value: string,
+): Promise<void> {
+  await locator.waitFor({ state: "visible" });
+  await locator.click();
+  await locator.fill("");
+  await locator.pressSequentially(value, { delay: 15 });
+  // Blur → commit del cambio (algunas libs de form validation esperan blur).
+  await locator.page().keyboard.press("Tab");
 }
 
 /**
@@ -200,11 +220,12 @@ export async function completarWizard(
   };
 
   // Paso 1 — nombre del negocio
-  await page.getByPlaceholder("Nombre del negocio").fill(opts.businessName);
+  await typeInto(page.getByPlaceholder("Nombre del negocio"), opts.businessName);
   await clickSiguiente();
 
   // Paso 2 — descripción (min 10 chars)
-  await page.getByPlaceholder(/Qué vendes/i).fill(
+  await typeInto(
+    page.getByPlaceholder(/Qué vendes/i),
     `${opts.businessName} — negocio de prueba para tests automatizados. Vendemos servicios genéricos de alta calidad a clientes B2B.`,
   );
   await clickSiguiente();
@@ -215,7 +236,7 @@ export async function completarWizard(
   await clickSiguiente();
 
   // Paso 4 — nombre del agente
-  await page.getByPlaceholder("Nombre del agente").fill(opts.agentName);
+  await typeInto(page.getByPlaceholder("Nombre del agente"), opts.agentName);
   await clickSiguiente();
 
   // Paso 5 — tono (Amigable ya viene por defecto, pero lo forzamos explícito)
@@ -223,7 +244,7 @@ export async function completarWizard(
   await clickSiguiente();
 
   // Paso 6 — horario (min 3 chars)
-  await page.getByPlaceholder(/Lunes a Viernes/i).fill("L-V 10:00-20:00");
+  await typeInto(page.getByPlaceholder(/Lunes a Viernes/i), "L-V 10:00-20:00");
   await clickSiguiente();
 
   // Paso 7 — knowledge (opcional, dejamos vacío)
@@ -234,7 +255,7 @@ export async function completarWizard(
   await clickSiguiente();
 
   // Paso 9 — credenciales Whapi
-  await page.getByPlaceholder("eyJ...").fill("fake-whapi-token-for-e2e");
+  await typeInto(page.getByPlaceholder("eyJ..."), "fake-whapi-token-for-e2e");
   await page.getByRole("button", { name: /Crear agente/i }).click();
 
   await page.waitForURL("**/dashboard", { timeout: 20_000 });

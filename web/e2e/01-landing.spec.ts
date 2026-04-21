@@ -44,6 +44,13 @@ test.describe("Landing", () => {
     const textarea = page.locator("form textarea").first();
     await expect(textarea).toHaveValue("");
 
+    // Espera a que React 19 + Next 15 App Router terminen la hidratación:
+    // el onClick del chip no está attacheado hasta post-hydration, y sin
+    // él la click() llega al botón pero no dispara setValue. Se observa
+    // como textarea="" tras 14 polls de 700ms. networkidle + 500ms margen.
+    await page.waitForLoadState("networkidle");
+    await page.waitForTimeout(500);
+
     await page.getByRole("button", { name: "Restaurante" }).click();
     await expect(textarea).toHaveValue(/restaurante/i);
   });
