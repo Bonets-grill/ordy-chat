@@ -149,12 +149,15 @@ export async function loginDev(
  * Nombre exacto: ordy_consent_v1 (ver lib/reseller/consent.ts).
  */
 export async function acceptCookiesUpfront(page: Page): Promise<void> {
+  // Playwright.addCookies acepta `url` XOR `domain+path`, nunca ambos.
+  // Pasar ambos en CI (Playwright 1.x) revienta con:
+  //   "Cookie should have either url or path"
+  // El form `url` ya implica path=/ para el host/puerto dado.
   await page.context().addCookies([
     {
       name: "ordy_consent_v1",
       value: "accepted",
       url: "http://localhost:3000",
-      path: "/",
       sameSite: "Lax",
     },
   ]);
