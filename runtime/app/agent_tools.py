@@ -110,14 +110,24 @@ async def crear_handoff(
     priority: str = "normal",
     customer_name: str | None = None,
     conversation_id: UUID | None = None,
+    sandbox: bool = False,
 ) -> dict[str, Any]:
     """Registra solicitud de humano + manda WhatsApp al teléfono humano que
     el tenant configuró en agent_configs.handoff_whatsapp_phone. Si el
-    campo está vacío, solo queda la fila en handoff_requests (legacy)."""
+    campo está vacío, solo queda la fila en handoff_requests (legacy).
+
+    Con sandbox=True (invocación desde /dashboard/playground): el WA SÍ se
+    envía al admin pero con prefijo "🧪 PRUEBA PLAYGROUND" + reason
+    prefijado "[PLAYGROUND]" para que quede visible en dashboard y Mario
+    pueda descartar de las métricas reales con un WHERE reason LIKE ... .
+    """
     if priority not in ("low", "normal", "urgent"):
         priority = "normal"
     if not reason or len(reason.strip()) < 3:
         return {"ok": False, "error": "reason requerido (min 3 chars)"}
+
+    reason_clean = reason.strip()
+    reason_stored = f"[PLAYGROUND] {reason_clean}" if sandbox else reason_clean
 
     pool = await inicializar_pool()
     async with pool.acquire() as conn:
@@ -128,7 +138,7 @@ async def crear_handoff(
             VALUES ($1,$2,$3,$4,$5,$6)
             RETURNING id, created_at
             """,
-            tenant_id, conversation_id, customer_phone, customer_name, reason.strip(), priority,
+            tenant_id, conversation_id, customer_phone, customer_name, reason_stored, priority,
         )
         # Cargar datos del tenant para el envío WA humano.
         tenant_row = await conn.fetchrow(
@@ -162,10 +172,12 @@ async def crear_handoff(
             adapter = obtener_proveedor(tenant_row["provider"] or "whapi", creds, "")
             prio_label = {"low": "🟢", "normal": "🟡", "urgent": "🔴"}.get(priority, "🟡")
             customer_label = customer_name or customer_phone or "cliente"
+            sandbox_header = "🧪 *PRUEBA PLAYGROUND* — ignora si no estabas testeando\n\n" if sandbox else ""
             body = (
+                f"{sandbox_header}"
                 f"{prio_label} *Solicitud de atención* — {tenant_row['tenant_name']}\n\n"
                 f"Cliente: {customer_label}\n"
-                f"Motivo: {reason.strip()}\n"
+                f"Motivo: {reason_clean}\n"
                 f"Prioridad: {priority}\n"
                 f"Handoff id: {handoff_id[:8]}"
             )

@@ -38,8 +38,24 @@ class _FakeTenant:
 
 
 @pytest.mark.asyncio
-async def test_sandbox_solicitar_humano_no_llama_crear_handoff() -> None:
-    with patch.object(brain, "crear_handoff", new=AsyncMock()) as m_handoff, \
+async def test_sandbox_solicitar_humano_llama_crear_handoff_con_flag() -> None:
+    """Desde 21-abr el playground SÍ ejecuta crear_handoff cuando el tool
+    es solicitar_humano, pero le pasa sandbox=True. crear_handoff prefija
+    reason "[PLAYGROUND]" en DB y el WA body con "🧪 PRUEBA PLAYGROUND"
+    para que el admin del tenant pueda verificar end-to-end el envío
+    desde el playground sin ensuciar las métricas reales.
+
+    Otras tools sandbox (crear_pedido, agendar_cita) siguen stubbed — no
+    se inventan pedidos ni citas en DB desde playground.
+    """
+    fake_result = {
+        "ok": True,
+        "handoff_id": "real-uuid-abc123",
+        "priority": "urgent",
+        "reason": "cliente enfadado",
+        "notified_human_phone": True,
+    }
+    with patch.object(brain, "crear_handoff", new=AsyncMock(return_value=fake_result)) as m_handoff, \
          patch.object(brain, "actualizar_nombre_cliente", new=AsyncMock()) as m_name:
         raw = await brain._ejecutar_tool(
             _FakeTenant(),  # type: ignore[arg-type]
@@ -49,16 +65,20 @@ async def test_sandbox_solicitar_humano_no_llama_crear_handoff() -> None:
             sandbox=True,
         )
 
-    assert m_handoff.await_count == 0, "crear_handoff NO debe invocarse en sandbox"
-    assert m_name.await_count == 0, "actualizar_nombre_cliente NO debe invocarse en sandbox"
+    # crear_handoff SÍ se invoca y se le pasa sandbox=True.
+    assert m_handoff.await_count == 1, "crear_handoff SÍ debe invocarse en sandbox"
+    _, kwargs = m_handoff.call_args
+    assert kwargs.get("sandbox") is True, "debe propagarse sandbox=True a crear_handoff"
+    assert kwargs.get("reason") == "cliente enfadado"
+    assert kwargs.get("priority") == "urgent"
+    # La persistencia de nombre NO se corre aquí (atajo antes del bloque
+    # oportunista para evitar contaminar conversations con phones fake).
+    assert m_name.await_count == 0
 
     parsed = json.loads(raw)
     assert parsed["ok"] is True
-    assert parsed["sandbox"] is True
-    assert parsed["handoff_id"].startswith("sandbox-")
-    assert parsed["notified_human_phone"] is False
-    assert parsed["priority"] == "urgent"
-    assert parsed["reason"] == "cliente enfadado"
+    assert parsed["handoff_id"] == "real-uuid-abc123"
+    assert parsed["notified_human_phone"] is True
 
 
 @pytest.mark.asyncio

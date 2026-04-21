@@ -371,7 +371,24 @@ async def _ejecutar_tool(
     En modo sandbox cortocircuitamos ANTES del bloque oportunista de
     `actualizar_nombre_cliente` para evitar contaminar `conversations` con
     customer_phone ficticio, y devolvemos stubs JSON por cada tool.
+
+    EXCEPCIÓN: solicitar_humano en sandbox SÍ se ejecuta — crear_handoff
+    recibe sandbox=True y prefija reason "[PLAYGROUND]" + WA body con
+    "🧪 PRUEBA PLAYGROUND". Así el admin verifica end-to-end desde el
+    /dashboard/playground que el handoff llega a su WhatsApp real, sin
+    confundir handoffs de prueba con los de clientes reales.
     """
+    if sandbox and tool_name == "solicitar_humano":
+        result = await crear_handoff(
+            tenant_id=tenant.id,
+            customer_phone=customer_phone,
+            reason=tool_input.get("reason", ""),
+            priority=tool_input.get("priority") or "normal",
+            customer_name=tool_input.get("customer_name"),
+            sandbox=True,
+        )
+        return json.dumps(result)
+
     if sandbox:
         return _sandbox_tool_stub(tool_name, tool_input)
 
