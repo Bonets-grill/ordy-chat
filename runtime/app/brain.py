@@ -286,8 +286,14 @@ TOOLS: list[dict[str, Any]] = [
             "pide explícitamente ('quiero hablar con una persona'), (b) el cliente está "
             "enfadado y no logras resolver, (c) hay una emergencia o pregunta que requiere "
             "a alguien con autoridad (cambios de política, reembolsos grandes), (d) no "
-            "tienes información para responder con certeza. Después de llamar esta tool, "
-            "dile al cliente que alguien del equipo le escribirá pronto."
+            "tienes información para responder con certeza. "
+            "Después de llamar esta tool, confirma al cliente en UNA SOLA frase corta "
+            "que alguien del equipo le escribirá pronto. Dilo SOLO EN ESE TURNO — "
+            "NO repitas el aviso en los mensajes siguientes. "
+            "En turnos posteriores sigue atendiendo preguntas factuales del cliente "
+            "con normalidad: horario, carta, alergias, dirección, reservas existentes. "
+            "El humano tomará el relevo cuando esté disponible; mientras tanto tú "
+            "sigues ayudando. NO contestes 'alguien te escribirá' a cada mensaje."
         ),
         "input_schema": {
             "type": "object",
