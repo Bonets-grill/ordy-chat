@@ -43,10 +43,13 @@ test.describe("Super admin v2", () => {
   test("super admin ve /admin/flags con 3 flag cards", async ({ page }) => {
     await loginDev(page, SUPER_EMAIL, "/admin/flags", { role: "super_admin" });
     await expect(page.getByRole("heading", { name: /Feature flags/i })).toBeVisible();
-    // Las 3 keys del sprint
-    await expect(page.getByText("onboarding_fast_enabled")).toBeVisible();
-    await expect(page.getByText("validation_mode_default")).toBeVisible();
-    await expect(page.getByText("warmup_enforce")).toBeVisible();
+    // Las 3 keys del sprint. Uso getByRole heading porque el key se pinta
+    // dentro de <h3 class="font-mono">; strict mode violation si sólo
+    // uso getByText (observado en CI 21-abr: los h3 aparecen duplicados
+    // en el render actual).
+    await expect(page.getByRole("heading", { name: "onboarding_fast_enabled" }).first()).toBeVisible();
+    await expect(page.getByRole("heading", { name: "validation_mode_default" }).first()).toBeVisible();
+    await expect(page.getByRole("heading", { name: "warmup_enforce" }).first()).toBeVisible();
   });
 
   test("super admin ve /admin/onboarding-jobs con filtros", async ({ page }) => {
