@@ -64,20 +64,19 @@ test.describe("PWA assets", () => {
     page.on("pageerror", (e) => errors.push(e.message));
     await page.goto("/");
 
-    // waitForFunction hasta que haya registration O timeout (SW puede tardar
-    // más de 1.2s en producción con React 19 + Suspense). El timeout NO es
-    // un fail: el test solo exige "registered", "pending" o "no-sw-api".
+    // Espera blanda: damos ~2s al cliente para montar RegisterSW y que
+    // el navegador registre el SW. NO es assertion de éxito — distintos
+    // agentes y modos (CI headless, WebKit, Firefox) difieren en timing
+    // y disponibilidad. El contrato real del test es: "la página no
+    // emite errores JS al intentar registrar el SW". Ese es el bug que
+    // importa (un throw asíncrono aquí rompería la home para todos).
     const got = await page
-      .waitForFunction(
-        async () => {
-          if (!("serviceWorker" in navigator)) return "no-sw-api";
-          const regs = await navigator.serviceWorker.getRegistrations();
-          return regs.length > 0 ? "registered" : null; // null → sigue polling
-        },
-        undefined,
-        { timeout: 8_000, polling: 300 },
-      )
-      .then((h) => h.jsonValue() as Promise<string>)
+      .evaluate(async () => {
+        if (!("serviceWorker" in navigator)) return "no-sw-api";
+        await new Promise((r) => setTimeout(r, 2000));
+        const regs = await navigator.serviceWorker.getRegistrations();
+        return regs.length > 0 ? "registered" : "pending";
+      })
       .catch(() => "pending");
 
     expect(["registered", "pending", "no-sw-api"]).toContain(got);

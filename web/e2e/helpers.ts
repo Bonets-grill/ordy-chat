@@ -135,18 +135,34 @@ export async function loginDev(
     },
   ]);
 
+  await acceptCookiesUpfront(page);
   await page.goto(redirectTo);
   await expect(page).not.toHaveURL(/\/signin/, { timeout: 10_000 });
-  await dismissCookieBanner(page);
 }
 
 /**
- * Cierra el banner de consentimiento de cookies si está visible. Lo pintan
- * todas las rutas (vía layout); intercepta clicks en tests que interactúan
- * con elementos en la parte inferior de la página (wizard, export).
+ * Inyecta el cookie de consentimiento ANTES de cualquier navegación, de
+ * modo que el banner (components/cookie-consent.tsx) nunca se renderice
+ * y no intercepte clicks sobre elementos en la parte inferior del
+ * viewport (CTAs, Siguiente del wizard, botones de chip en el hero).
  *
- * El banner (components/cookie-consent.tsx) tiene role=dialog con aria-label
- * "Consentimiento de cookies" y un botón primario "Aceptar todo".
+ * Nombre exacto: ordy_consent_v1 (ver lib/reseller/consent.ts).
+ */
+export async function acceptCookiesUpfront(page: Page): Promise<void> {
+  await page.context().addCookies([
+    {
+      name: "ordy_consent_v1",
+      value: "accepted",
+      url: "http://localhost:3000",
+      path: "/",
+      sameSite: "Lax",
+    },
+  ]);
+}
+
+/**
+ * Cierra el banner de consentimiento si ya está montado (rescue path).
+ * El camino preferido es acceptCookiesUpfront, que previene que aparezca.
  */
 export async function dismissCookieBanner(page: Page): Promise<void> {
   const dialog = page.getByRole("dialog", { name: /Consentimiento de cookies/i });
@@ -168,7 +184,6 @@ export async function completarWizard(
   opts: { businessName: string; agentName: string },
 ) {
   await expect(page.getByRole("heading", { name: /Vamos a crear tu agente/i })).toBeVisible();
-  await dismissCookieBanner(page);
 
   // Helper: espera a que Siguiente esté habilitado y hace click. El wizard
   // deshabilita el botón hasta que el paso valida (canNext). React 19 con

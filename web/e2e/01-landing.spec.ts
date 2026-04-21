@@ -1,6 +1,15 @@
 import { expect, test } from "@playwright/test";
+import { acceptCookiesUpfront } from "./helpers";
 
 test.describe("Landing", () => {
+  // Pre-inyecta el cookie de consentimiento en cada test de la suite para
+  // que el banner nunca se pinte y no intercepte clicks sobre CTAs / chips.
+  // Observado en CI headless: el banner aparece con delay y bloquea el click
+  // en "Restaurante" (test 3).
+  test.beforeEach(async ({ page }) => {
+    await acceptCookiesUpfront(page);
+  });
+
   test("hero carga con título, pricing y CTA primario", async ({ page }) => {
     await page.goto("/");
     // H1 actualizado 2026-04-20: "El agente de WhatsApp — que entiende tu restaurante".
