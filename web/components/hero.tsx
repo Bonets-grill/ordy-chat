@@ -219,7 +219,7 @@ export function Hero() {
         </p>
 
         <p className="mt-6 text-sm text-white/50">
-          7 días gratis — luego <span className="font-semibold text-white">€19.90/mes</span>.
+          7 días gratis — luego <span className="font-semibold text-white">€49.90/mes</span>.
           Cancela cuando quieras.
         </p>
       </div>

@@ -66,7 +66,7 @@ export async function POST(req: Request) {
         const tenantId = sess.metadata?.tenant_id;
         const orderId = sess.metadata?.order_id;
 
-        // Flow A: suscripción del tenant (€19.90/mes).
+        // Flow A: suscripción del tenant (€49.90/mes).
         if (tenantId && sess.subscription) {
           const subId = typeof sess.subscription === "string" ? sess.subscription : sess.subscription.id;
           const sub = await stripe.subscriptions.retrieve(subId);

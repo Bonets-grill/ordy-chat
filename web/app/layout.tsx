@@ -9,7 +9,7 @@ import { Providers } from "./providers";
 export const metadata: Metadata = {
   title: "Ordy Chat — IA especializada para restaurantes en WhatsApp",
   description:
-    "Agentes de WhatsApp entrenados para hostelería: reservas, carta, pedidos, maridajes y alergias. Setup en 5 minutos. €19.90/mes, 7 días gratis.",
+    "Agentes de WhatsApp entrenados para hostelería: reservas, carta, pedidos, maridajes y alergias. Setup en 5 minutos. €49.90/mes, 7 días gratis.",
   applicationName: "Ordy Chat",
   appleWebApp: {
     capable: true,
@@ -22,7 +22,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "Ordy Chat — IA especializada para restaurantes",
     description:
-      "Reservas, carta, pedidos y maridajes por WhatsApp. Entrenado solo para hostelería. €19.90/mes.",
+      "Reservas, carta, pedidos y maridajes por WhatsApp. Entrenado solo para hostelería. €49.90/mes.",
     type: "website",
   },
 };

@@ -24,7 +24,7 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-xl font-semibold text-neutral-900">3. Suscripción y pagos</h2>
-            <p>El precio es €19.90/mes, facturado por Stripe. Ofrecemos 7 días de prueba gratuita al inicio. Puedes cancelar cuando quieras desde tu panel; la suscripción queda activa hasta el final del periodo pagado.</p>
+            <p>El precio es €49.90/mes, facturado por Stripe. Ofrecemos 7 días de prueba gratuita al inicio. Puedes cancelar cuando quieras desde tu panel; la suscripción queda activa hasta el final del periodo pagado.</p>
           </section>
 
           <section>

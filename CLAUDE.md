@@ -4,7 +4,7 @@ Guía para Claude Code al trabajar en este repo.
 
 ## Qué es este proyecto
 
-Ordy Chat es un **SaaS multi-tenant** (€19.90/mes) que deja a cualquier negocio tener su propio agente de WhatsApp con IA. El onboarding ya NO es por CLI de Claude Code — se hace desde la web.
+Ordy Chat es un **SaaS multi-tenant** (€49.90/mes) que deja a cualquier negocio tener su propio agente de WhatsApp con IA. El onboarding ya NO es por CLI de Claude Code — se hace desde la web.
 
 ## Estructura
 

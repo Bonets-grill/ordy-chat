@@ -2,7 +2,7 @@
 
 **Plataforma SaaS multi-tenant para que cualquier negocio tenga su agente de WhatsApp con IA en 5 minutos.**
 
-€19.90/mes · 7 días de prueba gratis · Funciona en cualquier nicho.
+€49.90/mes · 7 días de prueba gratis · Funciona en cualquier nicho.
 
 ---
 

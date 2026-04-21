@@ -1,4 +1,4 @@
-// web/lib/stripe.ts — Cliente Stripe + helpers para la suscripción €19.90/mes.
+// web/lib/stripe.ts — Cliente Stripe + helpers para la suscripción €49.90/mes.
 
 import Stripe from "stripe";
 import { db } from "./db";
