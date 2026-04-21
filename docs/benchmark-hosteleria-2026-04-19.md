@@ -4,7 +4,7 @@
 **Contexto:** Ordy Chat pivotó a especialización hostelería hoy. Este doc analiza los 23 competidores del mercado ES + intl para identificar qué tienen que nosotros no y dónde están nuestras ventajas reales.
 
 **Ordy Chat estado live (post-deploy c5289d3):**
-- €19.90/mes + 3 add-ons (Pedidos, KDS, POS a €9.90/9.90/19.90).
+- €49.90/mes + 3 add-ons (Pedidos, KDS, POS a €9.90/9.90/49.90).
 - Agente Claude 4.5/Haiku 4.5 multi-provider (Whapi + Meta Cloud + Twilio).
 - KDS cocina/bar realtime ✅ (live hoy).
 - Reservas UI con state machine ✅ (live hoy).
@@ -16,7 +16,7 @@
 
 ## 1. TL;DR ejecutivo
 
-**Nuestro posicionamiento**: el más barato de los especialistas hostelería ES (€19.90 vs €67 Gastrochat, €100 MesaBot, €149 Mesaking), con tecnología Claude superior a reglas tradicionales, y multicanal (WA + webchat) de serie. Hoy somos ya competitivos en el segmento indie.
+**Nuestro posicionamiento**: el más barato de los especialistas hostelería ES (€49.90 vs €67 Gastrochat, €100 MesaBot, €149 Mesaking), con tecnología Claude superior a reglas tradicionales, y multicanal (WA + webchat) de serie. Hoy somos ya competitivos en el segmento indie.
 
 **Gaps top-3 que nos impiden ganar restaurantes premium/turísticos**:
 1. **Sin canal VOZ** (teléfono). 60%+ de reservas indie todavía entran por llamada. Slang/Hostie/Newo cobran $199-599/mes solo por esto. Twilio Voice + Claude = feature construible en 2 sprints.
@@ -46,7 +46,7 @@
 | **Gastrochat** | desde 67€ | Indies (80+ clientes) | Campañas, gestión reviews Google, CRM | Sin AI sommelier, sin voz |
 | **Haleteo** | 50-1000+ | Pymes→corporate | Multi-canal (WA+web+email+voz), integra CRM/ERP | Precio custom opaco |
 
-**Observación**: los especialistas ES se mueven €67-300/mes. Nosotros a €19.90 estamos rompiendo el suelo. Riesgo: parecer low-cost y ahuyentar premium. Mitigación: pricing tier €49-79 para "Pro" con integraciones.
+**Observación**: los especialistas ES se mueven €67-300/mes. Nosotros a €49.90 estamos rompiendo el suelo. Riesgo: parecer low-cost y ahuyentar premium. Mitigación: pricing tier €49-79 para "Pro" con integraciones.
 
 ### Tier B — Plataformas reservas con add-on IA/WA
 
@@ -118,7 +118,7 @@ Leyenda: ✅ = sí / ⚠ = parcial / ❌ = no / 🚫 = N/A
 | Validador calidad LLM-judge | **✅ único** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Onboarding scraping auto | **✅ único** | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Alergias CRM profundo | ⚠ | ⚠ | ✅ | ⚠ | ✅ | ⚠ | ⚠ | ⚠ |
-| Precio entrada €/mes | **19.90** | 149 | 100 | 67 | 99 | 30 | 50 | 399$ |
+| Precio entrada €/mes | **49.90** | 149 | 100 | 67 | 99 | 30 | 50 | 399$ |
 
 **Conclusión gráfica**: 7 gaps críticos vs tier A (Mesaking/Gastrochat/MesaBot). 5 ventajas únicas nuestras.
 
@@ -240,7 +240,7 @@ Leyenda: ✅ = sí / ⚠ = parcial / ❌ = no / 🚫 = N/A
 
 Estas son las trincheras defensibles:
 
-### 5.1 Precio de entrada €19.90 ⚔️
+### 5.1 Precio de entrada €49.90 ⚔️
 3x más barato que Gastrochat. 5x que MesaBot. 8x que Mesaking. **Abrimos segmento indie/bar/cafetería que hoy nadie sirve bien**. Riesgo: percepción low-cost. Mitigación: tier Pro €49-79 con integraciones.
 
 ### 5.2 Claude como LLM principal (4.7 Opus / 4.5 Sonnet / 4.5 Haiku) ⚔️
@@ -300,18 +300,18 @@ Principio: cerrar gaps por **impacto revenue × esfuerzo**. No queremos 20 featu
 
 ---
 
-## 7. Pricing position — dónde metemos €19.90
+## 7. Pricing position — dónde metemos €49.90
 
 ```
 €0                 €50               €100              €200              €500+
 │                   │                  │                  │                  │
-Ordy €19.90  Revo €49  Gastrochat €67  MesaBot €100  Mesaking €149  CoverManager €99-349+1.50/resv
+Ordy €49.90  Revo €49  Gastrochat €67  MesaBot €100  Mesaking €149  CoverManager €99-349+1.50/resv
              Qamarero €100            CoverManager €99
                                       TheFork €75+
 ```
 
 **Observaciones**:
-1. **Desierto €20-49**: nadie está ahí. Oportunidad para un **Starter €9.90** y el **Base €19.90** actual.
+1. **Desierto €20-49**: nadie está ahí. Oportunidad para un **Starter €9.90** y el **Base €49.90** actual.
 2. **Sweet spot €49-79**: aquí deberíamos meter un **Pro** con voz + integraciones + campañas. Ningún especialista IA lo ocupa con seriedad.
 3. **€100+ es donde compiten Mesaking/CoverManager/SevenRooms**. Ir ahí requiere enterprise features (multi-local, SLA).
 
@@ -320,7 +320,7 @@ Ordy €19.90  Revo €49  Gastrochat €67  MesaBot €100  Mesaking €149  Co
 | Tier | Precio | Incluye | Segmento |
 |---|---|---|---|
 | Starter | €9.90/mes | WA agente básico + webchat + 500 conv | Bar barrio, café |
-| **Base** | **€19.90/mes** | Todo Starter + reservas + KDS + pedidos + 2000 conv | Restaurante indie ← actual |
+| **Base** | **€49.90/mes** | Todo Starter + reservas + KDS + pedidos + 2000 conv | Restaurante indie ← actual |
 | Pro | €59/mes | Base + voz teléfono + integración CoverManager + campañas + 5000 conv | Fine-dining, turismo |
 | Enterprise | custom | Pro + multi-local + SLA + white-label | Grupos 3+ locales |
 

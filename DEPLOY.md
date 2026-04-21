@@ -10,7 +10,7 @@ Guía paso a paso para poner Ordy Chat en producción. Tiempo estimado: **40 min
 | [Vercel](https://vercel.com) | $0 hobby | Hospedar `web/` (Next.js) |
 | [Railway](https://railway.app) | $5/mes min | Hospedar `runtime/` (FastAPI Python) |
 | [Anthropic](https://platform.anthropic.com) | pay-as-you-go | API de Claude |
-| [Stripe](https://stripe.com) | comisión sobre ventas | Cobrar €19.90/mes |
+| [Stripe](https://stripe.com) | comisión sobre ventas | Cobrar €49.90/mes |
 | [Resend](https://resend.com) | $0 / 3k emails mes | Emails de magic link |
 
 Cuenta de GitHub: ya tienes el repo en `Bonets-grill/ordy-chat`.
@@ -41,7 +41,7 @@ Abre `SECRETS-GENERATED.txt` (local, no está en git). Contiene:
 1. Entra a [stripe.com](https://stripe.com), crea cuenta. Empieza en **modo test**.
 2. **Productos → Añadir producto**:
    - Nombre: `Ordy Chat Pro`
-   - Precio: `19.90 EUR`, recurrente mensual
+   - Precio: `49.90 EUR`, recurrente mensual
    - Guardar → copia el `price_...` ID
 3. **Developers → API keys**: copia `sk_test_...`
 4. **Developers → Webhooks → Add endpoint**:

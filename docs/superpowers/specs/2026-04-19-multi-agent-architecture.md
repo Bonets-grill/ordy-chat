@@ -221,7 +221,7 @@ Todas deben pasar en staging antes de cutover de un tenant.
 3. ¿Cache de respuestas de agentes (mismo input → misma respuesta)? Cuidado: privacy + frescura.
 4. ¿Qué hacer si un agente falla (timeout, error)? ¿Responder parcial, o pedir disculpas, o bloquear el flujo?
 5. ¿Promptfoo evals se ejecutan en CI pre-merge o post-merge monitoreando drift?
-6. Pricing: si mantenemos €19.90 base + add-ons €9.90, y ahora la base NO incluye reservas (add-on), ¿suben el base a €24.90 para compensar?
+6. Pricing: si mantenemos €49.90 base + add-ons €9.90, y ahora la base NO incluye reservas (add-on), ¿suben el base a €24.90 para compensar?
 
 ---
 

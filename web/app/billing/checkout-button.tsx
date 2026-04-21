@@ -23,7 +23,7 @@ export function CheckoutButton() {
   return (
     <div>
       <Button variant="brand" size="lg" onClick={go} disabled={loading}>
-        {loading ? "Redirigiendo…" : "Activar €19.90/mes"}
+        {loading ? "Redirigiendo…" : "Activar €49.90/mes"}
       </Button>
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
     </div>

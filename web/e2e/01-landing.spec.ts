@@ -15,7 +15,7 @@ test.describe("Landing", () => {
     // H1 actualizado 2026-04-20: "El agente de WhatsApp — que entiende tu restaurante".
     // Matcheamos el trozo estable "que entiende tu restaurante" del gradient span.
     await expect(page.getByRole("heading", { name: /que entiende tu restaurante/i })).toBeVisible();
-    await expect(page.getByText(/€19\.90/i).first()).toBeVisible();
+    await expect(page.getByText(/€49\.90/i).first()).toBeVisible();
     // Botón real en PricingCard: "Empezar los 7 días gratis". Se usa first() porque
     // hay múltiples CTAs en la landing y cualquiera de ellos cumple el contrato.
     await expect(page.getByRole("link", { name: /Empezar/i }).first()).toBeVisible();

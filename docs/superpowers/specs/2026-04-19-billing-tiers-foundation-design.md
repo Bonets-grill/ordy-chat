@@ -32,7 +32,7 @@ Esto es la capa cimiento. Los otros 6 sub-sprints (portal self-service, Starter 
 | Q | Decisión | Justificación |
 |---|---------|---------------|
 | Q1 | Pricing direction: **3 tiers con upgrade/downgrade en portal futuro** | Producto va hacia segmentación por segmento de cliente. |
-| Q2 | **Starter €9.90 / Pro €19.90 / Business €49.90** — cubre SMB hasta premium | Tiers con diferenciación clara. Business depende de features futuras (sub-sprints 4-7). |
+| Q2 | **Starter €9.90 / Pro €49.90 / Business €49.90** — cubre SMB hasta premium | Tiers con diferenciación clara. Business depende de features futuras (sub-sprints 4-7). |
 | Q3 | **Billing-tiers-foundation ONLY** (este spec). Feature gates + white-label + custom domain + public API + priority support decomposed en sub-sprints 3-7 | Evita mega-spec. Cada sub-sprint revisable, shippable, atómico. |
 | Q4 | **Grandfather zero-disrupción**: current Stripe price se convierte en Pro price. Migración DB pone `tier='pro'` en todos los tenants existentes. | Cero churn, cero re-auth de card, cero cancellation risk. |
 | Q5 | **Onboarding default Pro** (sin picker). Sub-sprint 2 añade portal post-signup para cambiar. | Preserva promesa "<2 min al QR". |
@@ -75,7 +75,7 @@ export async function priceIdToTier(priceId: string): Promise<Tier | null> {
 |---|---|---|
 | `STRIPE_PRICE_ID` | **Preservado como alias de `STRIPE_PRICE_ID_PRO`** para compatibilidad con código Checkout existente | Existe |
 | `STRIPE_PRICE_ID_STARTER` | Stripe Price ID tier Starter (€9.90/mo) | NUEVO |
-| `STRIPE_PRICE_ID_PRO` | Stripe Price ID tier Pro (€19.90/mo, == actual `STRIPE_PRICE_ID`) | NUEVO |
+| `STRIPE_PRICE_ID_PRO` | Stripe Price ID tier Pro (€49.90/mo, == actual `STRIPE_PRICE_ID`) | NUEVO |
 | `STRIPE_PRICE_ID_BUSINESS` | Stripe Price ID tier Business (€49.90/mo) | NUEVO |
 
 **Fallback pattern.** Igual que `stripePriceId()` actual: primero env var, después `platform_settings` encrypted. Consistente con `stripeSecretKey`, `stripeWebhookSecret`.
@@ -89,7 +89,7 @@ Pasos que Mario ejecuta en Stripe Dashboard ANTES de deployear el webhook extend
 1. **Product "Ordy Chat Subscription"** ya existe (current). NO se crea nuevo product.
 2. **Crear Stripe Price `Starter`**: €9.90/mo EUR recurring, attached al mismo Product. Copiar `price_xxx` → env `STRIPE_PRICE_ID_STARTER`.
 3. **Crear Stripe Price `Business`**: €49.90/mo EUR recurring, attached al mismo Product. Copiar `price_xxx` → env `STRIPE_PRICE_ID_BUSINESS`.
-4. **Renombrar Stripe Price actual** (el de €19.90/mo) a nickname `Pro` desde el dashboard. Su ID no cambia. Copiar ese ID (== current `STRIPE_PRICE_ID`) también a `STRIPE_PRICE_ID_PRO`.
+4. **Renombrar Stripe Price actual** (el de €49.90/mo) a nickname `Pro` desde el dashboard. Su ID no cambia. Copiar ese ID (== current `STRIPE_PRICE_ID`) también a `STRIPE_PRICE_ID_PRO`.
 5. Añadir los 3 envs a Vercel project settings (prod + preview).
 
 Steps 2-5 se documentan en `docs/superpowers/runbooks/billing-tiers-foundation-ops.md` (nuevo, creado durante la fase 0 del build).
@@ -380,7 +380,7 @@ Cada uno de #2-#7 tendrá su propio spec + blueprint + /autoplan + ejecución cu
 | Tenant existente con `stripeSubscriptionId IS NULL` (estado trial sin card) tras migración 016 — `stripe_price_id` sigue NULL indefinidamente | OK. Nullable por diseño (§4 nota). Cuando completen checkout, el webhook rellena. |
 | Stripe webhook llega antes que la migración 016 (race durante deploy) | Fase 1 (migración) ejecuta ANTES que Fase 3 (código webhook). Los tenants ya tienen `tier` populated antes de que el webhook extendido esté live. |
 | Alguien crea un Stripe Price experimental atado al mismo Product — webhook NO modifica tier, pero admin puede preguntarse por qué no refleja | Log WARNING en webhook + `stripe_price_id` NO actualizado es la señal. Documentado en runbook. Admin debe añadir env var o borrar el price. |
-| Mario cambia el €19.90 de Pro a €24.90 en el futuro — tenants actuales heredan nuevo precio porque están en el mismo Stripe Price | **Expected behavior** per Q4 opción A. Si quisiera grandfather price-lock, era Q4 opción B. Documentado. |
+| Mario cambia el €49.90 de Pro a €24.90 en el futuro — tenants actuales heredan nuevo precio porque están en el mismo Stripe Price | **Expected behavior** per Q4 opción A. Si quisiera grandfather price-lock, era Q4 opción B. Documentado. |
 | Query lenta tras millones de tenants en `idx_tenants_tier` | Index ya definido. Postgres maneja millones sin problema con este index. Revisitable si llega el escalado. |
 | `updates` object en TS con `Partial<typeof tenants.$inferInsert>` no type-checks bien | Alternativa: construir 2 objects separados (uno con tier, otro sin) y usar `...spread`. Micro-detail, no blocker. |
 

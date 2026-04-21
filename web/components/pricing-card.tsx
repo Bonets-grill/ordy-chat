@@ -60,7 +60,7 @@ const ADD_ONS: AddOn[] = [
     icon: ReceiptText,
     tone: "amber",
     title: "POS + reportes",
-    price: "+€19.90",
+    price: "+€49.90",
     cadence: "/mes",
     copy: "Ventas, estadísticas diarias y por turno. Cierre de caja enviado por email o WhatsApp.",
     features: [
@@ -101,7 +101,7 @@ export function PricingCard() {
                   <div className="mt-1 text-sm text-white/50">Incluye todo lo esencial</div>
                 </div>
                 <div className="text-right">
-                  <div className="text-5xl font-semibold tracking-tight text-white">€19.90</div>
+                  <div className="text-5xl font-semibold tracking-tight text-white">€49.90</div>
                   <div className="text-sm text-white/50">/mes</div>
                 </div>
               </div>
