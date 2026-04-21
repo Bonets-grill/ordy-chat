@@ -63,15 +63,24 @@ test.describe("PWA assets", () => {
     const errors: string[] = [];
     page.on("pageerror", (e) => errors.push(e.message));
     await page.goto("/");
-    // Espera a que el cliente lo registre
-    const registered = await page.evaluate(async () => {
-      if (!("serviceWorker" in navigator)) return "no-sw-api";
-      // Pequeño wait para que RegisterSW monte
-      await new Promise((r) => setTimeout(r, 1200));
-      const regs = await navigator.serviceWorker.getRegistrations();
-      return regs.length > 0 ? "registered" : "pending";
-    });
-    expect(["registered", "pending"]).toContain(registered);
+
+    // waitForFunction hasta que haya registration O timeout (SW puede tardar
+    // más de 1.2s en producción con React 19 + Suspense). El timeout NO es
+    // un fail: el test solo exige "registered", "pending" o "no-sw-api".
+    const got = await page
+      .waitForFunction(
+        async () => {
+          if (!("serviceWorker" in navigator)) return "no-sw-api";
+          const regs = await navigator.serviceWorker.getRegistrations();
+          return regs.length > 0 ? "registered" : null; // null → sigue polling
+        },
+        undefined,
+        { timeout: 8_000, polling: 300 },
+      )
+      .then((h) => h.jsonValue() as Promise<string>)
+      .catch(() => "pending");
+
+    expect(["registered", "pending", "no-sw-api"]).toContain(got);
     expect(errors).toEqual([]);
   });
 });

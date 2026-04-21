@@ -1,10 +1,10 @@
 import { expect, test } from "@playwright/test";
-import { completarWizard, freshEmail, loginDev } from "./helpers";
+import { completarWizard, seedUser, loginDev } from "./helpers";
 
 test.describe("Exportar CSV de conversaciones", () => {
-  test("endpoint /api/conversations/export devuelve CSV con header", async ({ page, request }) => {
-    const email = freshEmail("csv");
-    await loginDev(page, email, "/onboarding");
+  test("endpoint /api/conversations/export devuelve CSV con header", async ({ page }) => {
+    const user = await seedUser("csv");
+    await loginDev(page, user.email, "/onboarding?legacy=1", { userId: user.id });
     await completarWizard(page, { businessName: "CSV Negocio", agentName: "Astro" });
 
     // Reusa las cookies de sesión del contexto del navegador

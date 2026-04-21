@@ -1,22 +1,34 @@
 import { expect, test } from "@playwright/test";
-import { freshEmail, loginDev } from "./helpers";
+import { seedUser, loginDev } from "./helpers";
 
 test.describe("Wizard paso 7 — Knowledge", () => {
   test("entra en modo web, permite conmutar a manual y volver", async ({ page }) => {
-    const email = freshEmail("knowledge");
-    await loginDev(page, email, "/onboarding");
+    const user = await seedUser("knowledge");
+    await loginDev(page, user.email, "/onboarding?legacy=1", { userId: user.id });
+
+    // Helper local: espera Siguiente habilitado + click. Evita races en
+    // React 19 concurrent rendering donde fill() difiere el re-render.
+    const next = async () => {
+      const btn = page.getByRole("button", { name: "Siguiente", exact: true });
+      await expect(btn).toBeEnabled({ timeout: 10_000 });
+      await btn.click();
+    };
 
     // Avanzar hasta el paso 7
     await page.getByPlaceholder("Nombre del negocio").fill("Knowledge Test");
-    await page.getByRole("button", { name: /Siguiente/i }).click();
+    await next();
     await page.getByPlaceholder(/Qué vendes/i).fill("Descripción de prueba para llegar al paso 7.");
-    await page.getByRole("button", { name: /Siguiente/i }).click();
+    await next();
     await page.getByRole("button", { name: "Responder preguntas frecuentes" }).click();
-    await page.getByRole("button", { name: /Siguiente/i }).click();
+    await next();
     await page.getByPlaceholder("Nombre del agente").fill("KB");
-    await page.getByRole("button", { name: /Siguiente/i }).click();
-    await page.getByRole("button", { name: /Siguiente/i }).click();
-    await page.getByRole("button", { name: /Siguiente/i }).click();
+    await next();
+    // Paso 5 — tono (seleccionar Amigable explícito)
+    await page.getByRole("button", { name: "Amigable", exact: false }).first().click();
+    await next();
+    // Paso 6 — horario (min 3 chars)
+    await page.getByPlaceholder(/Lunes a Viernes/i).fill("L-V 10-18");
+    await next();
 
     // Estamos en el paso 7 — modo web por defecto
     await expect(page.getByRole("heading", { name: /Conecta tu web y lo extraemos todo/i })).toBeVisible();

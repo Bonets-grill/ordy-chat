@@ -26,18 +26,22 @@ test.describe("Super admin v2", () => {
   });
 
   test("super admin ve /admin con las KPI cards nuevas", async ({ page }) => {
-    await loginDev(page, SUPER_EMAIL, "/admin");
+    await loginDev(page, SUPER_EMAIL, "/admin", { role: "super_admin" });
     await expect(page.getByRole("heading", { name: /Super Admin/i })).toBeVisible();
     // Nuevo título de sección de Fase 5
     await expect(page.getByRole("heading", { name: /Operaciones/i })).toBeVisible();
     // Links de navegación añadidos
-    await expect(page.getByRole("link", { name: /Onboarding jobs/i })).toBeVisible();
-    await expect(page.getByRole("link", { name: /Instancias/i })).toBeVisible();
-    await expect(page.getByRole("link", { name: /Feature flags/i })).toBeVisible();
+    // Uso exact:true porque el panel tiene DOS links con "Onboarding jobs":
+    // uno en sidebar (exacto) y otro en StatLink "Onboarding jobs 24h".
+    // El sidebar usa labels: "Onboarding jobs", "Instancias WA",
+    // "Feature flags" — ver components/admin-shell.tsx.
+    await expect(page.getByRole("link", { name: "Onboarding jobs", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Instancias WA", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Feature flags", exact: true })).toBeVisible();
   });
 
   test("super admin ve /admin/flags con 3 flag cards", async ({ page }) => {
-    await loginDev(page, SUPER_EMAIL, "/admin/flags");
+    await loginDev(page, SUPER_EMAIL, "/admin/flags", { role: "super_admin" });
     await expect(page.getByRole("heading", { name: /Feature flags/i })).toBeVisible();
     // Las 3 keys del sprint
     await expect(page.getByText("onboarding_fast_enabled")).toBeVisible();
@@ -46,14 +50,14 @@ test.describe("Super admin v2", () => {
   });
 
   test("super admin ve /admin/onboarding-jobs con filtros", async ({ page }) => {
-    await loginDev(page, SUPER_EMAIL, "/admin/onboarding-jobs");
+    await loginDev(page, SUPER_EMAIL, "/admin/onboarding-jobs", { role: "super_admin" });
     await expect(page.getByRole("heading", { name: /Onboarding jobs/i })).toBeVisible();
     // Chip 'Todos' debe estar visible
     await expect(page.getByRole("link", { name: /^Todos$/ })).toBeVisible();
   });
 
   test("super admin ve /admin/instances con tabla", async ({ page }) => {
-    await loginDev(page, SUPER_EMAIL, "/admin/instances");
+    await loginDev(page, SUPER_EMAIL, "/admin/instances", { role: "super_admin" });
     await expect(page.getByRole("heading", { name: /Instancias WhatsApp/i })).toBeVisible();
     // Filtros de tier visibles
     await expect(page.getByRole("link", { name: /^fresh$/ })).toBeVisible();

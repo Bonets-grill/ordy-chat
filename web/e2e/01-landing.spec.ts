@@ -13,13 +13,20 @@ test.describe("Landing", () => {
   });
 
   test("navegación interna y páginas legales responden 200", async ({ page }) => {
-    await page.goto("/pricing");
-    await expect(page.getByRole("heading", { name: /Un precio\. Sin trucos\./i })).toBeVisible();
+    // waitUntil "domcontentloaded" evita net::ERR_ABORTED cuando Playwright
+    // inicia el siguiente goto() mientras aún hay requests en vuelo del
+    // anterior (client JS del cookie-consent, prefetch, analytics).
+    // El heading H1 se emite en el HTML inicial, no necesitamos "load".
+    await page.goto("/pricing", { waitUntil: "domcontentloaded" });
+    // H1 actual: "Un precio base. *Crece con add-ons.*" (post-pivot add-ons
+    // 2026-04-20). Matcheamos el trozo estable "Un precio" que aguanta
+    // ambos copys (anterior "Un precio. Sin trucos." y actual con add-ons).
+    await expect(page.getByRole("heading", { name: /Un precio/i })).toBeVisible();
 
-    await page.goto("/terms");
+    await page.goto("/terms", { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("heading", { name: /Términos y condiciones/i })).toBeVisible();
 
-    await page.goto("/privacy");
+    await page.goto("/privacy", { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("heading", { name: /Política de privacidad/i })).toBeVisible();
   });
 

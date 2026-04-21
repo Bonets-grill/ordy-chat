@@ -5,9 +5,11 @@ const SUPER_ADMIN_EMAIL = process.env.SUPER_ADMIN_EMAIL ?? "mtmbdeals@gmail.com"
 
 test.describe("Super admin", () => {
   test("el SUPER_ADMIN_EMAIL accede a /admin y ve panel global", async ({ page }) => {
-    await loginDev(page, SUPER_ADMIN_EMAIL, "/admin");
+    await loginDev(page, SUPER_ADMIN_EMAIL, "/admin", { role: "super_admin" });
     await expect(page.getByRole("heading", { name: "Super Admin" })).toBeVisible();
-    await expect(page.getByText(/Tenants totales/i)).toBeVisible();
+    // Heading de la sección "Tenants recientes" post-rediseño /admin (2026-04-20).
+    // Antes decía "Tenants totales" como label de stat.
+    await expect(page.getByRole("heading", { name: /Tenants recientes/i })).toBeVisible();
   });
 
   test("usuario normal redirige a dashboard al intentar /admin", async ({ page }) => {
