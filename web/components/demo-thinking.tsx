@@ -195,11 +195,18 @@ export function DemoThinking() {
     }, STEP_MS * (m.flow.length + 1));
   }, []);
 
-  // Auto-play de la conversación canned
+  // Auto-play de la conversación canned.
+  //
+  // Safari fix 2026-04-21: el primer mensaje se pushea con delay 0 en vez
+  // de 600ms. Safari desktop puede retrasar setTimeout si el tab pierde
+  // foco un instante justo tras el load (observado en reporte de Mario:
+  // chat vacío + botón Enviar disabled + 0/9 nodos aunque usuario llevaba
+  // ~segundos en la página). Con delay 0 el primer mensaje sale en el
+  // mismo tick y el usuario siempre ve actividad desde el primer frame.
   React.useEffect(() => {
     if (userInteracted) return;
     if (messages.length >= CANNED.length) return;
-    const delay = messages.length === 0 ? 600 : AUTO_NEXT_MS;
+    const delay = messages.length === 0 ? 0 : AUTO_NEXT_MS;
     const id = setTimeout(() => {
       if (!userInteracted) pushMessage(CANNED[messages.length]);
     }, delay);
