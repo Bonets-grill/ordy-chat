@@ -6,7 +6,7 @@ import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { orders } from "@/lib/db/schema";
-import { requireTenant } from "@/lib/tenant";
+import { requireTenantOrKiosk } from "@/lib/kiosk-auth";
 
 export const runtime = "nodejs";
 
@@ -17,7 +17,7 @@ const NEXT_STATUS: Record<string, string | undefined> = {
 };
 
 export async function POST(req: Request) {
-  const bundle = await requireTenant();
+  const bundle = await requireTenantOrKiosk(req);
   if (!bundle) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }

@@ -7,12 +7,12 @@ import { NextResponse } from "next/server";
 import { and, asc, eq, gte } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { appointments } from "@/lib/db/schema";
-import { requireTenant } from "@/lib/tenant";
+import { requireTenantOrKiosk } from "@/lib/kiosk-auth";
 
 export const runtime = "nodejs";
 
 export async function GET(req: Request) {
-  const bundle = await requireTenant();
+  const bundle = await requireTenantOrKiosk(req);
   if (!bundle) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   const url = new URL(req.url);

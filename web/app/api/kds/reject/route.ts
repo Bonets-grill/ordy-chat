@@ -12,7 +12,7 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { agentConfigs, orders } from "@/lib/db/schema";
-import { requireTenant } from "@/lib/tenant";
+import { requireTenantOrKiosk } from "@/lib/kiosk-auth";
 
 export const runtime = "nodejs";
 
@@ -66,7 +66,7 @@ const rejectSchema = z.object({
 );
 
 export async function POST(req: Request) {
-  const bundle = await requireTenant();
+  const bundle = await requireTenantOrKiosk(req);
   if (!bundle) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   const parsed = rejectSchema.safeParse(await req.json().catch(() => null));

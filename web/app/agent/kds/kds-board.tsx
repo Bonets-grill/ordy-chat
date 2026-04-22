@@ -89,7 +89,7 @@ const STATUS_TONE: Record<OrderStatus, { card: string; badge: string }> = {
   served: { card: "bg-neutral-50 border-neutral-200", badge: "bg-neutral-100 text-neutral-700" },
 };
 
-export function KdsBoard() {
+export function KdsBoard({ kioskToken }: { kioskToken?: string } = {}) {
   const [station, setStation] = React.useState<Station>("all");
   const [orders, setOrders] = React.useState<KdsOrder[]>([]);
   const [reservations, setReservations] = React.useState<KdsReservation[]>([]);
@@ -100,10 +100,18 @@ export function KdsBoard() {
   // pedidos/reservas de playground (is_test=true) hasta que el admin activa esto.
   const [includeTest, setIncludeTest] = React.useState<boolean>(false);
 
+  // Mig 030: cuando montamos esto desde /kiosk/<token> mandamos el token en
+  // headers para que las rutas /api/kds/* autentiquen sin cookie de Auth.js.
+  const authHeaders = React.useMemo<Record<string, string>>(() => {
+    const h: Record<string, string> = {};
+    if (kioskToken) h["x-kiosk-token"] = kioskToken;
+    return h;
+  }, [kioskToken]);
+
   const fetchOrders = React.useCallback(async () => {
     try {
       const qs = `station=${station}${includeTest ? "&includeTest=1" : ""}`;
-      const res = await fetch(`/api/kds?${qs}`, { cache: "no-store" });
+      const res = await fetch(`/api/kds?${qs}`, { cache: "no-store", headers: authHeaders });
       if (!res.ok) {
         setError(`HTTP ${res.status}`);
         return;
@@ -116,19 +124,19 @@ export function KdsBoard() {
     } finally {
       setLoaded(true);
     }
-  }, [station, includeTest]);
+  }, [station, includeTest, authHeaders]);
 
   const fetchReservations = React.useCallback(async () => {
     try {
       const qs = includeTest ? "?includeTest=1" : "";
-      const res = await fetch(`/api/kds/reservations${qs}`, { cache: "no-store" });
+      const res = await fetch(`/api/kds/reservations${qs}`, { cache: "no-store", headers: authHeaders });
       if (!res.ok) return;
       const data = (await res.json()) as { reservations: KdsReservation[] };
       setReservations(data.reservations ?? []);
     } catch {
       // best-effort, no rompe el board
     }
-  }, [includeTest]);
+  }, [includeTest, authHeaders]);
 
   React.useEffect(() => {
     fetchOrders();
@@ -160,7 +168,7 @@ export function KdsBoard() {
     try {
       await fetch("/api/kds/advance", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders },
         body: JSON.stringify({ orderId }),
       });
       await fetchOrders();
@@ -175,7 +183,7 @@ export function KdsBoard() {
     try {
       const res = await fetch("/api/kds/accept", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders },
         body: JSON.stringify({ orderId, etaMinutes }),
       });
       if (!res.ok) {
@@ -194,7 +202,7 @@ export function KdsBoard() {
     try {
       const res = await fetch("/api/kds/reject", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders },
         body: JSON.stringify({ orderId, reasonKey, detail }),
       });
       if (!res.ok) {
@@ -207,7 +215,14 @@ export function KdsBoard() {
     }
   }
 
-  const pendingReview = orders.filter((o) => o.status === "pending_kitchen_review");
+  // Mig 030 bug-fix: "Pendientes de aceptar" filtra solo los que la cocina aún
+  // no ha decidido. Antes mostraba TODOS los pending_kitchen_review incluyendo
+  // los ya aceptados esperando confirmación del cliente — al pulsar Aceptar
+  // otra vez el backend devolvía `kitchen_already_decided` y se veía un banner
+  // rojo en la pantalla. Ahora las cards desaparecen en cuanto cocina decide.
+  const pendingReview = orders.filter(
+    (o) => o.status === "pending_kitchen_review" && o.kitchenDecision === "pending",
+  );
   const byStatus = COLUMN_STATUSES.reduce(
     (acc, s) => {
       acc[s] = orders.filter((o) => o.status === s);
