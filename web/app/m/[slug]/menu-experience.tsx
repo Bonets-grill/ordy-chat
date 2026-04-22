@@ -171,7 +171,13 @@ export function MenuExperience(props: Props) {
   // Entrada: MediaRecorder → POST audio blob a /api/public/menu-voice-transcribe
   //   (Whisper server-side). Robusto en iOS Safari, Android Chrome y desktop.
   // Salida: speechSynthesis nativo (TTS) con toggle on/off por el usuario.
+  //
+  // IMPORTANTE: todos los navegadores bloquean autoplay de audio (incluido
+  // speechSynthesis) sin un user gesture previo. Por eso exponemos un
+  // overlay "toca para empezar" que desbloquea la voz en el primer tap;
+  // hasta ese momento `voiceUnlocked=false` y speak() no hace nada.
   const [voiceEnabled, setVoiceEnabled] = React.useState(true);
+  const [voiceUnlocked, setVoiceUnlocked] = React.useState(false);
   const [recording, setRecording] = React.useState(false);
   const [transcribing, setTranscribing] = React.useState(false);
   const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
@@ -182,7 +188,7 @@ export function MenuExperience(props: Props) {
   const speak = React.useCallback(
     (text: string) => {
       if (typeof window === "undefined") return;
-      if (!voiceEnabled) return;
+      if (!voiceEnabled || !voiceUnlocked) return;
       if (!("speechSynthesis" in window)) return;
       try {
         window.speechSynthesis.cancel();
@@ -195,7 +201,7 @@ export function MenuExperience(props: Props) {
         // navegador bloquea autoplay → ignorar silenciosamente
       }
     },
-    [voiceEnabled, lang],
+    [voiceEnabled, voiceUnlocked, lang],
   );
 
   const stopSpeaking = React.useCallback(() => {
@@ -210,8 +216,10 @@ export function MenuExperience(props: Props) {
   const greetingKey = `${GREETING_SHOWN_PREFIX}${slug}`;
   const dismissedKey = `${CHAT_DISMISSED_PREFIX}${slug}`;
 
-  // Auto-abrir el chat con saludo al montar, si el usuario NO lo ha cerrado
-  // antes en esta sesión. Pequeño delay para que el idioma se haya detectado.
+  // Auto-abrir el chat con saludo al montar. Siempre que el user NO haya
+  // cerrado explícitamente en esta sesión. Pequeño delay para que el idioma
+  // se haya detectado. TTS NO se reproduce aquí — espera al user gesture
+  // del overlay (unlockVoice).
   React.useEffect(() => {
     if (typeof window === "undefined") return;
     const userDismissed = window.sessionStorage.getItem(dismissedKey);
@@ -221,13 +229,30 @@ export function MenuExperience(props: Props) {
       setMessages((prev) => {
         if (prev.length > 0) return prev;
         const intro = strings[lang].greeting(tenantName);
-        // TTS del saludo (best effort — iOS puede bloquear sin gesture).
-        speak(intro);
         return [{ role: "assistant", content: intro }];
       });
-    }, 800);
+    }, 500);
     return () => window.clearTimeout(timer);
-  }, [dismissedKey, lang, tenantName, speak]);
+  }, [dismissedKey, lang, tenantName]);
+
+  // Unlock: primer user gesture → desbloquea TTS + reproduce saludo.
+  function unlockVoice() {
+    if (voiceUnlocked) return;
+    setVoiceUnlocked(true);
+    if (typeof window === "undefined") return;
+    if (!("speechSynthesis" in window)) return;
+    const greetingText = strings[lang].greeting(tenantName);
+    try {
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(greetingText);
+      u.lang = LANG_BCP47[lang];
+      u.rate = 1.0;
+      u.pitch = 1.0;
+      window.speechSynthesis.speak(u);
+    } catch {
+      /* autoplay bloqueado — el toggle 🔊 sigue funcional */
+    }
+  }
 
   // Keep greeting bubble useEffect as fallback (if user had dismissed chat
   // pero vuelve a la landing en la misma sesión).
@@ -492,6 +517,38 @@ export function MenuExperience(props: Props) {
             })}
           </div>
         </div>
+      ) : null}
+
+      {/* Overlay "toca para hablar" — requisito legal de autoplay en todos
+          los navegadores. Al tocar, desbloquea TTS + reproduce saludo. */}
+      {chatOpen && !voiceUnlocked && voiceEnabled ? (
+        <button
+          type="button"
+          onClick={unlockVoice}
+          aria-label={t.openChat}
+          className="fixed inset-0 z-[60] flex flex-col items-center justify-center gap-6 bg-stone-950/90 p-8 text-center backdrop-blur-md transition active:bg-stone-950/95"
+        >
+          <div
+            className="flex h-32 w-32 items-center justify-center rounded-full text-white shadow-2xl ring-[6px] ring-white/20"
+            style={{ backgroundColor: brandColor }}
+          >
+            <Mic className="h-14 w-14 animate-pulse" />
+          </div>
+          <div className="max-w-sm space-y-3">
+            <div className="text-2xl font-bold leading-tight text-white">
+              {tenantName}
+            </div>
+            <div className="text-base leading-snug text-white/85">
+              {t.greeting(tenantName)}
+            </div>
+            <div className="pt-2 text-sm font-semibold uppercase tracking-wider text-white">
+              👆 {t.openChat}
+            </div>
+          </div>
+          <div className="absolute bottom-8 text-[11px] text-white/50">
+            {t.voiceOff} → <VolumeX className="inline h-3 w-3" />
+          </div>
+        </button>
       ) : null}
 
       {/* Chat panel */}
