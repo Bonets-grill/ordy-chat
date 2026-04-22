@@ -141,6 +141,9 @@ export const agentConfigs = pgTable("agent_configs", {
   // Migración 024: número WhatsApp del humano al que el bot escribe en solicitar_humano.
   // NULL = sin aviso WA (solo queda la fila en handoff_requests).
   handoffWhatsappPhone: text("handoff_whatsapp_phone"),
+  // Migración 028: true mientras el tenant no tenga ningún menu_item. UI muestra
+  // CTA "Sube tu carta" en /dashboard mientras esté true.
+  menuPending: boolean("menu_pending").notNull().default(true),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -588,6 +591,26 @@ export const tenantAdmins = pgTable("tenant_admins", {
   createdBy: uuid("created_by"),
 });
 
+// ── Menu items source-of-truth (migración 028) ──────────────
+// Carta estructurada del tenant. Inyectada como bloque <carta> en cada turno
+// del brain. Reemplaza el approach antiguo de pegarla como texto libre dentro
+// del system_prompt. menuOverrides sigue existiendo para "agotado HOY" puntual.
+export const menuItems = pgTable("menu_items", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  category: text("category").notNull().default("Otros"),
+  name: text("name").notNull(),
+  priceCents: integer("price_cents").notNull(),
+  description: text("description"),
+  allergens: text("allergens").array().notNull().default(_sqlTag`ARRAY[]::text[]`),
+  available: boolean("available").notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(0),
+  // 'manual' | 'scrape' | 'pdf' | 'import' — quién creó el item.
+  source: text("source").notNull().default("manual"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // ── Menu overrides (migración 019) ──────────────────────────
 export const menuOverrides = pgTable("menu_overrides", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -686,4 +709,6 @@ export type NewAgentFeedback = typeof agentFeedback.$inferInsert;
 export type LearningRun = typeof learningRuns.$inferSelect;
 export type NewLearningRun = typeof learningRuns.$inferInsert;
 export type LearnedRulePending = typeof learnedRulesPending.$inferSelect;
+export type MenuItem = typeof menuItems.$inferSelect;
+export type NewMenuItem = typeof menuItems.$inferInsert;
 export type NewLearnedRulePending = typeof learnedRulesPending.$inferInsert;
