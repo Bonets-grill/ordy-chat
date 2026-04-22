@@ -38,6 +38,12 @@ export default async function PlaygroundPage() {
             mensajes a tus clientes — es una prueba contigo mismo. Si una respuesta
             es mala, pulsa 👎 y la enviaremos al equipo Ordy para ayudarte.
           </p>
+          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            <strong>Modo sandbox:</strong> aunque el bot diga "reserva confirmada" o
+            "pedido registrado", esas acciones NO se guardan. No verás aquí nada en
+            Reservas, Conversaciones ni KDS. Para probar end-to-end de verdad, escribe
+            al WhatsApp del negocio.
+          </div>
         </header>
         <PlaygroundChat tenantName={bundle.tenant.name} chips={chips} />
       </div>

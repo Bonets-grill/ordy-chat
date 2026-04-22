@@ -12,7 +12,12 @@
 // skipWaiting + clients.claim permite update inmediato sin que el usuario
 // tenga que cerrar pestañas.
 
-const CACHE_VERSION = "ordy-v1-2026-04-18";
+// v2 (2026-04-22): HTML pasa a network-only. v1 hacía stale-while-revalidate
+// sobre el shell, lo que servía HTML viejo apuntando a chunks CSS con hashes
+// que ya no existen tras cada deploy → página sin estilos hasta que el usuario
+// refrescaba. Los assets _next/static (versionados por hash, immutables) siguen
+// cache-first largo, que es la estrategia correcta para ellos.
+const CACHE_VERSION = "ordy-v2-2026-04-22";
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const ASSETS_CACHE = `${CACHE_VERSION}-assets`;
 
@@ -117,11 +122,11 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Shell HTML: stale-while-revalidate.
-  if (isHtmlRequest(request, url)) {
-    event.respondWith(staleWhileRevalidate(request, SHELL_CACHE));
-    return;
-  }
+  // Shell HTML: NETWORK-ONLY (v2). Stale-while-revalidate sobre HTML rompía
+  // estilos tras cada deploy porque el HTML cacheado referenciaba chunks
+  // CSS con hashes ya inexistentes. El "shell offline" no era real (auth +
+  // DB lo requieren online), así que zero pérdida funcional.
+  if (isHtmlRequest(request, url)) return;
 
   // Resto: network con cache fallback.
   event.respondWith(
