@@ -144,6 +144,11 @@ export const agentConfigs = pgTable("agent_configs", {
   // Migración 028: true mientras el tenant no tenga ningún menu_item. UI muestra
   // CTA "Sube tu carta" en /dashboard mientras esté true.
   menuPending: boolean("menu_pending").notNull().default(true),
+  // Migración 030: token UUID público para montar el KDS en pantallas de cocina
+  // (/kiosk/<token>) sin login. Rotar con UPDATE para invalidar pantallas.
+  // Default a gen_random_uuid()::text en DB para que INSERTs sin el campo (p.ej.
+  // onboarding-fast provision) lo generen solos.
+  kioskToken: text("kiosk_token").notNull().default(_sqlTag`gen_random_uuid()::text`),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
