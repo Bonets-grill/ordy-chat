@@ -12,6 +12,7 @@ from app.agent_tools import (
     crear_cita,
     crear_handoff,
     listar_citas_del_cliente,
+    modificar_pedido,
     obtener_pedido_pendiente_eta,
     responder_eta_pedido,
 )
@@ -376,6 +377,49 @@ TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "name": "modificar_pedido",
+        "description": (
+            "Añade un cambio al ÚLTIMO pedido que el cliente acaba de hacer, SIEMPRE "
+            "Y CUANDO la cocina aún no lo haya aceptado/rechazado. Úsala cuando el "
+            "cliente pide quitar, cambiar, añadir o ajustar algo DESPUÉS de haber "
+            "confirmado un pedido (ejemplos: 'sin cebolla en la Dakota', 'que sea "
+            "smash en vez de medallón', 'añade unas papas', 'cambia la Kentucky "
+            "por otra Dakota').\n\n"
+            "REGLA CRÍTICA: si el cliente ya hizo un pedido en esta conversación "
+            "y ahora pide un cambio, NUNCA llames crear_pedido otra vez — eso "
+            "generaría un pedido DUPLICADO en cocina. Siempre usa modificar_pedido "
+            "con el cambio del cliente.\n\n"
+            "Si la tool devuelve 'pedido_ya_en_preparacion' quiere decir que la "
+            "cocina ya aceptó el pedido anterior y no puedes modificarlo. En ese "
+            "caso discúlpate con el cliente: 'Lo sentimos mucho, el pedido ya "
+            "está en preparación y no podemos cambiarlo.' Ofrécele hacer un "
+            "pedido nuevo si es para otro turno. "
+            "Si devuelve 'no_hay_pedido' (el cliente nunca había pedido nada en "
+            "este tenant), usa crear_pedido normalmente."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["change_request"],
+            "properties": {
+                "change_request": {
+                    "type": "string",
+                    "description": (
+                        "Lo que el cliente quiere cambiar en sus propias palabras "
+                        "(ej 'sin cebolla acaramelada en la Dakota', 'añade unas "
+                        "papas grandes', 'cambia la Kentucky por Dakota'). Frase "
+                        "breve y clara; la cocina la verá literal en la card KDS."
+                    ),
+                    "minLength": 3,
+                    "maxLength": 500,
+                },
+                "customer_name": {
+                    "type": "string",
+                    "description": "Nombre del cliente si lo sabes (para identificarlo en el aviso a cocina).",
+                },
+            },
+        },
+    },
 ]
 
 
@@ -518,6 +562,16 @@ async def _ejecutar_tool(
                 tenant_id=tenant.id,
                 customer_phone=customer_phone,
                 accepted=accepted,
+            )
+            return json.dumps(result)
+
+        if tool_name == "modificar_pedido":
+            result = await modificar_pedido(
+                tenant_id=tenant.id,
+                customer_phone=customer_phone,
+                change_request=tool_input.get("change_request", ""),
+                customer_name=tool_input.get("customer_name"),
+                is_test=is_test,
             )
             return json.dumps(result)
 
