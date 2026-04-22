@@ -8,7 +8,12 @@ import { ChefHat, GlassWater, Utensils } from "lucide-react";
 import * as React from "react";
 
 type Station = "all" | "kitchen" | "bar";
-type OrderStatus = "pending" | "preparing" | "ready" | "served";
+type OrderStatus =
+  | "pending_kitchen_review"
+  | "pending"
+  | "preparing"
+  | "ready"
+  | "served";
 
 type KdsItem = {
   id: string;
@@ -24,6 +29,9 @@ type KdsOrder = {
   customerName: string | null;
   customerPhone: string | null;
   status: OrderStatus;
+  orderType: "dine_in" | "takeaway";
+  pickupEtaMinutes: number | null;
+  kitchenDecision: "pending" | "accepted" | "rejected";
   totalCents: number;
   currency: string;
   notes: string | null;
@@ -31,8 +39,20 @@ type KdsOrder = {
   items: KdsItem[];
 };
 
+// Columnas tradicionales (post-aceptación). pending_kitchen_review tiene su
+// propia sección con botones aceptar/rechazar arriba del board.
 const COLUMN_STATUSES: OrderStatus[] = ["pending", "preparing", "ready"];
+const ETA_OPTIONS = [10, 15, 20, 25, 30, 35, 45] as const;
+const REJECT_REASONS: { key: string; label: string; needsDetail: boolean; detailLabel?: string }[] = [
+  { key: "closing_soon", label: "Cocina cerrando — no llegamos a tiempo", needsDetail: false },
+  { key: "too_busy", label: "Mucha demanda ahora mismo, 30+ min de espera", needsDetail: false },
+  { key: "out_of_stock", label: "Producto fuera de stock", needsDetail: true, detailLabel: "¿Qué producto?" },
+  { key: "temporarily_unavailable", label: "Producto temporalmente no disponible", needsDetail: true, detailLabel: "¿Qué producto?" },
+  { key: "kitchen_problem", label: "Problema técnico en cocina", needsDetail: false },
+  { key: "other", label: "Otra razón", needsDetail: true, detailLabel: "Especifica" },
+];
 const NEXT_STATUS: Record<OrderStatus, OrderStatus | null> = {
+  pending_kitchen_review: null,  // se gestiona via accept/reject endpoints
   pending: "preparing",
   preparing: "ready",
   ready: "served",
@@ -40,6 +60,7 @@ const NEXT_STATUS: Record<OrderStatus, OrderStatus | null> = {
 };
 
 const STATUS_LABEL: Record<OrderStatus, string> = {
+  pending_kitchen_review: "Pendiente de aceptar",
   pending: "Pendiente",
   preparing: "En preparación",
   ready: "Listo",
@@ -47,6 +68,7 @@ const STATUS_LABEL: Record<OrderStatus, string> = {
 };
 
 const STATUS_TONE: Record<OrderStatus, { card: string; badge: string }> = {
+  pending_kitchen_review: { card: "bg-violet-50 border-violet-300", badge: "bg-violet-100 text-violet-800" },
   pending: { card: "bg-amber-50 border-amber-200", badge: "bg-amber-100 text-amber-800" },
   preparing: { card: "bg-blue-50 border-blue-200", badge: "bg-blue-100 text-blue-800" },
   ready: { card: "bg-emerald-50 border-emerald-300", badge: "bg-emerald-100 text-emerald-800" },
@@ -109,6 +131,45 @@ export function KdsBoard() {
     }
   }
 
+  async function acceptKitchen(orderId: string, etaMinutes: number) {
+    if (advancing) return;
+    setAdvancing(orderId);
+    try {
+      const res = await fetch("/api/kds/accept", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId, etaMinutes }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setError(`Aceptar falló: ${body.error ?? res.status}`);
+      }
+      await fetchOrders();
+    } finally {
+      setAdvancing(null);
+    }
+  }
+
+  async function rejectKitchen(orderId: string, reasonKey: string, detail?: string) {
+    if (advancing) return;
+    setAdvancing(orderId);
+    try {
+      const res = await fetch("/api/kds/reject", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId, reasonKey, detail }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setError(`Rechazar falló: ${body.error ?? res.status}`);
+      }
+      await fetchOrders();
+    } finally {
+      setAdvancing(null);
+    }
+  }
+
+  const pendingReview = orders.filter((o) => o.status === "pending_kitchen_review");
   const byStatus = COLUMN_STATUSES.reduce(
     (acc, s) => {
       acc[s] = orders.filter((o) => o.status === s);
@@ -148,16 +209,168 @@ export function KdsBoard() {
           </p>
         </div>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-3">
-          {COLUMN_STATUSES.map((status) => (
-            <Column
-              key={status}
-              status={status}
-              orders={byStatus[status]}
-              onAdvance={advance}
-              advancingId={advancing}
+        <>
+          {pendingReview.length > 0 && (
+            <section className="space-y-3">
+              <h2 className="flex items-baseline gap-2 text-sm font-semibold uppercase tracking-wide text-violet-700">
+                <span>Pendientes de aceptar</span>
+                <span className="rounded-full bg-violet-100 px-2 text-xs text-violet-700">
+                  {pendingReview.length}
+                </span>
+              </h2>
+              <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                {pendingReview.map((o) => (
+                  <ReviewCard
+                    key={o.id}
+                    order={o}
+                    disabled={advancing === o.id}
+                    onAccept={(eta) => acceptKitchen(o.id, eta)}
+                    onReject={(rk, dt) => rejectKitchen(o.id, rk, dt)}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+          <div className="grid gap-4 lg:grid-cols-3">
+            {COLUMN_STATUSES.map((status) => (
+              <Column
+                key={status}
+                status={status}
+                orders={byStatus[status]}
+                onAdvance={advance}
+                advancingId={advancing}
+              />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ReviewCard({
+  order,
+  disabled,
+  onAccept,
+  onReject,
+}: {
+  order: KdsOrder;
+  disabled: boolean;
+  onAccept: (etaMinutes: number) => void;
+  onReject: (reasonKey: string, detail?: string) => void;
+}) {
+  const [eta, setEta] = React.useState<number>(20);
+  const [mode, setMode] = React.useState<"idle" | "rejecting">("idle");
+  const [reasonKey, setReasonKey] = React.useState<string>(REJECT_REASONS[0]!.key);
+  const [detail, setDetail] = React.useState<string>("");
+  const reason = REJECT_REASONS.find((r) => r.key === reasonKey)!;
+  const tone = STATUS_TONE.pending_kitchen_review;
+  const minutesAgo = Math.max(0, Math.round((Date.now() - new Date(order.createdAt).getTime()) / 60000));
+  const ageLabel = minutesAgo < 60 ? `${minutesAgo} min` : `${Math.round(minutesAgo / 60)} h`;
+  const typeLabel = order.orderType === "dine_in"
+    ? `Mesa ${order.tableNumber ?? "?"}`
+    : `Llevar — ${order.customerName ?? "?"}`;
+
+  return (
+    <div className={`rounded-xl border p-4 ${tone.card}`}>
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="font-semibold text-neutral-900">{typeLabel}</span>
+        <span className={`rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${tone.badge}`}>
+          {ageLabel}
+        </span>
+      </div>
+      <ul className="mt-3 space-y-1 text-sm">
+        {order.items.map((it) => (
+          <li key={it.id} className="flex items-baseline justify-between gap-2">
+            <span className="min-w-0 truncate">
+              <span className="font-medium text-neutral-700">{it.quantity}×</span> {it.name}
+              {it.notes ? <span className="ml-1 text-xs italic text-neutral-500">({it.notes})</span> : null}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {order.notes ? (
+        <div className="mt-3 rounded bg-white/70 px-2 py-1 text-xs text-neutral-700 ring-1 ring-neutral-200">
+          {order.notes}
+        </div>
+      ) : null}
+
+      {mode === "idle" ? (
+        <div className="mt-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-medium uppercase tracking-wider text-neutral-600">Tiempo</label>
+            <select
+              value={eta}
+              onChange={(e) => setEta(Number(e.target.value))}
+              disabled={disabled}
+              className="rounded-md border border-violet-200 bg-white px-2 py-1 text-sm"
+            >
+              {ETA_OPTIONS.map((m) => (
+                <option key={m} value={m}>{m} min</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => onAccept(eta)}
+              disabled={disabled}
+              className="flex-1 rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50"
+            >
+              Aceptar
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("rejecting")}
+              disabled={disabled}
+              className="rounded-md border border-rose-300 bg-white px-3 py-1.5 text-sm font-medium text-rose-700 transition hover:bg-rose-50 disabled:opacity-50"
+            >
+              Rechazar
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-4 space-y-2 rounded-lg bg-white/80 p-3 ring-1 ring-rose-200">
+          <label className="text-xs font-medium uppercase tracking-wider text-rose-700">Razón</label>
+          <select
+            value={reasonKey}
+            onChange={(e) => { setReasonKey(e.target.value); setDetail(""); }}
+            disabled={disabled}
+            className="w-full rounded-md border border-rose-200 bg-white px-2 py-1 text-sm"
+          >
+            {REJECT_REASONS.map((r) => (
+              <option key={r.key} value={r.key}>{r.label}</option>
+            ))}
+          </select>
+          {reason.needsDetail && (
+            <input
+              type="text"
+              value={detail}
+              onChange={(e) => setDetail(e.target.value)}
+              placeholder={reason.detailLabel ?? "Especifica"}
+              disabled={disabled}
+              maxLength={120}
+              className="w-full rounded-md border border-rose-200 bg-white px-2 py-1 text-sm"
             />
-          ))}
+          )}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => onReject(reasonKey, reason.needsDetail ? detail.trim() : undefined)}
+              disabled={disabled || (reason.needsDetail && !detail.trim())}
+              className="flex-1 rounded-md bg-rose-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-rose-700 disabled:opacity-50"
+            >
+              Confirmar rechazo
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("idle")}
+              disabled={disabled}
+              className="rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50"
+            >
+              Cancelar
+            </button>
+          </div>
         </div>
       )}
     </div>
