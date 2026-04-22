@@ -32,21 +32,39 @@ def test_responder_eta_pedido_existe_en_tools() -> None:
     assert schema["properties"]["accepted"]["type"] == "boolean"
 
 
-def test_sandbox_stub_responder_eta_pedido_acepta() -> None:
-    raw = brain._sandbox_tool_stub("responder_eta_pedido", {"accepted": True})
+def test_sandbox_ejecuta_responder_eta_pedido_real() -> None:
+    """Mig 029: sandbox ya NO stubbea responder_eta_pedido. Ejecuta la función
+    real porque la DB ya contiene la orden de prueba (is_test=true) y se
+    necesita actualizar su customer_eta_decision para testear el flow
+    end-to-end desde el playground."""
+    from unittest.mock import AsyncMock, patch
+    from uuid import UUID
+    import asyncio
+
+    class _FakeTenant:
+        id = UUID("00000000-0000-0000-0000-000000000001")
+        slug = "fake"
+        reservations_closed_for: list[str] = []
+        timezone = "Europe/Madrid"
+
+    fake_result = {"ok": True, "order_id": "x", "status": "pending", "decision": "accepted"}
+
+    async def run() -> str:
+        with patch.object(brain, "responder_eta_pedido", new=AsyncMock(return_value=fake_result)) as m:
+            raw = await brain._ejecutar_tool(
+                _FakeTenant(),  # type: ignore[arg-type]
+                "responder_eta_pedido",
+                {"accepted": True},
+                customer_phone="playground-sandbox",
+                sandbox=True,
+            )
+            assert m.await_count == 1
+            return raw
+
+    raw = asyncio.run(run())
     payload = json.loads(raw)
     assert payload["ok"] is True
-    assert payload["status"] == "pending"
     assert payload["decision"] == "accepted"
-    assert payload["sandbox"] is True
-
-
-def test_sandbox_stub_responder_eta_pedido_rechaza() -> None:
-    raw = brain._sandbox_tool_stub("responder_eta_pedido", {"accepted": False})
-    payload = json.loads(raw)
-    assert payload["ok"] is True
-    assert payload["status"] == "canceled"
-    assert payload["decision"] == "rejected"
 
 
 def test_obtener_pedido_pendiente_eta_query_filtra_estado_correcto() -> None:
@@ -85,5 +103,8 @@ def test_brain_inyecta_bloque_pedido_pendiente_eta() -> None:
     )
     assert "obtener_pedido_pendiente_eta" in src
     assert "responder_eta_pedido" in src
-    # Sandbox/playground NO debe activar el bloque para no enredar tests.
-    assert 'customer_phone != "playground-sandbox"' in src
+    # Mig 029: la guarda `customer_phone != "playground-sandbox"` fue eliminada
+    # para que el playground también pueda probar el flow end-to-end (el pedido
+    # de prueba vive en DB marcado is_test=true; la query lo encuentra con el
+    # phone ficticio y el bot puede pedir confirmación al user del playground).
+    assert 'customer_phone != "playground-sandbox"' not in src

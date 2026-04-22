@@ -28,6 +28,7 @@ async def crear_cita(
     notes: str | None = None,
     closed_for: list[str] | None = None,
     tenant_timezone: str = "Europe/Madrid",
+    is_test: bool = False,
 ) -> dict[str, Any]:
     """
     Guarda una cita/reserva. `starts_at_iso` formato ISO-8601 (ej: 2026-04-20T13:30:00+02:00).
@@ -88,11 +89,11 @@ async def crear_cita(
         row = await conn.fetchrow(
             """
             INSERT INTO appointments
-              (tenant_id, customer_phone, customer_name, starts_at, duration_min, title, notes)
-            VALUES ($1,$2,$3,$4,$5,$6,$7)
+              (tenant_id, customer_phone, customer_name, starts_at, duration_min, title, notes, is_test)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
             RETURNING id, starts_at
             """,
-            tenant_id, customer_phone, customer_name, starts_at, duration_min, title.strip(), notes,
+            tenant_id, customer_phone, customer_name, starts_at, duration_min, title.strip(), notes, is_test,
         )
     return {
         "ok": True,
@@ -100,6 +101,7 @@ async def crear_cita(
         "starts_at_iso": row["starts_at"].isoformat(),
         "duration_min": duration_min,
         "title": title.strip(),
+        "is_test": is_test,
     }
 
 
@@ -128,17 +130,20 @@ async def crear_handoff(
 
     reason_clean = reason.strip()
     reason_stored = f"[PLAYGROUND] {reason_clean}" if sandbox else reason_clean
+    # Mig 029: sandbox=True implica is_test=True en DB. Mantenemos también el
+    # prefijo [PLAYGROUND] en reason para retrocompat con filtros antiguos.
+    is_test = bool(sandbox)
 
     pool = await inicializar_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
             INSERT INTO handoff_requests
-              (tenant_id, conversation_id, customer_phone, customer_name, reason, priority)
-            VALUES ($1,$2,$3,$4,$5,$6)
+              (tenant_id, conversation_id, customer_phone, customer_name, reason, priority, is_test)
+            VALUES ($1,$2,$3,$4,$5,$6,$7)
             RETURNING id, created_at
             """,
-            tenant_id, conversation_id, customer_phone, customer_name, reason_stored, priority,
+            tenant_id, conversation_id, customer_phone, customer_name, reason_stored, priority, is_test,
         )
         # Cargar datos del tenant para el envío WA humano.
         tenant_row = await conn.fetchrow(
@@ -203,6 +208,7 @@ async def crear_handoff(
         "priority": priority,
         "reason": reason.strip(),
         "notified_human_phone": bool(target_phone),
+        "is_test": is_test,
     }
 
 

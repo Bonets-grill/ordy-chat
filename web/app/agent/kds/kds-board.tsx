@@ -17,6 +17,7 @@ type KdsReservation = {
   title: string | null;
   notes: string | null;
   status: string;
+  isTest?: boolean;
 };
 
 type Station = "all" | "kitchen" | "bar";
@@ -47,6 +48,7 @@ type KdsOrder = {
   totalCents: number;
   currency: string;
   notes: string | null;
+  isTest?: boolean;
   createdAt: string;
   items: KdsItem[];
 };
@@ -94,10 +96,14 @@ export function KdsBoard() {
   const [loaded, setLoaded] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [advancing, setAdvancing] = React.useState<string | null>(null);
+  // Mig 029: toggle "🧪 Incluir pruebas". Off por defecto — el KDS real ignora
+  // pedidos/reservas de playground (is_test=true) hasta que el admin activa esto.
+  const [includeTest, setIncludeTest] = React.useState<boolean>(false);
 
   const fetchOrders = React.useCallback(async () => {
     try {
-      const res = await fetch(`/api/kds?station=${station}`, { cache: "no-store" });
+      const qs = `station=${station}${includeTest ? "&includeTest=1" : ""}`;
+      const res = await fetch(`/api/kds?${qs}`, { cache: "no-store" });
       if (!res.ok) {
         setError(`HTTP ${res.status}`);
         return;
@@ -110,18 +116,19 @@ export function KdsBoard() {
     } finally {
       setLoaded(true);
     }
-  }, [station]);
+  }, [station, includeTest]);
 
   const fetchReservations = React.useCallback(async () => {
     try {
-      const res = await fetch("/api/kds/reservations", { cache: "no-store" });
+      const qs = includeTest ? "?includeTest=1" : "";
+      const res = await fetch(`/api/kds/reservations${qs}`, { cache: "no-store" });
       if (!res.ok) return;
       const data = (await res.json()) as { reservations: KdsReservation[] };
       setReservations(data.reservations ?? []);
     } catch {
       // best-effort, no rompe el board
     }
-  }, []);
+  }, [includeTest]);
 
   React.useEffect(() => {
     fetchOrders();
@@ -218,7 +225,22 @@ export function KdsBoard() {
             Pedidos activos en tiempo real. Pulsa la tarjeta para avanzar de estado.
           </p>
         </div>
-        <StationFilter value={station} onChange={setStation} />
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setIncludeTest((v) => !v)}
+            className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+              includeTest
+                ? "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
+                : "border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50"
+            }`}
+            aria-pressed={includeTest}
+            title="Muestra/oculta pedidos y reservas creadas desde el playground"
+          >
+            {includeTest ? "🧪 Mostrando pruebas" : "🧪 Incluir pruebas"}
+          </button>
+          <StationFilter value={station} onChange={setStation} />
+        </div>
       </header>
 
       {error ? (
@@ -307,7 +329,10 @@ function ReviewCard({
   return (
     <div className={`rounded-xl border p-4 ${tone.card}`}>
       <div className="flex items-baseline justify-between gap-2">
-        <span className="font-semibold text-neutral-900">{typeLabel}</span>
+        <span className="font-semibold text-neutral-900">
+          {order.isTest ? <span title="Pedido de playground" className="mr-1">🧪</span> : null}
+          {typeLabel}
+        </span>
         <span className={`rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${tone.badge}`}>
           {ageLabel}
         </span>
@@ -511,6 +536,7 @@ function OrderCard({
     >
       <div className="flex items-baseline justify-between gap-2">
         <span className="font-semibold text-neutral-900">
+          {order.isTest ? <span title="Pedido de playground" className="mr-1">🧪</span> : null}
           {order.tableNumber ? `Mesa ${order.tableNumber}` : "Para llevar"}
         </span>
         <span

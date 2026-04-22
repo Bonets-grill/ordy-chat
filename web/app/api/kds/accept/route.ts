@@ -99,7 +99,9 @@ export async function POST(req: Request) {
     });
 
   // Notificar al cliente vía WA con la propuesta de ETA. Best-effort.
-  if (updated?.customerPhone) {
+  // Mig 029: saltamos si el pedido es de playground (customer_phone ficticio
+  // "playground-sandbox" — cualquier envío fallaría o peor, sería spam).
+  if (updated?.customerPhone && !current.isTest) {
     const [cfg] = await db
       .select({ businessName: agentConfigs.businessName })
       .from(agentConfigs)
@@ -114,5 +116,5 @@ export async function POST(req: Request) {
     });
   }
 
-  return NextResponse.json({ ok: true, order: updated });
+  return NextResponse.json({ ok: true, order: updated, isTest: current.isTest });
 }

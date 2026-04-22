@@ -45,6 +45,7 @@ async def crear_pedido(
     table_number: str | None = None,
     notes: str | None = None,
     order_type: str = "takeaway",
+    is_test: bool = False,
 ) -> dict[str, Any]:
     """
     Crea un pedido en la web. `items` debe ser una lista de dicts con:
@@ -57,7 +58,12 @@ async def crear_pedido(
     `order_type` ('dine_in'|'takeaway') determina el flujo en cocina.
     Default 'takeaway' por backward-compat con callers legacy.
 
-    Devuelve {orderId, totalCents, currency}.
+    `is_test=True` (mig 029) marca el pedido como de playground. La ruta
+    /api/orders solo respeta esta flag cuando el caller se autentica con
+    x-internal-secret (runtime). KDS y workers filtran is_test=false por
+    defecto.
+
+    Devuelve {orderId, totalCents, currency, isTest}.
     """
     payload: dict[str, Any] = {
         "tenantSlug": tenant_slug,
@@ -81,6 +87,8 @@ async def crear_pedido(
         payload["tableNumber"] = table_number
     if notes:
         payload["notes"] = notes
+    if is_test:
+        payload["isTest"] = True
 
     client = _get_http()
     r = await client.post(

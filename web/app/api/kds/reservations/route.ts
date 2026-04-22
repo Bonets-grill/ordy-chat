@@ -11,9 +11,14 @@ import { requireTenant } from "@/lib/tenant";
 
 export const runtime = "nodejs";
 
-export async function GET() {
+export async function GET(req: Request) {
   const bundle = await requireTenant();
   if (!bundle) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  const url = new URL(req.url);
+  // Mig 029: ocultamos reservas de playground por defecto. UI /agent/reservations
+  // añade includeTest=1 cuando el admin activa "🧪 Incluir pruebas".
+  const includeTest = url.searchParams.get("includeTest") === "1";
 
   const since = new Date(Date.now() - 60 * 60 * 1000); // 1h atrás (ya en curso)
   const rows = await db
@@ -26,9 +31,16 @@ export async function GET() {
       title: appointments.title,
       notes: appointments.notes,
       status: appointments.status,
+      isTest: appointments.isTest,
     })
     .from(appointments)
-    .where(and(eq(appointments.tenantId, bundle.tenant.id), gte(appointments.startsAt, since)))
+    .where(
+      and(
+        eq(appointments.tenantId, bundle.tenant.id),
+        gte(appointments.startsAt, since),
+        ...(includeTest ? [] : [eq(appointments.isTest, false)]),
+      ),
+    )
     .orderBy(asc(appointments.startsAt))
     .limit(30);
 
@@ -38,6 +50,7 @@ export async function GET() {
         ...r,
         startsAt: r.startsAt.toISOString(),
       })),
+      includeTest,
     },
     { headers: { "Cache-Control": "no-store" } },
   );

@@ -191,6 +191,9 @@ export const conversations = pgTable("conversations", {
   tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
   phone: text("phone").notNull(),
   customerName: text("customer_name"),
+  // Migración 029: true = conversación creada desde el playground. Dashboards
+  // filtran is_test=false por defecto. Toggle "Incluir pruebas" la incluye.
+  isTest: boolean("is_test").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   lastMessageAt: timestamp("last_message_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -204,6 +207,8 @@ export const messages = pgTable("messages", {
   mensajeId: text("mensaje_id"),
   tokensIn: integer("tokens_in").default(0),
   tokensOut: integer("tokens_out").default(0),
+  // Migración 029: true = mensaje del playground.
+  isTest: boolean("is_test").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -296,6 +301,9 @@ export const orders = pgTable(
     kitchenDecisionReason: text("kitchen_decision_reason"),
     // Decisión del cliente tras recibir el ETA. NULL hasta que cocina acepta y bot pregunta.
     customerEtaDecision: text("customer_eta_decision"),
+    // Migración 029: true = pedido creado desde el playground. KDS filtra
+    // is_test=false por defecto; workers proactivos WA saltan estas filas.
+    isTest: boolean("is_test").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     paidAt: timestamp("paid_at", { withTimezone: true }),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -362,6 +370,8 @@ export const appointments = pgTable("appointments", {
   title: text("title").notNull(),
   notes: text("notes"),
   status: text("status").notNull().default("pending"),
+  // Migración 029: true = reserva creada desde el playground.
+  isTest: boolean("is_test").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -375,6 +385,9 @@ export const handoffRequests = pgTable("handoff_requests", {
   reason: text("reason").notNull(),
   priority: text("priority").notNull().default("normal"),
   status: text("status").notNull().default("pending"),
+  // Migración 029: true = handoff creado desde el playground. Complementa el
+  // prefijo [PLAYGROUND] del reason (PR #29) para filtros sin LIKE.
+  isTest: boolean("is_test").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   handledAt: timestamp("handled_at", { withTimezone: true }),
   handledBy: uuid("handled_by").references(() => users.id, { onDelete: "set null" }),

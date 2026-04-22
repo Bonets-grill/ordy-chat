@@ -102,11 +102,16 @@ async def actualizar_nombre_cliente(
     tenant_id: UUID,
     phone: str,
     customer_name: str | None,
+    is_test: bool = False,
 ) -> None:
     """
     Persiste el nombre del cliente en conversations.customer_name.
     COALESCE: si ya había un nombre guardado y llega NULL/vacío, NO sobreescribe.
     Crea la fila si no existe.
+
+    is_test=True se usa desde el playground para marcar la conversación como
+    de prueba. Solo se aplica al INSERT inicial (no cambia una fila ya
+    existente de prueba a real o viceversa).
     """
     if customer_name is not None:
         customer_name = customer_name.strip()
@@ -118,12 +123,12 @@ async def actualizar_nombre_cliente(
     async with pool.acquire() as conn:
         await conn.execute(
             """
-            INSERT INTO conversations (tenant_id, phone, customer_name, last_message_at)
-            VALUES ($1, $2, $3, now())
+            INSERT INTO conversations (tenant_id, phone, customer_name, last_message_at, is_test)
+            VALUES ($1, $2, $3, now(), $4)
             ON CONFLICT (tenant_id, phone)
             DO UPDATE SET customer_name = COALESCE(EXCLUDED.customer_name, conversations.customer_name)
             """,
-            tenant_id, phone, customer_name,
+            tenant_id, phone, customer_name, is_test,
         )
 
 
@@ -200,32 +205,39 @@ async def guardar_intercambio(
     mensaje_id: str | None = None,
     tokens_in: int = 0,
     tokens_out: int = 0,
+    is_test: bool = False,
 ) -> None:
-    """Upsert conversación + inserta user/assistant en una transacción."""
+    """Upsert conversación + inserta user/assistant en una transacción.
+
+    is_test=True se propaga a conversations (en el INSERT inicial; si la
+    conversación ya existe, se respeta su flag anterior — no permitimos que
+    un mensaje de test "ensucie" una conversación real preexistente) y a
+    ambos messages. Dashboards filtran is_test=false por defecto.
+    """
     pool = await inicializar_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
             conv_id = await conn.fetchval(
                 """
-                INSERT INTO conversations (tenant_id, phone, last_message_at)
-                VALUES ($1, $2, now())
+                INSERT INTO conversations (tenant_id, phone, last_message_at, is_test)
+                VALUES ($1, $2, now(), $3)
                 ON CONFLICT (tenant_id, phone)
                 DO UPDATE SET last_message_at = now()
                 RETURNING id
                 """,
-                tenant_id, phone,
+                tenant_id, phone, is_test,
             )
             await conn.execute(
                 """
-                INSERT INTO messages (conversation_id, tenant_id, role, content, mensaje_id, tokens_in)
-                VALUES ($1, $2, 'user', $3, $4, $5)
+                INSERT INTO messages (conversation_id, tenant_id, role, content, mensaje_id, tokens_in, is_test)
+                VALUES ($1, $2, 'user', $3, $4, $5, $6)
                 """,
-                conv_id, tenant_id, mensaje_usuario, mensaje_id, tokens_in,
+                conv_id, tenant_id, mensaje_usuario, mensaje_id, tokens_in, is_test,
             )
             await conn.execute(
                 """
-                INSERT INTO messages (conversation_id, tenant_id, role, content, tokens_out)
-                VALUES ($1, $2, 'assistant', $3, $4)
+                INSERT INTO messages (conversation_id, tenant_id, role, content, tokens_out, is_test)
+                VALUES ($1, $2, 'assistant', $3, $4, $5)
                 """,
-                conv_id, tenant_id, respuesta_agente, tokens_out,
+                conv_id, tenant_id, respuesta_agente, tokens_out, is_test,
             )

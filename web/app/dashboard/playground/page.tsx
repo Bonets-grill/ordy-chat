@@ -1,6 +1,8 @@
 // web/app/dashboard/playground/page.tsx
 // Playground del tenant: prueba del agente con chips + input libre + 👍/👎.
-// NO toca conversations/messages, NO envía WhatsApp real. Simula brain.
+// Mig 029: ahora SÍ persiste pedidos/reservas/conversaciones marcados is_test=true
+// para que aparezcan en KDS/Reservas/Conversaciones cuando el admin active
+// "🧪 Incluir pruebas". NO envía WhatsApp real a clientes (customer_phone ficticio).
 
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
@@ -38,11 +40,12 @@ export default async function PlaygroundPage() {
             mensajes a tus clientes — es una prueba contigo mismo. Si una respuesta
             es mala, pulsa 👎 y la enviaremos al equipo Ordy para ayudarte.
           </p>
-          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-            <strong>Modo sandbox:</strong> aunque el bot diga "reserva confirmada" o
-            "pedido registrado", esas acciones NO se guardan. No verás aquí nada en
-            Reservas, Conversaciones ni KDS. Para probar end-to-end de verdad, escribe
-            al WhatsApp del negocio.
+          <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+            <strong>🧪 Modo prueba (end-to-end real):</strong> pedidos, reservas y
+            conversaciones se GUARDAN marcados como pruebas y aparecen en KDS,
+            Reservas y Conversaciones con el toggle <em>"Incluir pruebas"</em>. No
+            se envía nada por WhatsApp a clientes reales. Si pides un handoff, sí
+            llegará un WhatsApp al admin con prefijo <em>🧪 PRUEBA PLAYGROUND</em>.
           </div>
         </header>
         <PlaygroundChat tenantName={bundle.tenant.name} chips={chips} />

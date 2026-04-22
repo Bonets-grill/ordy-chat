@@ -22,6 +22,9 @@ const createSchema = z.object({
   customerName: z.string().optional(),
   tableNumber: z.string().optional(),
   notes: z.string().optional(),
+  // Mig 029: solo el runtime con x-internal-secret puede setearlo (este endpoint
+  // ya está gateado por ese secret). true = pedido de playground → is_test=true.
+  isTest: z.boolean().optional(),
   items: z.array(
     z.object({
       name: z.string().min(1),
@@ -67,12 +70,14 @@ export async function POST(req: Request) {
     tableNumber: parsed.data.tableNumber,
     notes: parsed.data.notes,
     items: parsed.data.items,
+    isTest: parsed.data.isTest ?? false,
   });
 
   return NextResponse.json({
     orderId: order.id,
     totalCents: order.totalCents,
     currency: order.currency,
+    isTest: order.isTest,
   });
 }
 
