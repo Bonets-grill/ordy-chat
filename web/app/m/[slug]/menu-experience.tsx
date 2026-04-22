@@ -14,9 +14,9 @@
 
 "use client";
 
-import { Minus, Plus, Send, ShoppingCart, Sparkles, X } from "lucide-react";
+import { Mic, MicOff, Minus, Plus, Send, ShoppingCart, Sparkles, Volume2, VolumeX, X } from "lucide-react";
 import * as React from "react";
-import { DEFAULT_LANG, detectLang, type Lang, strings } from "./translations";
+import { DEFAULT_LANG, detectLang, LANG_BCP47, type Lang, strings } from "./translations";
 
 type ItemLite = {
   id: string;
@@ -39,6 +39,17 @@ type CartLine = { itemId: string; qty: number };
 
 const CART_STORAGE_PREFIX = "ordy-cart:";
 const GREETING_SHOWN_PREFIX = "ordy-greeting-shown:";
+const CHAT_DISMISSED_PREFIX = "ordy-chat-dismissed:";
+
+function micSupportedSync(): boolean {
+  if (typeof window === "undefined") return false;
+  return !!(
+    typeof navigator !== "undefined" &&
+    navigator.mediaDevices &&
+    typeof navigator.mediaDevices.getUserMedia === "function" &&
+    "MediaRecorder" in window
+  );
+}
 
 export function MenuExperience(props: Props) {
   const { slug, tenantName, brandColor, phoneNumber, items } = props;
@@ -156,19 +167,81 @@ export function MenuExperience(props: Props) {
   const [error, setError] = React.useState<string | null>(null);
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
 
-  const greetingKey = `${GREETING_SHOWN_PREFIX}${slug}`;
+  // ── Voz ────────────────────────────────────────────────────
+  // Entrada: MediaRecorder → POST audio blob a /api/public/menu-voice-transcribe
+  //   (Whisper server-side). Robusto en iOS Safari, Android Chrome y desktop.
+  // Salida: speechSynthesis nativo (TTS) con toggle on/off por el usuario.
+  const [voiceEnabled, setVoiceEnabled] = React.useState(true);
+  const [recording, setRecording] = React.useState(false);
+  const [transcribing, setTranscribing] = React.useState(false);
+  const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
+  const audioChunksRef = React.useRef<Blob[]>([]);
+  const mediaStreamRef = React.useRef<MediaStream | null>(null);
+  const micSupported = React.useMemo(() => micSupportedSync(), []);
 
-  // Auto-greeting a los 2s si primera visita.
+  const speak = React.useCallback(
+    (text: string) => {
+      if (typeof window === "undefined") return;
+      if (!voiceEnabled) return;
+      if (!("speechSynthesis" in window)) return;
+      try {
+        window.speechSynthesis.cancel();
+        const u = new SpeechSynthesisUtterance(text);
+        u.lang = LANG_BCP47[lang];
+        u.rate = 1.0;
+        u.pitch = 1.0;
+        window.speechSynthesis.speak(u);
+      } catch {
+        // navegador bloquea autoplay → ignorar silenciosamente
+      }
+    },
+    [voiceEnabled, lang],
+  );
+
+  const stopSpeaking = React.useCallback(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.speechSynthesis?.cancel();
+    } catch {
+      /* noop */
+    }
+  }, []);
+
+  const greetingKey = `${GREETING_SHOWN_PREFIX}${slug}`;
+  const dismissedKey = `${CHAT_DISMISSED_PREFIX}${slug}`;
+
+  // Auto-abrir el chat con saludo al montar, si el usuario NO lo ha cerrado
+  // antes en esta sesión. Pequeño delay para que el idioma se haya detectado.
   React.useEffect(() => {
     if (typeof window === "undefined") return;
+    const userDismissed = window.sessionStorage.getItem(dismissedKey);
+    if (userDismissed) return;
+    const timer = window.setTimeout(() => {
+      setChatOpen(true);
+      setMessages((prev) => {
+        if (prev.length > 0) return prev;
+        const intro = strings[lang].greeting(tenantName);
+        // TTS del saludo (best effort — iOS puede bloquear sin gesture).
+        speak(intro);
+        return [{ role: "assistant", content: intro }];
+      });
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [dismissedKey, lang, tenantName, speak]);
+
+  // Keep greeting bubble useEffect as fallback (if user had dismissed chat
+  // pero vuelve a la landing en la misma sesión).
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    const userDismissed = window.sessionStorage.getItem(dismissedKey);
     const alreadyShown = window.sessionStorage.getItem(greetingKey);
-    if (alreadyShown) return;
+    if (!userDismissed || alreadyShown) return;
     const timer = window.setTimeout(() => {
       setGreetingBubbleOpen(true);
       window.sessionStorage.setItem(greetingKey, "1");
     }, 2000);
     return () => window.clearTimeout(timer);
-  }, [greetingKey]);
+  }, [greetingKey, dismissedKey]);
 
   // Scroll chat al final cuando cambian mensajes.
   React.useEffect(() => {
@@ -194,6 +267,7 @@ export function MenuExperience(props: Props) {
     const clean = text.trim();
     if (!clean || sending) return;
     setError(null);
+    stopSpeaking();
     const nextMessages: ChatMsg[] = [...messages, { role: "user", content: clean }];
     setMessages(nextMessages);
     setInputText("");
@@ -210,12 +284,127 @@ export function MenuExperience(props: Props) {
         return;
       }
       const data = (await r.json()) as { response?: string };
-      setMessages((prev) => [...prev, { role: "assistant", content: data.response ?? "" }]);
+      const reply = data.response ?? "";
+      setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+      if (reply) speak(reply);
     } catch {
       setError(t.errorFallback);
     } finally {
       setSending(false);
     }
+  }
+
+  // ── Mic (grabación audio → /api/public/menu-voice-transcribe → Whisper) ─
+  function pickMimeType(): string {
+    if (typeof MediaRecorder === "undefined") return "";
+    const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"];
+    for (const m of candidates) {
+      try {
+        if (MediaRecorder.isTypeSupported(m)) return m;
+      } catch {
+        /* noop */
+      }
+    }
+    return "";
+  }
+
+  async function transcribeAndSend(blob: Blob) {
+    setTranscribing(true);
+    setError(null);
+    try {
+      const typePart = blob.type.split(";")[0] || "audio/webm";
+      const ext = (typePart.split("/")[1] ?? "webm").replace(/[^a-z0-9]/gi, "") || "webm";
+      const fd = new FormData();
+      fd.append("audio", blob, `voice.${ext}`);
+      fd.append("lang", lang);
+      const r = await fetch(`/api/public/menu-voice-transcribe/${slug}`, {
+        method: "POST",
+        body: fd,
+      });
+      if (!r.ok) {
+        const body = (await r.json().catch(() => ({}))) as { error?: string };
+        setError(body?.error ?? `HTTP ${r.status}`);
+        return;
+      }
+      const data = (await r.json()) as { text?: string };
+      const transcript = (data.text ?? "").trim();
+      if (transcript) {
+        await sendMessage(transcript);
+      }
+    } catch {
+      setError(t.errorFallback);
+    } finally {
+      setTranscribing(false);
+    }
+  }
+
+  async function toggleMic() {
+    if (transcribing || sending) return;
+    if (recording) {
+      try {
+        mediaRecorderRef.current?.stop();
+      } catch {
+        /* noop */
+      }
+      return;
+    }
+    if (!micSupported) {
+      setError(t.errorFallback);
+      return;
+    }
+    try {
+      stopSpeaking();
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+      const mime = pickMimeType();
+      const mr = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+      audioChunksRef.current = [];
+      mr.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+      mr.onstop = () => {
+        setRecording(false);
+        try {
+          mediaStreamRef.current?.getTracks().forEach((tr) => tr.stop());
+        } catch {
+          /* noop */
+        }
+        mediaStreamRef.current = null;
+        const chunks = audioChunksRef.current;
+        audioChunksRef.current = [];
+        if (chunks.length === 0) return;
+        const blob = new Blob(chunks, { type: mr.mimeType || mime || "audio/webm" });
+        // Mínimo 300ms para evitar clics accidentales.
+        if (blob.size < 2000) return;
+        void transcribeAndSend(blob);
+      };
+      mediaRecorderRef.current = mr;
+      mr.start();
+      setRecording(true);
+    } catch {
+      setRecording(false);
+      setError(t.errorFallback);
+    }
+  }
+
+  function closeChat() {
+    setChatOpen(false);
+    stopSpeaking();
+    try {
+      if (typeof window !== "undefined") {
+        window.sessionStorage.setItem(dismissedKey, "1");
+      }
+    } catch {
+      /* noop */
+    }
+  }
+
+  function toggleVoice() {
+    setVoiceEnabled((prev) => {
+      const next = !prev;
+      if (!next) stopSpeaking();
+      return next;
+    });
   }
 
   // ── WhatsApp checkout ──────────────────────────────────────
@@ -329,7 +518,16 @@ export function MenuExperience(props: Props) {
               </div>
               <button
                 type="button"
-                onClick={() => setChatOpen(false)}
+                onClick={toggleVoice}
+                aria-label={voiceEnabled ? t.voiceOff : t.voiceOn}
+                title={voiceEnabled ? t.voiceOff : t.voiceOn}
+                className="rounded-lg p-2 text-white/70 transition hover:bg-white/10 hover:text-white"
+              >
+                {voiceEnabled ? <Volume2 className="h-5 w-5" /> : <VolumeX className="h-5 w-5" />}
+              </button>
+              <button
+                type="button"
+                onClick={closeChat}
                 aria-label={t.close}
                 className="rounded-lg p-2 text-white/70 transition hover:bg-white/10 hover:text-white"
               >
@@ -380,22 +578,38 @@ export function MenuExperience(props: Props) {
                 e.preventDefault();
                 sendMessage(inputText);
               }}
-              className="flex gap-2 border-t border-stone-200 bg-white p-3"
+              className="flex items-center gap-2 border-t border-stone-200 bg-white p-3"
             >
               <input
                 type="text"
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
-                placeholder={t.inputPlaceholder}
-                disabled={sending}
+                placeholder={transcribing ? t.typing : t.inputPlaceholder}
+                disabled={sending || transcribing || recording}
                 maxLength={2000}
-                className="flex-1 rounded-full border border-stone-200 bg-stone-50 px-4 py-2.5 text-sm focus:border-stone-400 focus:outline-none"
+                className="flex-1 rounded-full border border-stone-200 bg-stone-50 px-4 py-2.5 text-sm focus:border-stone-400 focus:outline-none disabled:opacity-60"
               />
+              {micSupported ? (
+                <button
+                  type="button"
+                  onClick={toggleMic}
+                  disabled={sending || transcribing}
+                  aria-label={recording ? t.micStop : t.micStart}
+                  title={recording ? t.micStop : t.micStart}
+                  className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition active:scale-95 disabled:opacity-50 ${
+                    recording
+                      ? "bg-rose-500 text-white animate-pulse"
+                      : "bg-stone-200 text-stone-700 hover:bg-stone-300"
+                  }`}
+                >
+                  {recording ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                </button>
+              ) : null}
               <button
                 type="submit"
-                disabled={sending || !inputText.trim()}
+                disabled={sending || transcribing || !inputText.trim()}
                 aria-label={t.send}
-                className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-emerald-500 text-white transition active:scale-95 hover:bg-emerald-600 disabled:bg-stone-300"
+                className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white transition active:scale-95 hover:bg-emerald-600 disabled:bg-stone-300"
               >
                 <Send className="h-4 w-4" />
               </button>
