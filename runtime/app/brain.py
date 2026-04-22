@@ -595,7 +595,10 @@ async def generar_respuesta(
     texto_limpio = (mensaje_usuario or "").strip()
     has_media = bool(media_blocks)
 
-    if not has_media and len(texto_limpio) < 2:
+    # Solo descartamos texto vacío. Mensajes de 1 char ("1", "2", "a", "b") son
+    # respuestas válidas en multi-turn ("¿cuántas hamburguesas?" → "1"). Antes
+    # rechazábamos < 2 y eso rompía cualquier respuesta numérica corta.
+    if not has_media and len(texto_limpio) == 0:
         return tenant.fallback_message, 0, 0
 
     if len(texto_limpio) > 8000:
