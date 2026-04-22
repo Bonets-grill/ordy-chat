@@ -11,10 +11,37 @@ import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { orders } from "@/lib/db/schema";
+import { agentConfigs, orders } from "@/lib/db/schema";
 import { requireTenant } from "@/lib/tenant";
 
 export const runtime = "nodejs";
+
+async function notifyCustomerRejection(args: {
+  tenantId: string;
+  customerPhone: string;
+  reasonKey: string;
+  detail?: string;
+  businessName: string;
+}): Promise<void> {
+  const runtimeUrl = (process.env.RUNTIME_URL ?? "").replace(/\/$/, "");
+  const secret = process.env.RUNTIME_INTERNAL_SECRET ?? "";
+  if (!runtimeUrl || !secret) return;
+  try {
+    await fetch(`${runtimeUrl}/internal/orders/notify-rejection`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-internal-secret": secret },
+      body: JSON.stringify({
+        tenant_id: args.tenantId,
+        customer_phone: args.customerPhone,
+        reason_key: args.reasonKey,
+        detail: args.detail,
+        business_name: args.businessName,
+      }),
+    });
+  } catch {
+    // best-effort
+  }
+}
 
 // Las razones predefinidas viven como enum aquí + en kds-board.tsx para la UI.
 // Si añades una nueva, añade también la traducción en KITCHEN_REJECT_REASONS.
@@ -82,10 +109,27 @@ export async function POST(req: Request) {
       updatedAt: new Date(),
     })
     .where(eq(orders.id, orderId))
-    .returning({ id: orders.id, status: orders.status, kitchenDecisionReason: orders.kitchenDecisionReason });
+    .returning({
+      id: orders.id,
+      status: orders.status,
+      kitchenDecisionReason: orders.kitchenDecisionReason,
+      customerPhone: orders.customerPhone,
+    });
 
-  // Fase 5: aquí dispararíamos un WA al cliente con la razón. Si es out_of_stock,
-  // el bot pregunta por sustitución.
+  if (updated?.customerPhone) {
+    const [cfg] = await db
+      .select({ businessName: agentConfigs.businessName })
+      .from(agentConfigs)
+      .where(eq(agentConfigs.tenantId, bundle.tenant.id))
+      .limit(1);
+    await notifyCustomerRejection({
+      tenantId: bundle.tenant.id,
+      customerPhone: updated.customerPhone,
+      reasonKey,
+      detail,
+      businessName: cfg?.businessName ?? "el restaurante",
+    });
+  }
 
   return NextResponse.json({ ok: true, order: updated });
 }

@@ -418,6 +418,60 @@ async def internal_playground_generate(request: Request):
     return {"response": respuesta, "tokens_in": tin, "tokens_out": tout}
 
 
+@app.post("/internal/orders/notify-eta-accepted")
+async def internal_orders_notify_eta_accepted(request: Request):
+    """Llamado por web tras cocina aceptar un pedido en /api/kds/accept.
+    Envía WA al cliente con la propuesta de ETA + pregunta confirmación.
+    Body: {tenant_id, customer_phone, eta_minutes, business_name, total_eur?}
+    """
+    _check_internal_secret(request)
+    body = await request.json() or {}
+    try:
+        tenant_id = UUID(str(body.get("tenant_id")))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="tenant_id inválido")
+    customer_phone = str(body.get("customer_phone", "")).strip()
+    eta_minutes = body.get("eta_minutes")
+    business_name = str(body.get("business_name", "")).strip() or "tu pedido"
+    total_eur = body.get("total_eur")
+    if not customer_phone or not isinstance(eta_minutes, int) or eta_minutes < 5 or eta_minutes > 120:
+        raise HTTPException(status_code=400, detail="customer_phone + eta_minutes (5-120) requeridos")
+
+    from app.messaging import enviar_a_cliente, fmt_eta_propuesta
+
+    msg = fmt_eta_propuesta(business_name, int(eta_minutes), float(total_eur) if total_eur is not None else None)
+    sent = await enviar_a_cliente(tenant_id, customer_phone, msg)
+    return {"ok": True, "sent": sent}
+
+
+@app.post("/internal/orders/notify-rejection")
+async def internal_orders_notify_rejection(request: Request):
+    """Llamado por web tras cocina rechazar un pedido en /api/kds/reject.
+    Envía WA al cliente con la razón. Si reason_key=out_of_stock, el bot en el
+    siguiente turno detectará el contexto y propondrá sustitución (Fase 6).
+    Body: {tenant_id, customer_phone, reason_key, detail?, business_name}
+    """
+    _check_internal_secret(request)
+    body = await request.json() or {}
+    try:
+        tenant_id = UUID(str(body.get("tenant_id")))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="tenant_id inválido")
+    customer_phone = str(body.get("customer_phone", "")).strip()
+    reason_key = str(body.get("reason_key", "")).strip()
+    detail = body.get("detail")
+    business_name = str(body.get("business_name", "")).strip() or "el restaurante"
+    valid_keys = {"closing_soon", "too_busy", "out_of_stock", "temporarily_unavailable", "kitchen_problem", "other"}
+    if not customer_phone or reason_key not in valid_keys:
+        raise HTTPException(status_code=400, detail=f"customer_phone + reason_key (in {sorted(valid_keys)}) requeridos")
+
+    from app.messaging import enviar_a_cliente, fmt_rechazo_kitchen
+
+    msg = fmt_rechazo_kitchen(business_name, reason_key, detail if isinstance(detail, str) and detail.strip() else None)
+    sent = await enviar_a_cliente(tenant_id, customer_phone, msg)
+    return {"ok": True, "sent": sent}
+
+
 @app.post("/internal/validator/run-seeds", status_code=202)
 async def internal_validator_run_seeds(request: Request):
     _check_internal_secret(request)
