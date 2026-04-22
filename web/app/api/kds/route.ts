@@ -10,7 +10,9 @@ import { requireTenant } from "@/lib/tenant";
 
 export const runtime = "nodejs";
 
-const ACTIVE_STATUSES = ["pending", "preparing", "ready"] as const;
+// Mig 027: pending_kitchen_review entra como nueva sección arriba en KDS (cards
+// con botones aceptar/rechazar en vez de avance directo).
+const ACTIVE_STATUSES = ["pending_kitchen_review", "pending", "preparing", "ready"] as const;
 const VALID_STATIONS = ["all", "kitchen", "bar"] as const;
 type Station = (typeof VALID_STATIONS)[number];
 
@@ -67,6 +69,9 @@ export async function GET(req: Request) {
       customerName: o.customerName,
       customerPhone: o.customerPhone,
       status: o.status,
+      orderType: o.orderType,
+      pickupEtaMinutes: o.pickupEtaMinutes,
+      kitchenDecision: o.kitchenDecision,
       totalCents: o.totalCents,
       currency: o.currency,
       notes: o.notes,
