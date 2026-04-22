@@ -290,6 +290,154 @@ async def responder_eta_pedido(
     }
 
 
+async def modificar_pedido(
+    tenant_id: UUID,
+    customer_phone: str,
+    change_request: str,
+    customer_name: str | None = None,
+    is_test: bool = False,
+) -> dict[str, Any]:
+    """Añade una modificación al último pedido del cliente que todavía no
+    ha sido decidido por cocina (status='pending_kitchen_review' AND
+    kitchen_decision='pending'). Reemplaza el bug de duplicado del 22-abr:
+    cuando el cliente pide un cambio post-pedido, el bot llamaba crear_pedido
+    de nuevo creando 2 cards en el KDS.
+
+    Efecto:
+      - UPDATE orders.notes (prepended con timestamp + cliente label).
+      - Enviar WA al admin del tenant (handoff_whatsapp_phone) con el cambio.
+
+    Devuelve:
+      - ok=True si el pedido existía y estaba modificable.
+      - ok=False, error='pedido_ya_en_preparacion' si ya decidido → bot
+        debe disculparse con el cliente.
+      - ok=False, error='no_hay_pedido' si el cliente nunca pidió nada.
+
+    En sandbox (is_test=True): la UPDATE va contra filas is_test=true
+    (playground) y la notificación WA añade prefijo "🧪 PRUEBA PLAYGROUND".
+    """
+    if not change_request or len(change_request.strip()) < 3:
+        return {"ok": False, "error": "request_vacia", "hint": "El cambio solicitado está vacío. Pregúntale al cliente qué quiere modificar."}
+
+    change_clean = change_request.strip()[:500]
+
+    pool = await inicializar_pool()
+    async with pool.acquire() as conn:
+        # Último pedido del cliente, filtrado por is_test para no cruzar
+        # prod↔playground.
+        row = await conn.fetchrow(
+            """
+            SELECT id, status, kitchen_decision, notes
+            FROM orders
+            WHERE tenant_id = $1
+              AND customer_phone = $2
+              AND is_test = $3
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            tenant_id, customer_phone, is_test,
+        )
+        if not row:
+            return {
+                "ok": False,
+                "error": "no_hay_pedido",
+                "hint": "El cliente no tiene ningún pedido previo. Si quiere hacer uno nuevo, usa crear_pedido.",
+            }
+
+        if row["status"] != "pending_kitchen_review" or row["kitchen_decision"] != "pending":
+            return {
+                "ok": False,
+                "error": "pedido_ya_en_preparacion",
+                "hint": (
+                    "La cocina ya decidió sobre el pedido anterior, no puedes modificarlo. "
+                    "Discúlpate con el cliente: 'Lo sentimos mucho, ese pedido ya está en "
+                    "preparación y no podemos modificarlo.'"
+                ),
+            }
+
+        now_hhmm = datetime.now(ZoneInfo("Europe/Madrid")).strftime("%H:%M")
+        label = customer_name or customer_phone or "cliente"
+        new_note = f"[MOD {now_hhmm} — {label}] {change_clean}"
+        await conn.execute(
+            """
+            UPDATE orders
+            SET notes = CASE
+                  WHEN notes IS NULL OR notes = '' THEN $2
+                  ELSE notes || E'\n' || $2
+                END,
+                updated_at = now()
+            WHERE id = $1
+            """,
+            row["id"], new_note,
+        )
+
+        tenant_row = await conn.fetchrow(
+            """
+            SELECT t.name AS tenant_name,
+                   ac.handoff_whatsapp_phone,
+                   pc.provider, pc.credentials_encrypted
+            FROM tenants t
+            LEFT JOIN agent_configs ac ON ac.tenant_id = t.id
+            LEFT JOIN provider_credentials pc ON pc.tenant_id = t.id
+            WHERE t.id = $1
+            """,
+            tenant_id,
+        )
+
+    order_id = str(row["id"])
+    notified = False
+    target_phone = (tenant_row["handoff_whatsapp_phone"] or "").strip() if tenant_row else ""
+    if target_phone and tenant_row:
+        try:
+            import json as _json
+            from app.crypto import descifrar
+            from app.providers import obtener_proveedor
+
+            creds: dict[str, Any] = {}
+            if tenant_row["credentials_encrypted"]:
+                try:
+                    creds = _json.loads(descifrar(tenant_row["credentials_encrypted"]))
+                except Exception:
+                    creds = {}
+            adapter = obtener_proveedor(tenant_row["provider"] or "whapi", creds, "")
+            test_header = "🧪 *PRUEBA PLAYGROUND*\n\n" if is_test else ""
+            body = (
+                f"{test_header}"
+                f"🔔 *Modificación de pedido* — {tenant_row['tenant_name']}\n\n"
+                f"Cliente: {label}\n"
+                f"Pedido id: {order_id[:8]}\n"
+                f"Cambio solicitado: {change_clean}\n\n"
+                f"Revísalo en el KDS antes de aceptar el pedido."
+            )
+            await adapter.enviar_mensaje(target_phone, body)
+            notified = True
+            logger.info(
+                "modificar_pedido WA enviado",
+                extra={
+                    "event": "mod_wa_notified",
+                    "tenant_id": str(tenant_id),
+                    "order_id": order_id,
+                    "target_phone_tail": target_phone[-4:],
+                },
+            )
+        except Exception:
+            logger.exception(
+                "modificar_pedido WA falló",
+                extra={"event": "mod_wa_error", "tenant_id": str(tenant_id), "order_id": order_id},
+            )
+
+    return {
+        "ok": True,
+        "order_id": order_id,
+        "notified_human_phone": notified,
+        "is_test": is_test,
+        "instruccion_al_cliente": (
+            "Confirma al cliente en UNA frase corta que anotaste el cambio y se lo pasaste "
+            "a cocina. Tono natural, NO digas 'modificación registrada'."
+        ),
+    }
+
+
 async def listar_citas_del_cliente(
     tenant_id: UUID, customer_phone: str, limit: int = 5
 ) -> list[dict[str, Any]]:
