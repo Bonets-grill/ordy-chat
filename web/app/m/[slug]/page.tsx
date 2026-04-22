@@ -69,7 +69,14 @@ async function loadTenantBundle(slug: string) {
     .where(eq(providerCredentials.tenantId, t.id))
     .limit(1);
 
-  return { tenant: t, config: cfg ?? null, items, phoneNumber: creds?.phoneNumber ?? null };
+  // Fallback: muchos tenants usan Evolution/Whapi con el phone cifrado dentro
+  // de credentials_encrypted. En ese caso provider_credentials.phone_number es
+  // NULL y los CTAs de la landing quedaban desactivados (reportado por Mario
+  // 22-abr con Bonets). Fallback a agent_configs.handoff_whatsapp_phone que
+  // suele ser el mismo número WA del restaurante y está en plain text.
+  const phoneNumber = creds?.phoneNumber ?? cfg?.handoffWhatsappPhone ?? null;
+
+  return { tenant: t, config: cfg ?? null, items, phoneNumber };
 }
 
 export async function generateMetadata({ params }: PageParams): Promise<Metadata> {
@@ -217,7 +224,7 @@ export default async function PublicMenuPage({ params }: PageParams) {
             rel="noopener noreferrer"
             className={`flex flex-col items-center justify-center gap-1 rounded-xl py-4 text-xs font-semibold transition ${!waReserveHref ? "cursor-not-allowed bg-stone-100 text-stone-300" : "bg-amber-500 text-stone-950 hover:bg-amber-600"}`}
           >
-            <span className="text-2xl leading-none">📅</span>
+            <span className="text-2xl leading-none">🗓️</span>
             <span>Reservar</span>
           </a>
         </div>
