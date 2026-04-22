@@ -27,6 +27,9 @@ export async function GET(req: Request) {
   const station: Station = VALID_STATIONS.includes(stationParam as Station)
     ? (stationParam as Station)
     : "all";
+  // Mig 029: por defecto ocultamos pedidos de playground (is_test=true). El KDS UI
+  // añade includeTest=1 cuando el admin activa el toggle "🧪 Incluir pruebas".
+  const includeTest = url.searchParams.get("includeTest") === "1";
 
   const activeOrders = await db
     .select()
@@ -35,6 +38,7 @@ export async function GET(req: Request) {
       and(
         eq(orders.tenantId, bundle.tenant.id),
         inArray(orders.status, ACTIVE_STATUSES as unknown as string[]),
+        ...(includeTest ? [] : [eq(orders.isTest, false)]),
       ),
     );
 
@@ -75,6 +79,7 @@ export async function GET(req: Request) {
       totalCents: o.totalCents,
       currency: o.currency,
       notes: o.notes,
+      isTest: o.isTest,
       createdAt: o.createdAt.toISOString(),
       items: itemsInScope
         .filter((it) => it.orderId === o.id)
@@ -88,7 +93,7 @@ export async function GET(req: Request) {
     }));
 
   return NextResponse.json(
-    { orders: result, station },
+    { orders: result, station, includeTest },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

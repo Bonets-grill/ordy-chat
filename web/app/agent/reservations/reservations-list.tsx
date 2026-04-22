@@ -18,6 +18,7 @@ type Appointment = {
   title: string;
   notes: string | null;
   status: Status;
+  isTest?: boolean;
   createdAt: string;
 };
 
@@ -43,10 +44,13 @@ export function ReservationsList({ timezone }: { timezone: string }) {
   const [loaded, setLoaded] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState<string | null>(null);
+  // Mig 029: reservas de playground ocultas por defecto.
+  const [includeTest, setIncludeTest] = React.useState<boolean>(false);
 
   const fetchRows = React.useCallback(async () => {
     try {
-      const res = await fetch(`/api/appointments?scope=${scope}`, { cache: "no-store" });
+      const qs = `scope=${scope}${includeTest ? "&includeTest=1" : ""}`;
+      const res = await fetch(`/api/appointments?${qs}`, { cache: "no-store" });
       if (!res.ok) {
         setError(`HTTP ${res.status}`);
         return;
@@ -59,7 +63,7 @@ export function ReservationsList({ timezone }: { timezone: string }) {
     } finally {
       setLoaded(true);
     }
-  }, [scope]);
+  }, [scope, includeTest]);
 
   React.useEffect(() => {
     fetchRows();
@@ -116,20 +120,35 @@ export function ReservationsList({ timezone }: { timezone: string }) {
             Zona horaria: <code className="rounded bg-neutral-100 px-1 py-0.5">{timezone}</code>
           </p>
         </div>
-        <div className="inline-flex rounded-full border border-neutral-200 bg-white p-1 text-sm shadow-sm">
-          {(["upcoming", "past"] as Scope[]).map((s) => (
-            <button
-              key={s}
-              type="button"
-              onClick={() => setScope(s)}
-              className={`rounded-full px-3 py-1.5 transition ${
-                scope === s ? "bg-brand-600 text-white shadow" : "text-neutral-600 hover:text-neutral-900"
-              }`}
-              aria-pressed={scope === s}
-            >
-              {s === "upcoming" ? "Próximas" : "Histórico"}
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setIncludeTest((v) => !v)}
+            className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+              includeTest
+                ? "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
+                : "border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50"
+            }`}
+            aria-pressed={includeTest}
+            title="Muestra/oculta reservas creadas desde el playground"
+          >
+            {includeTest ? "🧪 Mostrando pruebas" : "🧪 Incluir pruebas"}
+          </button>
+          <div className="inline-flex rounded-full border border-neutral-200 bg-white p-1 text-sm shadow-sm">
+            {(["upcoming", "past"] as Scope[]).map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setScope(s)}
+                className={`rounded-full px-3 py-1.5 transition ${
+                  scope === s ? "bg-brand-600 text-white shadow" : "text-neutral-600 hover:text-neutral-900"
+                }`}
+                aria-pressed={scope === s}
+              >
+                {s === "upcoming" ? "Próximas" : "Histórico"}
+              </button>
+            ))}
+          </div>
         </div>
       </header>
 
@@ -210,6 +229,7 @@ function AppointmentRow({
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">
             <span className="truncate font-semibold text-neutral-900">
+              {row.isTest ? <span title="Reserva de playground" className="mr-1">🧪</span> : null}
               {row.customerName ?? "Cliente sin nombre"}
             </span>
             <span

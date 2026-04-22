@@ -4,7 +4,6 @@ import json
 import logging
 from datetime import datetime
 from typing import Any
-from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from anthropic import AsyncAnthropic, APIStatusError, APIConnectionError
@@ -380,69 +379,6 @@ TOOLS: list[dict[str, Any]] = [
 ]
 
 
-def _sandbox_tool_stub(tool_name: str, tool_input: dict[str, Any]) -> str:
-    """Devuelve un JSON de éxito plausible sin ejecutar side-effects.
-
-    Se usa cuando el brain corre en modo sandbox (playground o validator):
-    no se inserta en orders/appointments/handoff_requests, no se notifica
-    al humano del tenant, no se persiste customer_name. El stub emula el
-    shape de cada tool real para que Claude siga la conversación como si
-    la acción hubiera funcionado.
-    """
-    stub_id = uuid4().hex[:12]
-    if tool_name == "recordar_cliente":
-        return json.dumps({"ok": True, "saved": True, "sandbox": True})
-    if tool_name == "crear_pedido":
-        return json.dumps({
-            "ok": True,
-            "order_id": f"sandbox-{stub_id}",
-            "total_eur": 0,
-            "currency": "EUR",
-            "payment_mode": "offline",
-            "payment_methods": [],
-            "payment_notes": "sandbox: pago simulado",
-            "instruccion_al_cliente": (
-                "(sandbox) confírmale el pedido al cliente de forma normal. "
-                "No menciones esta nota de sandbox."
-            ),
-            "sandbox": True,
-        })
-    if tool_name == "agendar_cita":
-        return json.dumps({
-            "ok": True,
-            "appointment_id": f"sandbox-{stub_id}",
-            "starts_at_iso": tool_input.get("starts_at_iso", ""),
-            "duration_min": int(tool_input.get("duration_min") or 30),
-            "title": (tool_input.get("title") or "").strip(),
-            "sandbox": True,
-        })
-    if tool_name == "mis_citas":
-        return json.dumps({"ok": True, "count": 0, "citas": [], "sandbox": True})
-    if tool_name == "solicitar_humano":
-        return json.dumps({
-            "ok": True,
-            "handoff_id": f"sandbox-{stub_id}",
-            "priority": tool_input.get("priority") or "normal",
-            "reason": (tool_input.get("reason") or "").strip(),
-            "notified_human_phone": False,
-            "sandbox": True,
-        })
-    if tool_name == "responder_eta_pedido":
-        return json.dumps({
-            "ok": True,
-            "order_id": f"sandbox-{stub_id}",
-            "status": "pending" if tool_input.get("accepted") else "canceled",
-            "decision": "accepted" if tool_input.get("accepted") else "rejected",
-            "sandbox": True,
-        })
-    if tool_name == "consultar_carta":
-        # Sandbox SÍ ejecuta consultar_carta real — es read-only, sin side-effects.
-        # Stub solo lo evita si el contexto sandbox está roto. Mejor que el playground
-        # devuelva la búsqueda real que un placeholder.
-        return json.dumps({"ok": True, "results": [], "query": tool_input.get("query", ""), "sandbox": True})
-    return json.dumps({"ok": False, "error": f"tool desconocida: {tool_name}", "sandbox": True})
-
-
 async def _ejecutar_tool(
     tenant: TenantContext,
     tool_name: str,
@@ -452,38 +388,32 @@ async def _ejecutar_tool(
 ) -> str:
     """Ejecuta una tool solicitada por Claude y devuelve el resultado serializable.
 
-    En modo sandbox cortocircuitamos ANTES del bloque oportunista de
-    `actualizar_nombre_cliente` para evitar contaminar `conversations` con
-    customer_phone ficticio, y devolvemos stubs JSON por cada tool.
+    Mig 029: el modo sandbox ya NO devuelve stubs JSON. Cada tool se ejecuta
+    REAL pasando is_test=True a los INSERT, lo que marca las filas como de
+    prueba (`orders.is_test`, `appointments.is_test`, `handoff_requests.is_test`,
+    `conversations.is_test`). Los dashboards filtran is_test=false por defecto
+    y muestran las filas de prueba solo con el toggle "🧪 Incluir pruebas".
+    Los workers proactivos WA saltan is_test=true para no intentar enviar a
+    `customer_phone="playground-sandbox"`.
 
-    EXCEPCIÓN: solicitar_humano en sandbox SÍ se ejecuta — crear_handoff
-    recibe sandbox=True y prefija reason "[PLAYGROUND]" + WA body con
-    "🧪 PRUEBA PLAYGROUND". Así el admin verifica end-to-end desde el
-    /dashboard/playground que el handoff llega a su WhatsApp real, sin
-    confundir handoffs de prueba con los de clientes reales.
+    Con esto el playground se vuelve útil end-to-end: Mario puede validar
+    que el pedido llega al KDS, la reserva aparece en /agent/reservations,
+    la conversación queda en /dashboard/conversations — sin contaminar
+    métricas reales.
     """
-    if sandbox and tool_name == "solicitar_humano":
-        result = await crear_handoff(
-            tenant_id=tenant.id,
-            customer_phone=customer_phone,
-            reason=tool_input.get("reason", ""),
-            priority=tool_input.get("priority") or "normal",
-            customer_name=tool_input.get("customer_name"),
-            sandbox=True,
-        )
-        return json.dumps(result)
-
-    if sandbox:
-        return _sandbox_tool_stub(tool_name, tool_input)
+    is_test = bool(sandbox)
 
     # Persistencia oportunista del nombre: cualquier tool que lo reciba lo guarda.
     # Si la tool falla después, el nombre ya quedó — es info barata que no conviene perder.
+    # En sandbox marcamos la conversación con is_test=true (solo aplica al INSERT inicial).
     nombre_oportunista = tool_input.get("customer_name") or (
         tool_input.get("nombre") if tool_name == "recordar_cliente" else None
     )
     if nombre_oportunista and customer_phone:
         try:
-            await actualizar_nombre_cliente(tenant.id, customer_phone, nombre_oportunista)
+            await actualizar_nombre_cliente(
+                tenant.id, customer_phone, nombre_oportunista, is_test=is_test
+            )
         except Exception:
             logger.exception(
                 "no se pudo persistir customer_name",
@@ -493,7 +423,7 @@ async def _ejecutar_tool(
     try:
         if tool_name == "recordar_cliente":
             # El UPDATE ya lo hizo el bloque oportunista. Devolvemos ok para Claude.
-            return json.dumps({"ok": True, "saved": bool(nombre_oportunista)})
+            return json.dumps({"ok": True, "saved": bool(nombre_oportunista), "is_test": is_test})
 
         if tool_name == "crear_pedido":
             # Guards server-side de los campos condicionalmente requeridos.
@@ -529,6 +459,7 @@ async def _ejecutar_tool(
                 table_number=table_num,
                 notes=tool_input.get("notes"),
                 order_type=order_type,
+                is_test=is_test,
             )
             # Mig 027 workflow: el pedido entró en pending_kitchen_review. NO generamos
             # link de pago aquí — eso pasa cuando el cliente confirma el ETA propuesto
@@ -561,6 +492,7 @@ async def _ejecutar_tool(
                 notes=tool_input.get("notes"),
                 closed_for=tenant.reservations_closed_for,
                 tenant_timezone=tenant.timezone,
+                is_test=is_test,
             )
             return json.dumps(result)
 
@@ -576,6 +508,7 @@ async def _ejecutar_tool(
                 reason=tool_input.get("reason", ""),
                 priority=tool_input.get("priority") or "normal",
                 customer_name=tool_input.get("customer_name"),
+                sandbox=is_test,
             )
             return json.dumps(result)
 
@@ -760,11 +693,11 @@ async def generar_respuesta(
     que se adjuntan al mensaje del usuario. Si hay media SIN texto, se mete un
     placeholder "Mira esta imagen" para que Claude tenga contexto textual.
 
-    `sandbox=True` hace que las tools solicitadas por Claude devuelvan stubs
-    JSON sin ejecutar side-effects (no inserta en orders/appointments/
-    handoff_requests, no notifica al humano por WA, no persiste customer_name).
-    Úsalo para playground tenant y validator seeds — cualquier flujo que
-    pase un customer_phone ficticio.
+    `sandbox=True` (mig 029) ejecuta las tools de verdad pero marcando cada
+    fila insertada con `is_test=true`. Dashboards filtran is_test=false por
+    defecto; workers proactivos WA saltan is_test=true (para no intentar
+    enviar WA a `customer_phone="playground-sandbox"`). Úsalo para playground
+    tenant y validator seeds.
     """
     texto_limpio = (mensaje_usuario or "").strip()
     has_media = bool(media_blocks)
@@ -891,7 +824,12 @@ async def generar_respuesta(
     # del cliente probablemente sea su respuesta al ETA propuesto. El bot debe
     # llamar responder_eta_pedido con accepted=true|false según interprete.
     try:
-        if customer_phone and customer_phone != "playground-sandbox":
+        # Mig 029: el playground también se beneficia de este bloque — si el
+        # admin acepta un pedido de prueba en KDS, la siguiente turn del playground
+        # detecta el pending_eta y puede probar la tool responder_eta_pedido. La
+        # query usa customer_phone="playground-sandbox" que solo matchea filas
+        # is_test=true creadas desde el playground, sin colisión con clientes reales.
+        if customer_phone:
             pendiente = await obtener_pedido_pendiente_eta(tenant.id, customer_phone)
             if pendiente:
                 eta = pendiente.get("eta_minutes") or "?"

@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
@@ -9,16 +9,30 @@ import { db } from "@/lib/db";
 import { conversations, messages } from "@/lib/db/schema";
 import { requireTenant } from "@/lib/tenant";
 
-export default async function ConversationsPage() {
+export default async function ConversationsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ includeTest?: string }>;
+}) {
   const session = await auth();
   if (!session) redirect("/signin?from=/conversations");
   const bundle = await requireTenant();
   if (!bundle) redirect("/onboarding");
 
+  // Mig 029: ocultamos conversaciones de playground (is_test=true) por defecto.
+  // Toggle "🧪 Incluir pruebas" añade ?includeTest=1.
+  const sp = await searchParams;
+  const includeTest = sp.includeTest === "1";
+
   const rows = await db
     .select()
     .from(conversations)
-    .where(eq(conversations.tenantId, bundle.tenant.id))
+    .where(
+      and(
+        eq(conversations.tenantId, bundle.tenant.id),
+        ...(includeTest ? [] : [eq(conversations.isTest, false)]),
+      ),
+    )
     .orderBy(desc(conversations.lastMessageAt))
     .limit(50);
 
@@ -41,9 +55,21 @@ export default async function ConversationsPage() {
           <h1 className="text-3xl font-semibold text-neutral-900">Conversaciones</h1>
           <p className="mt-1 text-neutral-500">Últimas 50 conversaciones de tu agente.</p>
         </div>
-        <Button asChild variant="secondary">
-          <a href="/api/conversations/export" download>Exportar CSV</a>
-        </Button>
+        <div className="flex items-center gap-2">
+          <Link
+            href={includeTest ? "/conversations" : "/conversations?includeTest=1"}
+            className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+              includeTest
+                ? "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
+                : "border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50"
+            }`}
+          >
+            {includeTest ? "🧪 Mostrando pruebas" : "🧪 Incluir pruebas"}
+          </Link>
+          <Button asChild variant="secondary">
+            <a href="/api/conversations/export" download>Exportar CSV</a>
+          </Button>
+        </div>
       </div>
 
       <Card className="mt-6">

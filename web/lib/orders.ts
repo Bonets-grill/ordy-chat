@@ -32,6 +32,9 @@ export type CreateOrderInput = {
   tableNumber?: string;
   items: OrderItemInput[];
   notes?: string;
+  /** Mig 029: true = pedido creado desde el playground (runtime sandbox=true).
+   *  KDS filtra is_test=false por defecto; workers proactivos WA saltan estas filas. */
+  isTest?: boolean;
 };
 
 export type OrderTotals = {
@@ -92,6 +95,8 @@ export async function createOrder(input: CreateOrderInput) {
       taxCents: totals.taxCents,
       totalCents: totals.totalCents,
       currency: "EUR",
+      // Mig 029: marca playground. Solo el runtime con x-internal-secret puede setear true.
+      isTest: input.isTest ?? false,
     })
     .returning();
 

@@ -358,9 +358,14 @@ async def internal_learning_run(request: Request):
 
 @app.post("/internal/playground/generate")
 async def internal_playground_generate(request: Request):
-    """Ejecuta brain.generar_respuesta con el sistema prompt real del tenant
-    pero SIN escribir a conversations/messages y SIN enviar a WhatsApp.
-    Uso: /dashboard/playground del tenant para probar el agente.
+    """Ejecuta brain.generar_respuesta con el sistema prompt real del tenant.
+
+    Mig 029: antes este endpoint stubbaba todas las tools y no persistía NADA.
+    Ahora ejecuta las tools de verdad con sandbox=True → is_test=true en DB.
+    Orders, reservas, conversaciones y mensajes se guardan marcados is_test=true
+    para que aparezcan en los dashboards con el toggle "🧪 Incluir pruebas".
+    Los workers proactivos de WA saltan is_test=true para no enviar mensajes
+    a `customer_phone="playground-sandbox"`.
 
     Body: {"tenant_slug": str, "messages": [{"role": "user"|"assistant", "content": str}]}
     Devuelve: {"response": str, "tokens_in": int, "tokens_out": int}
@@ -414,6 +419,26 @@ async def internal_playground_generate(request: Request):
             extra={"event": "playground_error", "tenant_slug": tenant_slug},
         )
         raise HTTPException(status_code=502, detail=f"brain: {type(e).__name__}")
+
+    # Mig 029: persistir conversación/mensajes con is_test=True para que aparezcan
+    # en /dashboard/conversations con el toggle "Incluir pruebas". Best-effort:
+    # si falla, la respuesta al user se devuelve igual.
+    try:
+        await guardar_intercambio(
+            tenant_id=tenant.id,
+            phone="playground-sandbox",
+            mensaje_usuario=user_text,
+            respuesta_agente=respuesta,
+            mensaje_id=None,
+            tokens_in=tin,
+            tokens_out=tout,
+            is_test=True,
+        )
+    except Exception:
+        logger.exception(
+            "playground guardar_intercambio falló",
+            extra={"event": "playground_persist_error", "tenant_slug": tenant_slug},
+        )
 
     return {"response": respuesta, "tokens_in": tin, "tokens_out": tout}
 

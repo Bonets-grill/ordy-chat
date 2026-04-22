@@ -19,6 +19,9 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url);
   const scope = url.searchParams.get("scope") === "past" ? "past" : "upcoming";
+  // Mig 029: reservas de playground ocultas por defecto. UI añade includeTest=1
+  // cuando el admin activa "🧪 Incluir pruebas".
+  const includeTest = url.searchParams.get("includeTest") === "1";
 
   const cutoff = new Date(Date.now() - 2 * 60 * 60 * 1000); // 2h atrás
 
@@ -31,6 +34,7 @@ export async function GET(req: Request) {
         scope === "upcoming"
           ? gte(appointments.startsAt, cutoff)
           : lt(appointments.startsAt, cutoff),
+        ...(includeTest ? [] : [eq(appointments.isTest, false)]),
       ),
     )
     .orderBy(scope === "upcoming" ? appointments.startsAt : desc(appointments.startsAt))
@@ -47,9 +51,11 @@ export async function GET(req: Request) {
         title: a.title,
         notes: a.notes,
         status: a.status,
+        isTest: a.isTest,
         createdAt: a.createdAt.toISOString(),
       })),
       scope,
+      includeTest,
     },
     { headers: { "Cache-Control": "no-store" } },
   );
