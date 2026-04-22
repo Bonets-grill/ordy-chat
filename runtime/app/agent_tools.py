@@ -206,6 +206,84 @@ async def crear_handoff(
     }
 
 
+async def obtener_pedido_pendiente_eta(
+    tenant_id: UUID, customer_phone: str
+) -> dict[str, Any] | None:
+    """Devuelve el pedido más reciente del cliente que está esperando que él
+    confirme el ETA propuesto por cocina. None si no hay ninguno.
+
+    Estado esperado: status='pending_kitchen_review' AND
+    kitchen_decision='accepted' AND customer_eta_decision IS NULL.
+    """
+    pool = await inicializar_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT id, pickup_eta_minutes, total_cents, currency, order_type
+            FROM orders
+            WHERE tenant_id = $1
+              AND customer_phone = $2
+              AND status = 'pending_kitchen_review'
+              AND kitchen_decision = 'accepted'
+              AND customer_eta_decision IS NULL
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            tenant_id, customer_phone,
+        )
+    if not row:
+        return None
+    return {
+        "id": str(row["id"]),
+        "eta_minutes": row["pickup_eta_minutes"],
+        "total_eur": (row["total_cents"] or 0) / 100,
+        "currency": row["currency"] or "EUR",
+        "order_type": row["order_type"],
+    }
+
+
+async def responder_eta_pedido(
+    tenant_id: UUID,
+    customer_phone: str,
+    accepted: bool,
+) -> dict[str, Any]:
+    """Procesa la respuesta del cliente al ETA propuesto por cocina.
+
+    accepted=True → status='pending' (entra al flujo KDS normal,
+                    cocina lo cocina y avanza a preparing/ready).
+    accepted=False → status='canceled', cliente declinó el tiempo.
+
+    Idempotente por orden: solo afecta orders del cliente en el estado
+    correcto (pending_kitchen_review + accepted + decision NULL). Race-safe
+    por la combinación tenant+customer_phone.
+    """
+    pool = await inicializar_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            UPDATE orders
+            SET customer_eta_decision = $3,
+                status = CASE WHEN $3 = 'accepted' THEN 'pending' ELSE 'canceled' END,
+                updated_at = now()
+            WHERE tenant_id = $1
+              AND customer_phone = $2
+              AND status = 'pending_kitchen_review'
+              AND kitchen_decision = 'accepted'
+              AND customer_eta_decision IS NULL
+            RETURNING id, status
+            """,
+            tenant_id, customer_phone, "accepted" if accepted else "rejected",
+        )
+    if not row:
+        return {"ok": False, "error": "no_pending_eta", "hint": "No hay pedido pendiente de confirmación de ETA para este cliente."}
+    return {
+        "ok": True,
+        "order_id": str(row["id"]),
+        "status": row["status"],
+        "decision": "accepted" if accepted else "rejected",
+    }
+
+
 async def listar_citas_del_cliente(
     tenant_id: UUID, customer_phone: str, limit: int = 5
 ) -> list[dict[str, Any]]:
