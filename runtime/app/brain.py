@@ -167,15 +167,26 @@ TOOLS: list[dict[str, Any]] = [
         "description": (
             "Crea un pedido (factura simplificada) para un comensal del restaurante y "
             "devuelve un enlace de pago de Stripe que el cliente puede abrir en su móvil. "
-            "ÚSALO solo cuando el cliente ha confirmado los productos que quiere, NO para "
-            "preguntas sobre la carta, sugerencias o pedidos a medias. Extrae precios del "
-            "menú del restaurante que tienes en tu contexto. Si no estás seguro de un precio, "
-            "pregunta al cliente antes de llamar la tool."
+            "ÚSALO solo cuando el cliente ha confirmado: (a) si es para comer aquí o "
+            "para llevar, (b) si comer aquí, el número de mesa, (c) si para llevar, su "
+            "nombre, (d) los productos exactos. Extrae precios del menú del restaurante "
+            "que tienes en tu contexto. Si no estás seguro de un precio, pregunta al "
+            "cliente antes de llamar la tool. NO llames la tool con datos a medias.\n\n"
+            "El pedido entra en estado 'pending_kitchen_review' — la cocina debe "
+            "aceptarlo con un tiempo (ETA). Luego el cliente confirma el tiempo y "
+            "el pedido pasa a preparación. NO digas al cliente 'pedido confirmado' "
+            "tras llamar esta tool — di 'pedido enviado a cocina, te confirmo el "
+            "tiempo en seguida'."
         ),
         "input_schema": {
             "type": "object",
-            "required": ["items"],
+            "required": ["order_type", "items"],
             "properties": {
+                "order_type": {
+                    "type": "string",
+                    "enum": ["dine_in", "takeaway"],
+                    "description": "OBLIGATORIO. 'dine_in' si el cliente come aquí en el local (requiere table_number). 'takeaway' si es para llevar/recoger (requiere customer_name). NO inventes — pregúntale primero al cliente.",
+                },
                 "items": {
                     "type": "array",
                     "minItems": 1,
@@ -199,8 +210,8 @@ TOOLS: list[dict[str, Any]] = [
                         },
                     },
                 },
-                "table_number": {"type": "string", "description": "Número de mesa si el cliente lo mencionó"},
-                "customer_name": {"type": "string", "description": "Nombre del cliente si lo conoces"},
+                "table_number": {"type": "string", "description": "REQUERIDO si order_type='dine_in'. Número de mesa donde está sentado el cliente."},
+                "customer_name": {"type": "string", "description": "REQUERIDO si order_type='takeaway'. Nombre para llamar al cliente cuando esté listo."},
                 "notes": {"type": "string", "description": "Nota general para el pedido"},
             },
         },
@@ -418,39 +429,58 @@ async def _ejecutar_tool(
             return json.dumps({"ok": True, "saved": bool(nombre_oportunista)})
 
         if tool_name == "crear_pedido":
+            # Guards server-side de los campos condicionalmente requeridos.
+            # Defienden contra el modelo que ignora la description del tool y llama
+            # con datos faltantes. Devolvemos error parseable que Claude convierte
+            # en pregunta al cliente.
+            order_type = (tool_input.get("order_type") or "takeaway").lower()
+            if order_type not in ("dine_in", "takeaway"):
+                return json.dumps({
+                    "ok": False,
+                    "error": "order_type_invalido",
+                    "hint": "order_type debe ser 'dine_in' (comer aquí) o 'takeaway' (llevar). Pregúntale al cliente.",
+                })
+            table_num = (tool_input.get("table_number") or "").strip() or None
+            customer_nm = (tool_input.get("customer_name") or "").strip() or None
+            if order_type == "dine_in" and not table_num:
+                return json.dumps({
+                    "ok": False,
+                    "error": "falta_table_number",
+                    "hint": "Para comer aquí necesitas el número de mesa. Pregúntale al cliente '¿en qué mesa estás?' antes de llamar la tool otra vez.",
+                })
+            if order_type == "takeaway" and not customer_nm:
+                return json.dumps({
+                    "ok": False,
+                    "error": "falta_customer_name",
+                    "hint": "Para llevar necesitas el nombre del cliente. Pregúntale '¿a qué nombre lo recoges?' antes de llamar la tool otra vez.",
+                })
             order = await crear_pedido(
                 tenant_slug=tenant.slug,
                 items=tool_input.get("items", []),
                 customer_phone=customer_phone,
-                customer_name=tool_input.get("customer_name"),
-                table_number=tool_input.get("table_number"),
+                customer_name=customer_nm,
+                table_number=table_num,
                 notes=tool_input.get("notes"),
+                order_type=order_type,
             )
-            link = await obtener_link_pago(order["orderId"])
+            # Mig 027 workflow: el pedido entró en pending_kitchen_review. NO generamos
+            # link de pago aquí — eso pasa cuando el cliente confirma el ETA propuesto
+            # por cocina (Fase 6). El bot debe decirle al cliente que el pedido está
+            # en cocina y que le confirmará el tiempo en seguida.
             result: dict[str, Any] = {
                 "ok": True,
                 "order_id": order["orderId"],
                 "total_eur": order["totalCents"] / 100,
                 "currency": order["currency"],
+                "status": "pending_kitchen_review",
+                "instruccion_al_cliente": (
+                    "Confirma al cliente que su pedido fue ENVIADO A COCINA con el "
+                    "TOTAL en euros. Dile que en cuanto cocina lo acepte le confirmas "
+                    "el TIEMPO DE PREPARACIÓN. NO le digas 'pedido confirmado', NO le "
+                    "ofrezcas link de pago todavía — eso viene después de que cocina "
+                    "acepte y el cliente confirme el tiempo."
+                ),
             }
-            kind = link.get("kind")
-            if kind == "online":
-                result["payment_mode"] = "online"
-                result["payment_url"] = link.get("url")
-                result["instruccion_al_cliente"] = (
-                    "Confírmale el pedido y envíale el link de pago. "
-                    "Recuérdale que pague antes de recoger/servir."
-                )
-            else:
-                # kind == "offline" → Stripe desactivado o no configurado.
-                result["payment_mode"] = "offline"
-                result["payment_methods"] = link.get("paymentMethods", [])
-                result["payment_notes"] = link.get("paymentNotes")
-                result["instruccion_al_cliente"] = (
-                    "Confírmale el pedido con el TOTAL y dile que pague usando uno "
-                    "de los payment_methods disponibles (p.ej. al recoger, en efectivo). "
-                    "NO menciones links de pago online — no están activos."
-                )
             return json.dumps(result)
 
         if tool_name == "agendar_cita":

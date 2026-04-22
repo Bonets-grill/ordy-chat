@@ -15,6 +15,9 @@ export const runtime = "nodejs";
 
 const createSchema = z.object({
   tenantSlug: z.string().min(1),
+  // Mig 027: nuevo workflow cocina ↔ cliente. orderType siempre se persiste; default
+  // 'takeaway' por backward-compat con callers legacy que aún no envían el campo.
+  orderType: z.enum(["dine_in", "takeaway"]).default("takeaway"),
   customerPhone: z.string().optional(),
   customerName: z.string().optional(),
   tableNumber: z.string().optional(),
@@ -28,7 +31,13 @@ const createSchema = z.object({
       notes: z.string().optional(),
     }),
   ).min(1),
-});
+}).refine(
+  (d) => d.orderType !== "dine_in" || (d.tableNumber != null && d.tableNumber.trim().length > 0),
+  { message: "tableNumber requerido para order_type=dine_in", path: ["tableNumber"] },
+).refine(
+  (d) => d.orderType !== "takeaway" || (d.customerName != null && d.customerName.trim().length > 0),
+  { message: "customerName requerido para order_type=takeaway", path: ["customerName"] },
+);
 
 export async function POST(req: Request) {
   // Interno: el runtime firma con RUNTIME_INTERNAL_SECRET
@@ -52,6 +61,7 @@ export async function POST(req: Request) {
 
   const order = await createOrder({
     tenantId: tenant.id,
+    orderType: parsed.data.orderType,
     customerPhone: parsed.data.customerPhone,
     customerName: parsed.data.customerName,
     tableNumber: parsed.data.tableNumber,
