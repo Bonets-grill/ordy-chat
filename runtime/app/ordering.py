@@ -44,6 +44,7 @@ async def crear_pedido(
     customer_name: str | None = None,
     table_number: str | None = None,
     notes: str | None = None,
+    order_type: str = "takeaway",
 ) -> dict[str, Any]:
     """
     Crea un pedido en la web. `items` debe ser una lista de dicts con:
@@ -53,10 +54,14 @@ async def crear_pedido(
       - vat_rate: float opcional (si no, usa default del tenant)
       - notes: str opcional
 
+    `order_type` ('dine_in'|'takeaway') determina el flujo en cocina.
+    Default 'takeaway' por backward-compat con callers legacy.
+
     Devuelve {orderId, totalCents, currency}.
     """
-    payload = {
+    payload: dict[str, Any] = {
         "tenantSlug": tenant_slug,
+        "orderType": order_type,
         "items": [
             {
                 "name": it["name"],

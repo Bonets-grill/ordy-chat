@@ -24,6 +24,9 @@ export type OrderItemInput = {
 
 export type CreateOrderInput = {
   tenantId: string;
+  /** 'dine_in' (comer aquí, requiere tableNumber) | 'takeaway' (llevar, requiere customerName).
+   *  Default 'takeaway' por backward-compat. */
+  orderType?: "dine_in" | "takeaway";
   customerPhone?: string;
   customerName?: string;
   tableNumber?: string;
@@ -69,10 +72,16 @@ export async function createOrder(input: CreateOrderInput) {
     { pricesIncludeTax: tenant.pricesIncludeTax ?? true, defaultRate },
   );
 
+  const orderType = input.orderType ?? "takeaway";
   const [order] = await db
     .insert(orders)
     .values({
       tenantId: input.tenantId,
+      orderType,
+      // Mig 027: pedidos nuevos arrancan en pending_kitchen_review hasta que la cocina
+      // los acepta con ETA. Antes el default era 'pending' y se saltaba ese gate.
+      status: "pending_kitchen_review",
+      kitchenDecision: "pending",
       customerPhone: input.customerPhone,
       customerName: input.customerName,
       tableNumber: input.tableNumber,
