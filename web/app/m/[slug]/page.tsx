@@ -11,6 +11,7 @@
 // proxy.ts no cubre /m/:path*, así que la ruta es pública sin tocar config.
 
 import { and, asc, eq } from "drizzle-orm";
+import { CalendarDays, MessageCircle, Phone } from "lucide-react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
@@ -147,7 +148,7 @@ export default async function PublicMenuPage({ params }: PageParams) {
             background: `radial-gradient(ellipse at 25% 20%, ${brandColor}66 0%, transparent 55%), radial-gradient(ellipse at 80% 80%, ${brandColor}33 0%, transparent 50%)`,
           }}
         />
-        <div className="relative mx-auto max-w-2xl px-6 pb-16 pt-14 text-center">
+        <div className="relative mx-auto max-w-2xl px-6 pb-32 pt-14 text-center">
           {tenant.brandLogoUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -196,25 +197,27 @@ export default async function PublicMenuPage({ params }: PageParams) {
         </div>
       </header>
 
-      {/* CTAs — card flotante bajo el hero */}
-      <section className="mx-auto -mt-8 max-w-2xl px-4">
-        <div className="grid grid-cols-3 gap-2 rounded-2xl bg-white p-2 shadow-xl ring-1 ring-stone-200">
+      {/* CTAs — card flotante bajo el hero. `-mt-20` y `z-10` aseguran que
+          la card suba limpiamente sobre la transición hero → fondo crema,
+          sin quedar pegada al borde del hero como "montada". */}
+      <section className="relative z-10 mx-auto -mt-20 max-w-2xl px-4">
+        <div className="grid grid-cols-3 gap-2 rounded-2xl bg-white p-2 shadow-2xl ring-1 ring-black/5">
           <a
             href={waHref ?? "#"}
             aria-disabled={!waHref}
             target="_blank"
             rel="noopener noreferrer"
-            className={`flex flex-col items-center justify-center gap-1 rounded-xl py-4 text-xs font-semibold transition ${!waHref ? "cursor-not-allowed bg-stone-100 text-stone-300" : "bg-emerald-500 text-white hover:bg-emerald-600"}`}
+            className={`flex flex-col items-center justify-center gap-1.5 rounded-xl py-5 text-xs font-semibold transition active:scale-95 ${!waHref ? "cursor-not-allowed bg-stone-100 text-stone-300" : "bg-emerald-500 text-white hover:bg-emerald-600"}`}
           >
-            <span className="text-2xl leading-none">💬</span>
+            <MessageCircle className="h-6 w-6" strokeWidth={2.25} />
             <span>WhatsApp</span>
           </a>
           <a
             href={telHref ?? "#"}
             aria-disabled={!telHref}
-            className={`flex flex-col items-center justify-center gap-1 rounded-xl py-4 text-xs font-semibold transition ${!telHref ? "cursor-not-allowed bg-stone-100 text-stone-300" : "bg-stone-900 text-white hover:bg-stone-800"}`}
+            className={`flex flex-col items-center justify-center gap-1.5 rounded-xl py-5 text-xs font-semibold transition active:scale-95 ${!telHref ? "cursor-not-allowed bg-stone-100 text-stone-300" : "bg-stone-900 text-white hover:bg-stone-800"}`}
           >
-            <span className="text-2xl leading-none">📞</span>
+            <Phone className="h-6 w-6" strokeWidth={2.25} />
             <span>Llamar</span>
           </a>
           <a
@@ -222,16 +225,16 @@ export default async function PublicMenuPage({ params }: PageParams) {
             aria-disabled={!waReserveHref}
             target="_blank"
             rel="noopener noreferrer"
-            className={`flex flex-col items-center justify-center gap-1 rounded-xl py-4 text-xs font-semibold transition ${!waReserveHref ? "cursor-not-allowed bg-stone-100 text-stone-300" : "bg-amber-500 text-stone-950 hover:bg-amber-600"}`}
+            className={`flex flex-col items-center justify-center gap-1.5 rounded-xl py-5 text-xs font-semibold transition active:scale-95 ${!waReserveHref ? "cursor-not-allowed bg-stone-100 text-stone-300" : "bg-amber-500 text-stone-950 hover:bg-amber-600"}`}
           >
-            <span className="text-2xl leading-none">🗓️</span>
+            <CalendarDays className="h-6 w-6" strokeWidth={2.25} />
             <span>Reservar</span>
           </a>
         </div>
       </section>
 
       {/* Carta */}
-      <section className="mx-auto mt-14 max-w-2xl px-6 pb-20">
+      <section className="mx-auto mt-16 max-w-2xl px-6 pb-20">
         <div className="mb-10 text-center">
           <p className="text-[10px] font-semibold uppercase tracking-[0.4em] text-stone-500">
             Carta
