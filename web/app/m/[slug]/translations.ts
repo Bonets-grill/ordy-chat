@@ -35,6 +35,20 @@ type Copy = {
   orderMessageIntro: string;
   orderMessageTotal: string;
   tryRecommendation: string;
+  voiceOn: string;
+  voiceOff: string;
+  micStart: string;
+  micStop: string;
+};
+
+// Mapeo BCP-47 para Web Speech API (SpeechRecognition + SpeechSynthesis).
+export const LANG_BCP47: Record<Lang, string> = {
+  es: "es-ES",
+  en: "en-US",
+  fr: "fr-FR",
+  de: "de-DE",
+  it: "it-IT",
+  pt: "pt-PT",
 };
 
 export const strings: Record<Lang, Copy> = {
@@ -58,6 +72,10 @@ export const strings: Record<Lang, Copy> = {
     orderMessageIntro: "Hola, quiero pedir:",
     orderMessageTotal: "Total",
     tryRecommendation: "Recomiéndame algo",
+    voiceOn: "Activar voz",
+    voiceOff: "Silenciar voz",
+    micStart: "Hablar",
+    micStop: "Parar",
   },
   en: {
     greeting: (n) => `Welcome to ${n}! Want a recommendation?`,
@@ -79,6 +97,10 @@ export const strings: Record<Lang, Copy> = {
     orderMessageIntro: "Hi, I'd like to order:",
     orderMessageTotal: "Total",
     tryRecommendation: "Recommend something",
+    voiceOn: "Enable voice",
+    voiceOff: "Mute voice",
+    micStart: "Speak",
+    micStop: "Stop",
   },
   fr: {
     greeting: (n) => `Bienvenue à ${n} ! Voulez-vous une recommandation ?`,
@@ -100,6 +122,10 @@ export const strings: Record<Lang, Copy> = {
     orderMessageIntro: "Bonjour, je voudrais commander :",
     orderMessageTotal: "Total",
     tryRecommendation: "Recommandez-moi",
+    voiceOn: "Activer la voix",
+    voiceOff: "Couper la voix",
+    micStart: "Parler",
+    micStop: "Arrêter",
   },
   de: {
     greeting: (n) => `Willkommen bei ${n}! Soll ich dir etwas empfehlen?`,
@@ -121,6 +147,10 @@ export const strings: Record<Lang, Copy> = {
     orderMessageIntro: "Hallo, ich möchte bestellen:",
     orderMessageTotal: "Summe",
     tryRecommendation: "Empfehle mir was",
+    voiceOn: "Sprache aktivieren",
+    voiceOff: "Sprache stummschalten",
+    micStart: "Sprechen",
+    micStop: "Stopp",
   },
   it: {
     greeting: (n) => `Benvenuto a ${n}! Vuoi un consiglio?`,
@@ -142,6 +172,10 @@ export const strings: Record<Lang, Copy> = {
     orderMessageIntro: "Ciao, vorrei ordinare:",
     orderMessageTotal: "Totale",
     tryRecommendation: "Consigliami qualcosa",
+    voiceOn: "Attiva voce",
+    voiceOff: "Disattiva voce",
+    micStart: "Parla",
+    micStop: "Stop",
   },
   pt: {
     greeting: (n) => `Bem-vindo ao ${n}! Quer uma recomendação?`,
@@ -163,5 +197,9 @@ export const strings: Record<Lang, Copy> = {
     orderMessageIntro: "Olá, queria pedir:",
     orderMessageTotal: "Total",
     tryRecommendation: "Recomenda-me algo",
+    voiceOn: "Ativar voz",
+    voiceOff: "Silenciar voz",
+    micStart: "Falar",
+    micStop: "Parar",
   },
 };

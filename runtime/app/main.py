@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import PlainTextResponse
 
 from app.admin_resolver import manejar_admin_flow
@@ -441,6 +441,86 @@ async def internal_playground_generate(request: Request):
         )
 
     return {"response": respuesta, "tokens_in": tin, "tokens_out": tout}
+
+
+@app.post("/internal/public-menu/transcribe")
+async def internal_public_menu_transcribe(
+    request: Request,
+    audio: UploadFile = File(...),
+    tenant_slug: str = Form(...),
+    lang: str | None = Form(default=None),
+):
+    """Transcribe un audio del widget público (carta conversacional) con Whisper.
+
+    Reutiliza `app.audio.transcribir_audio` — mismo código que usamos para
+    audios WhatsApp. La key OpenAI se resuelve con el patrón estándar:
+    tenant.credentials['openai_api_key'] → env → platform_settings.
+
+    Body (multipart/form-data):
+      - audio: fichero de audio (webm/ogg/mp4/m4a/wav). Máx 25 MB.
+      - tenant_slug: str
+      - lang: str opcional (hint ISO-639-1 → mejora precisión Whisper)
+
+    Devuelve: {"text": str, "lang": str}
+    """
+    _check_internal_secret(request)
+
+    from app.audio import (
+        AudioTooLargeError,
+        MAX_AUDIO_BYTES,
+        OpenAIKeyMissingError,
+        obtener_openai_api_key,
+        transcribir_audio,
+    )
+    from app.tenants import cargar_tenant_por_slug
+
+    if not tenant_slug:
+        raise HTTPException(status_code=400, detail="tenant_slug requerido")
+
+    try:
+        tenant = await cargar_tenant_por_slug(tenant_slug)
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"tenant: {type(e).__name__}")
+
+    raw = await audio.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="audio vacío")
+    if len(raw) > MAX_AUDIO_BYTES:
+        raise HTTPException(status_code=413, detail="audio supera 25 MB")
+
+    mime = audio.content_type or "audio/webm"
+
+    try:
+        oai_key = await obtener_openai_api_key(tenant.credentials)
+    except OpenAIKeyMissingError:
+        logger.warning(
+            "public-menu transcribe — OPENAI_API_KEY ausente",
+            extra={"event": "pub_menu_audio_no_key", "tenant_slug": tenant_slug},
+        )
+        raise HTTPException(status_code=503, detail="openai_key_missing")
+
+    try:
+        # Whisper acepta hint ISO-639-1. Si viene vacío, usa default "es".
+        text = (
+            await transcribir_audio(raw, mime, oai_key, language=lang)
+            if lang
+            else await transcribir_audio(raw, mime, oai_key)
+        )
+    except AudioTooLargeError:
+        raise HTTPException(status_code=413, detail="audio supera 25 MB")
+    except Exception as e:
+        logger.exception(
+            "public-menu whisper fallo",
+            extra={
+                "event": "pub_menu_audio_whisper_error",
+                "tenant_slug": tenant_slug,
+                "bytes": len(raw),
+                "mime": mime,
+            },
+        )
+        raise HTTPException(status_code=502, detail=f"whisper: {type(e).__name__}")
+
+    return {"text": (text or "").strip(), "lang": lang or ""}
 
 
 @app.post("/internal/orders/notify-eta-accepted")
