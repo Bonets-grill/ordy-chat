@@ -354,6 +354,29 @@ TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "name": "consultar_carta",
+        "description": (
+            "Busca items de la carta del negocio por nombre (acepta typos y variaciones). "
+            "ÚSALA cuando el cliente pregunta por un plato/bebida específico que no encuentras "
+            "en la carta inyectada en el system block o cuando tienes duda del nombre exacto. "
+            "Devuelve hasta 5 matches con name, price_eur, category, description. Si query "
+            "devuelve 0 matches, responde al cliente que ese item no está en la carta y ofrece "
+            "alternativas. Si devuelve >1 matches similares, pregunta cuál quería."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["query"],
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Texto a buscar (puede tener typos). Ej: 'Dakota', 'cerveza alemana', 'sin gluten'.",
+                    "minLength": 2,
+                    "maxLength": 60,
+                },
+            },
+        },
+    },
 ]
 
 
@@ -412,6 +435,11 @@ def _sandbox_tool_stub(tool_name: str, tool_input: dict[str, Any]) -> str:
             "decision": "accepted" if tool_input.get("accepted") else "rejected",
             "sandbox": True,
         })
+    if tool_name == "consultar_carta":
+        # Sandbox SÍ ejecuta consultar_carta real — es read-only, sin side-effects.
+        # Stub solo lo evita si el contexto sandbox está roto. Mejor que el playground
+        # devuelva la búsqueda real que un placeholder.
+        return json.dumps({"ok": True, "results": [], "query": tool_input.get("query", ""), "sandbox": True})
     return json.dumps({"ok": False, "error": f"tool desconocida: {tool_name}", "sandbox": True})
 
 
@@ -560,6 +588,14 @@ async def _ejecutar_tool(
             )
             return json.dumps(result)
 
+        if tool_name == "consultar_carta":
+            from app.menu_search import buscar_items
+            query = (tool_input.get("query") or "").strip()
+            if len(query) < 2:
+                return json.dumps({"ok": False, "error": "query muy corta (min 2 chars)"})
+            results = await buscar_items(tenant.id, query, limit=5)
+            return json.dumps({"ok": True, "query": query, "count": len(results), "results": results})
+
         return json.dumps({"ok": False, "error": f"tool desconocida: {tool_name}"})
     except Exception as e:
         logger.exception(
@@ -648,6 +684,66 @@ async def _build_menu_overrides_block(tenant_id: "UUID") -> str | None:  # noqa:
         + "\n".join(lineas) +
         "\n</disponibilidad_hoy>"
     )
+
+
+async def _build_menu_block(tenant_id: "UUID") -> str | None:  # noqa: F821
+    """Mig 028 Fase B: devuelve el bloque <carta> con todos los items
+    available=true del tenant agrupados por categoría con precio.
+
+    Reemplaza la práctica antigua de pegar la carta como texto libre dentro
+    del system_prompt. Ventajas:
+      - Single source of truth (menu_items table).
+      - Precios siempre frescos: si el tenant edita un item en /dashboard/carta
+        (Fase C), el siguiente turno del bot ya lee el cambio.
+      - Permite tool consultar_carta(query) con fuzzy match server-side.
+
+    Formato compacto: máximo ~3KB por tenant medio (60-80 items).
+    """
+    from app.memory import inicializar_pool
+    pool = await inicializar_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT category, name, price_cents, description
+            FROM menu_items
+            WHERE tenant_id = $1 AND available = true
+            ORDER BY category, sort_order, name
+            """,
+            tenant_id,
+        )
+    if not rows:
+        return None
+    # Agrupar por categoría manteniendo orden de aparición.
+    por_categoria: dict[str, list[dict]] = {}
+    orden_cat: list[str] = []
+    for r in rows:
+        cat = r["category"] or "Otros"
+        if cat not in por_categoria:
+            por_categoria[cat] = []
+            orden_cat.append(cat)
+        por_categoria[cat].append({"name": r["name"], "price_cents": r["price_cents"], "desc": r["description"]})
+
+    lineas = ["<carta>"]
+    lineas.append(
+        "Esta es la carta vigente del negocio (fuente de verdad — usa estos "
+        "precios y nombres EXACTOS, no inventes ni cambies). Si el cliente "
+        "menciona un item con typo (Dakota → Dacoka, etc.), interpretalo como "
+        "el más parecido de esta lista."
+    )
+    for cat in orden_cat:
+        lineas.append(f"\n### {cat}")
+        for it in por_categoria[cat]:
+            precio = f"{it['price_cents'] / 100:.2f} €".replace(".", ",")
+            base = f"- {it['name']} — {precio}"
+            if it["desc"]:
+                # Trunca descripción para no inflar tokens (max 80 chars).
+                d = it["desc"].strip()
+                if len(d) > 80:
+                    d = d[:77] + "…"
+                base += f" ({d})"
+            lineas.append(base)
+    lineas.append("</carta>")
+    return "\n".join(lineas)
 
 
 async def generar_respuesta(
@@ -747,6 +843,20 @@ async def generar_respuesta(
     if contexto_bloque:
         # Bloque NO cacheado: cambia por usuario y tras cada pedido/cita.
         system_blocks.append({"type": "text", "text": contexto_bloque})
+
+    # Mig 028 Fase B: carta estructurada del tenant (menu_items). Inyectada antes
+    # de menu_overrides para que las disponibilidades del día actúen como parche
+    # encima de la carta base. Si el tenant aún no tiene menu_items cargados,
+    # el bloque devuelve None y el flujo sigue con la carta legacy del system_prompt.
+    try:
+        carta_block = await _build_menu_block(tenant.id)
+        if carta_block:
+            system_blocks.append({"type": "text", "text": carta_block})
+    except Exception:
+        logger.exception(
+            "menu_block falló (cliente sigue sin carta dinámica)",
+            extra={"tenant_slug": tenant.slug, "event": "menu_block_error"},
+        )
 
     # Menu overrides activos (C4 tanda 3d 2026-04-20). Si el admin deshabilitó
     # items por WhatsApp ("sin pulpo hoy"), el LLM cliente DEBE saberlo para
