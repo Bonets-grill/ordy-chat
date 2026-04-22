@@ -12,10 +12,37 @@ import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { orders } from "@/lib/db/schema";
+import { agentConfigs, orders, tenants } from "@/lib/db/schema";
 import { requireTenant } from "@/lib/tenant";
 
 export const runtime = "nodejs";
+
+async function notifyCustomerEtaAccepted(args: {
+  tenantId: string;
+  customerPhone: string;
+  etaMinutes: number;
+  businessName: string;
+  totalEur: number;
+}): Promise<void> {
+  const runtimeUrl = (process.env.RUNTIME_URL ?? "").replace(/\/$/, "");
+  const secret = process.env.RUNTIME_INTERNAL_SECRET ?? "";
+  if (!runtimeUrl || !secret) return; // dev sin runtime configurado
+  try {
+    await fetch(`${runtimeUrl}/internal/orders/notify-eta-accepted`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-internal-secret": secret },
+      body: JSON.stringify({
+        tenant_id: args.tenantId,
+        customer_phone: args.customerPhone,
+        eta_minutes: args.etaMinutes,
+        business_name: args.businessName,
+        total_eur: args.totalEur,
+      }),
+    });
+  } catch {
+    // best-effort. Si falla, KDS sigue funcionando sin notificación al cliente.
+  }
+}
 
 const acceptSchema = z.object({
   orderId: z.string().min(1),
@@ -57,15 +84,35 @@ export async function POST(req: Request) {
     .set({
       kitchenDecision: "accepted",
       pickupEtaMinutes: etaMinutes,
-      status: "pending",
+      // Mig 027 + Fase 5/6: order queda en pending_kitchen_review hasta que cliente
+      // confirme el ETA por WhatsApp. Bot procesará la respuesta y avanzará a 'pending'.
+      // Si el cliente no responde en X tiempo, un cron eventual cancelará (TBD).
       updatedAt: new Date(),
     })
     .where(eq(orders.id, orderId))
-    .returning({ id: orders.id, status: orders.status, pickupEtaMinutes: orders.pickupEtaMinutes });
+    .returning({
+      id: orders.id,
+      status: orders.status,
+      pickupEtaMinutes: orders.pickupEtaMinutes,
+      customerPhone: orders.customerPhone,
+      totalCents: orders.totalCents,
+    });
 
-  // Fase 5: aquí dispararíamos un WA al cliente con la propuesta de ETA.
-  // Por ahora la transición es directa a 'pending' y el cliente verá el ETA
-  // cuando pase a recoger / cuando un humano se lo notifique.
+  // Notificar al cliente vía WA con la propuesta de ETA. Best-effort.
+  if (updated?.customerPhone) {
+    const [cfg] = await db
+      .select({ businessName: agentConfigs.businessName })
+      .from(agentConfigs)
+      .where(eq(agentConfigs.tenantId, bundle.tenant.id))
+      .limit(1);
+    await notifyCustomerEtaAccepted({
+      tenantId: bundle.tenant.id,
+      customerPhone: updated.customerPhone,
+      etaMinutes: etaMinutes,
+      businessName: cfg?.businessName ?? bundle.tenant.name ?? "el restaurante",
+      totalEur: (updated.totalCents ?? 0) / 100,
+    });
+  }
 
   return NextResponse.json({ ok: true, order: updated });
 }
