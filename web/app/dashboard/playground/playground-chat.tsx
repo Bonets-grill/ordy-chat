@@ -6,6 +6,7 @@
 // el veredicto. Si 👎 el backend manda email al super admin.
 
 import { useEffect, useRef, useState } from "react";
+import { MessageContent } from "@/components/message-content";
 import type { Chip } from "./chips";
 
 type Msg = { role: "user" | "assistant"; content: string; feedback?: "up" | "down" | null };
@@ -136,7 +137,7 @@ export function PlaygroundChat({
                   : "bg-neutral-100 text-neutral-900")
               }
             >
-              <div className="whitespace-pre-wrap">{m.content}</div>
+              <MessageContent text={m.content} />
               {m.role === "assistant" && (
                 <div className="flex items-center gap-2 pt-1">
                   <button
