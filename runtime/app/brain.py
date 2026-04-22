@@ -9,7 +9,13 @@ from zoneinfo import ZoneInfo
 
 from anthropic import AsyncAnthropic, APIStatusError, APIConnectionError
 
-from app.agent_tools import crear_cita, crear_handoff, listar_citas_del_cliente
+from app.agent_tools import (
+    crear_cita,
+    crear_handoff,
+    listar_citas_del_cliente,
+    obtener_pedido_pendiente_eta,
+    responder_eta_pedido,
+)
 from app.memory import actualizar_nombre_cliente, obtener_contexto_cliente
 from app.ordering import crear_pedido, obtener_link_pago
 from app.prompt_wrapper import wrap as wrap_system_prompt
@@ -323,6 +329,31 @@ TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "name": "responder_eta_pedido",
+        "description": (
+            "ÚSALA SOLO cuando el contexto incluye <pedido_pendiente_eta> y el cliente está "
+            "respondiendo a la propuesta de tiempo de preparación que cocina envió. "
+            "Detecta la intención del cliente: si acepta el ETA (responde 'sí', 'vale', 'ok', "
+            "'perfecto', 'me parece bien', 'de acuerdo', 'genial' o similar) → accepted=true. "
+            "Si rechaza el ETA (responde 'no', 'mucho tiempo', 'demasiado', 'cancela', "
+            "'mejor no' o similar) → accepted=false. "
+            "Tras esta tool: confirma al cliente. Si accepted=true di 'perfecto, te avisamos "
+            "cuando esté listo'. Si accepted=false di 'sin problema, hemos cancelado el pedido'. "
+            "NO uses esta tool si el cliente está pidiendo otra cosa (carta, horario, nuevo pedido) "
+            "— en ese caso responde a esa pregunta y no llames la tool."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["accepted"],
+            "properties": {
+                "accepted": {
+                    "type": "boolean",
+                    "description": "true si el cliente confirma el tiempo de preparación, false si lo rechaza.",
+                },
+            },
+        },
+    },
 ]
 
 
@@ -371,6 +402,14 @@ def _sandbox_tool_stub(tool_name: str, tool_input: dict[str, Any]) -> str:
             "priority": tool_input.get("priority") or "normal",
             "reason": (tool_input.get("reason") or "").strip(),
             "notified_human_phone": False,
+            "sandbox": True,
+        })
+    if tool_name == "responder_eta_pedido":
+        return json.dumps({
+            "ok": True,
+            "order_id": f"sandbox-{stub_id}",
+            "status": "pending" if tool_input.get("accepted") else "canceled",
+            "decision": "accepted" if tool_input.get("accepted") else "rejected",
             "sandbox": True,
         })
     return json.dumps({"ok": False, "error": f"tool desconocida: {tool_name}", "sandbox": True})
@@ -509,6 +548,15 @@ async def _ejecutar_tool(
                 reason=tool_input.get("reason", ""),
                 priority=tool_input.get("priority") or "normal",
                 customer_name=tool_input.get("customer_name"),
+            )
+            return json.dumps(result)
+
+        if tool_name == "responder_eta_pedido":
+            accepted = bool(tool_input.get("accepted"))
+            result = await responder_eta_pedido(
+                tenant_id=tenant.id,
+                customer_phone=customer_phone,
+                accepted=accepted,
             )
             return json.dumps(result)
 
@@ -725,6 +773,39 @@ async def generar_respuesta(
         logger.exception(
             "agent_rules_block falló (cliente responde sin reglas duras)",
             extra={"tenant_slug": tenant.slug, "event": "rules_block_error"},
+        )
+
+    # Mig 027 Fase 6: si el cliente tiene un pedido en pending_kitchen_review
+    # con kitchen_decision='accepted' Y customer_eta_decision NULL, inyectamos
+    # bloque <pedido_pendiente_eta> que dice al bot que el siguiente mensaje
+    # del cliente probablemente sea su respuesta al ETA propuesto. El bot debe
+    # llamar responder_eta_pedido con accepted=true|false según interprete.
+    try:
+        if customer_phone and customer_phone != "playground-sandbox":
+            pendiente = await obtener_pedido_pendiente_eta(tenant.id, customer_phone)
+            if pendiente:
+                eta = pendiente.get("eta_minutes") or "?"
+                tot = pendiente.get("total_eur") or 0
+                bloque_eta = (
+                    "<pedido_pendiente_eta>\n"
+                    f"El cliente tiene un pedido aceptado por cocina esperando que él confirme el TIEMPO DE PREPARACIÓN.\n"
+                    f"  - Pedido id: {pendiente['id']}\n"
+                    f"  - Tiempo propuesto por cocina: {eta} minutos\n"
+                    f"  - Total: {tot:.2f} {pendiente.get('currency', 'EUR')}\n"
+                    f"  - Tipo: {pendiente.get('order_type', '?')}\n"
+                    "Si el siguiente mensaje del cliente parece responder al tiempo "
+                    "(sí/vale/ok/perfecto/me parece bien → acepta; no/mucho tiempo/cancela → rechaza), "
+                    "USA la tool `responder_eta_pedido` con accepted=true|false según corresponda. "
+                    "Si el mensaje es ambiguo (cliente pide otra cosa, hace pregunta nueva), "
+                    "responde a esa pregunta normalmente y NO llames la tool — el contexto "
+                    "se mantendrá hasta que el cliente conteste claramente.\n"
+                    "</pedido_pendiente_eta>"
+                )
+                system_blocks.append({"type": "text", "text": bloque_eta})
+    except Exception:
+        logger.exception(
+            "pedido_pendiente_eta block falló (flujo sigue sin el bloque)",
+            extra={"tenant_slug": tenant.slug, "event": "pending_eta_block_error"},
         )
 
     # Multi-agent orchestrator (best-effort). Solo activo si el tenant tiene
