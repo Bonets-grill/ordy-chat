@@ -472,6 +472,48 @@ async def internal_orders_notify_rejection(request: Request):
     return {"ok": True, "sent": sent}
 
 
+@app.post("/internal/menu/scrape-url")
+async def internal_menu_scrape_url(request: Request):
+    """Llamado por web /api/tenant/menu/import-url cuando el tenant pega una URL
+    para extraer la carta. Devuelve {items: [...]} que el web inserta en
+    menu_items con source='scrape'.
+    Body: {tenant_id, url}
+    """
+    _check_internal_secret(request)
+    body = await request.json() or {}
+    try:
+        tenant_id = UUID(str(body.get("tenant_id")))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="tenant_id inválido")
+    url = str(body.get("url", "")).strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="url requerida")
+
+    from app.menu_scrape import scrape_url_to_items
+    from app.tenants import cargar_tenant_por_slug, obtener_anthropic_api_key
+
+    pool = await inicializar_pool()
+    async with pool.acquire() as conn:
+        slug = await conn.fetchval("SELECT slug FROM tenants WHERE id = $1", tenant_id)
+    if not slug:
+        raise HTTPException(status_code=404, detail="tenant no encontrado")
+    try:
+        tenant = await cargar_tenant_por_slug(slug)
+        api_key = await obtener_anthropic_api_key(tenant.credentials)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"tenant load: {type(e).__name__}")
+
+    try:
+        items = await scrape_url_to_items(url, api_key)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("menu scrape error", extra={"event": "menu_scrape_error", "tenant_id": str(tenant_id)})
+        raise HTTPException(status_code=502, detail=f"scrape: {type(e).__name__}")
+
+    return {"ok": True, "count": len(items), "items": items}
+
+
 @app.post("/internal/validator/run-seeds", status_code=202)
 async def internal_validator_run_seeds(request: Request):
     _check_internal_secret(request)

@@ -183,5 +183,12 @@ export async function createTenantFromCanonical(input: ProvisionInput): Promise<
     webhookSecret,
   });
 
+  // 11. Mig 028 Fase D: bootstrap async best-effort de la carta desde el website
+  // canónico. NO bloqueamos el response — el tenant recibe el QR/dashboard al
+  // instante, y la carta se popula en menu_items en segundo plano. Si falla,
+  // menu_pending=true y el dashboard mostrará CTA "Sube tu carta".
+  const { attemptMenuBootstrap } = await import("./menu-bootstrap");
+  void attemptMenuBootstrap(tenant.id, input.canonical.website ?? null);
+
   return { slug, tenantId: tenant.id };
 }
