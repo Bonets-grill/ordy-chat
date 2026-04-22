@@ -1,11 +1,23 @@
 // web/app/agent/kds/kds-board.tsx
 // KDS client board — 3 columnas (Pendiente / En preparación / Listo) con
 // polling 2s y filtro kitchen|bar|all. Pulsar tarjeta avanza estado.
+// Sección "Reservas próximas" sincroniza cada 30s con /api/kds/reservations.
 
 "use client";
 
-import { ChefHat, GlassWater, Utensils } from "lucide-react";
+import { CalendarClock, ChefHat, GlassWater, Utensils } from "lucide-react";
 import * as React from "react";
+
+type KdsReservation = {
+  id: string;
+  customerPhone: string | null;
+  customerName: string | null;
+  startsAt: string;
+  durationMin: number;
+  title: string | null;
+  notes: string | null;
+  status: string;
+};
 
 type Station = "all" | "kitchen" | "bar";
 type OrderStatus =
@@ -78,6 +90,7 @@ const STATUS_TONE: Record<OrderStatus, { card: string; badge: string }> = {
 export function KdsBoard() {
   const [station, setStation] = React.useState<Station>("all");
   const [orders, setOrders] = React.useState<KdsOrder[]>([]);
+  const [reservations, setReservations] = React.useState<KdsReservation[]>([]);
   const [loaded, setLoaded] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [advancing, setAdvancing] = React.useState<string | null>(null);
@@ -99,14 +112,32 @@ export function KdsBoard() {
     }
   }, [station]);
 
+  const fetchReservations = React.useCallback(async () => {
+    try {
+      const res = await fetch("/api/kds/reservations", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = (await res.json()) as { reservations: KdsReservation[] };
+      setReservations(data.reservations ?? []);
+    } catch {
+      // best-effort, no rompe el board
+    }
+  }, []);
+
   React.useEffect(() => {
     fetchOrders();
-  }, [fetchOrders]);
+    fetchReservations();
+  }, [fetchOrders, fetchReservations]);
 
   React.useEffect(() => {
     const id = setInterval(fetchOrders, 2000);
     return () => clearInterval(id);
   }, [fetchOrders]);
+
+  React.useEffect(() => {
+    // Reservas cambian más despacio — polling cada 30s es suficiente.
+    const id = setInterval(fetchReservations, 30000);
+    return () => clearInterval(id);
+  }, [fetchReservations]);
 
   async function advance(orderId: string) {
     if (advancing) return;
@@ -195,6 +226,8 @@ export function KdsBoard() {
           {error}
         </div>
       ) : null}
+
+      <ReservationsPanel reservations={reservations} />
 
       {!loaded ? (
         <div className="rounded-lg border border-dashed border-neutral-200 p-8 text-center text-sm text-neutral-400">
@@ -521,5 +554,90 @@ function OrderCard({
         </div>
       ) : null}
     </button>
+  );
+}
+
+function ReservationsPanel({ reservations }: { reservations: KdsReservation[] }) {
+  // Solo muestra reservas activas y futuras del día actual + próximos días.
+  // Las que ya pasaron hace >1h las filtra el endpoint.
+  if (reservations.length === 0) {
+    return (
+      <section className="rounded-xl border border-dashed border-indigo-200 bg-indigo-50/30 p-4">
+        <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-indigo-700">
+          <CalendarClock className="h-4 w-4" />
+          <span>Reservas próximas</span>
+          <span className="rounded-full bg-indigo-100 px-2 text-xs text-indigo-700">0</span>
+        </div>
+        <p className="mt-2 text-xs text-indigo-700/70">
+          Sin reservas próximas. Cuando el agente cree una por WhatsApp aparecerá aquí.
+        </p>
+      </section>
+    );
+  }
+  // Agrupa por día (formato es-ES "lun, 22 abr").
+  const byDay = new Map<string, KdsReservation[]>();
+  const fmtDay = new Intl.DateTimeFormat("es-ES", { weekday: "short", day: "numeric", month: "short" });
+  const fmtTime = new Intl.DateTimeFormat("es-ES", { hour: "2-digit", minute: "2-digit", hour12: false });
+  for (const r of reservations) {
+    const key = fmtDay.format(new Date(r.startsAt));
+    if (!byDay.has(key)) byDay.set(key, []);
+    byDay.get(key)!.push(r);
+  }
+  return (
+    <section className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-4">
+      <header className="mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-indigo-700">
+        <CalendarClock className="h-4 w-4" />
+        <span>Reservas próximas</span>
+        <span className="rounded-full bg-indigo-100 px-2 text-xs text-indigo-700">{reservations.length}</span>
+      </header>
+      <div className="space-y-3">
+        {[...byDay.entries()].map(([day, list]) => (
+          <div key={day}>
+            <div className="mb-1 text-[11px] font-medium uppercase tracking-wider text-indigo-600/70">{day}</div>
+            <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
+              {list.map((r) => {
+                const minutesUntil = Math.round((new Date(r.startsAt).getTime() - Date.now()) / 60000);
+                const isImminent = minutesUntil >= -10 && minutesUntil <= 60;
+                const personasMatch = (r.title || "").match(/\d+/);
+                const personas = personasMatch ? Number(personasMatch[0]) : null;
+                return (
+                  <div
+                    key={r.id}
+                    className={`rounded-lg border bg-white p-3 text-sm shadow-sm ${
+                      isImminent ? "border-amber-300 ring-1 ring-amber-200" : "border-indigo-200"
+                    }`}
+                  >
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="font-semibold text-neutral-900">{fmtTime.format(new Date(r.startsAt))}</span>
+                      {personas !== null && (
+                        <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] uppercase text-neutral-600">
+                          {personas} {personas === 1 ? "pax" : "pax"}
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-1 truncate text-xs font-medium text-neutral-700">
+                      {r.customerName ?? "Sin nombre"}
+                    </div>
+                    {r.title && (
+                      <div className="mt-0.5 truncate text-[11px] text-neutral-500">{r.title}</div>
+                    )}
+                    {r.notes && (
+                      <div className="mt-1 rounded bg-amber-50 px-1.5 py-0.5 text-[11px] italic text-amber-800">
+                        {r.notes}
+                      </div>
+                    )}
+                    {isImminent && (
+                      <div className="mt-1 text-[10px] font-medium uppercase tracking-wider text-amber-700">
+                        {minutesUntil < 0 ? "En curso" : `En ${minutesUntil} min`}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
