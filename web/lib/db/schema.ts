@@ -282,6 +282,17 @@ export const orders = pgTable(
     stripeCheckoutSessionId: text("stripe_checkout_session_id").unique(),
     notes: text("notes"),
     metadata: jsonb("metadata").notNull().default({}),
+    // Migración 027: workflow robusto cocina ↔ cliente.
+    // order_type indica si el pedido es para comer aquí (requiere tableNumber) o para llevar (requiere customerName).
+    orderType: text("order_type").notNull().default("takeaway"),
+    // Tiempo en minutos que la cocina prometió cuando aceptó el pedido (10-120).
+    pickupEtaMinutes: integer("pickup_eta_minutes"),
+    // Decisión de la cocina al revisar la card en KDS sección "pendientes de aceptar".
+    kitchenDecision: text("kitchen_decision").notNull().default("pending"),
+    // Razón cuando kitchenDecision='rejected'. Si empieza con "stock:" el bot sugiere alternativa.
+    kitchenDecisionReason: text("kitchen_decision_reason"),
+    // Decisión del cliente tras recibir el ETA. NULL hasta que cocina acepta y bot pregunta.
+    customerEtaDecision: text("customer_eta_decision"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     paidAt: timestamp("paid_at", { withTimezone: true }),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
