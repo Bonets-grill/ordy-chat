@@ -2,6 +2,7 @@ import { and, asc, eq } from "drizzle-orm";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
+import { MessageContent } from "@/components/message-content";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { auth } from "@/lib/auth";
@@ -64,7 +65,7 @@ export default async function ConversationDetailPage({ params }: { params: Promi
                     ? "bg-neutral-100 text-neutral-900"
                     : "bg-gradient-to-r from-brand-600 to-accent-pink text-white"
                 }`}>
-                  <div className="whitespace-pre-wrap">{m.content}</div>
+                  <MessageContent text={m.content} />
                   <div className={`mt-1 text-[10px] ${m.role === "assistant" ? "text-neutral-500" : "text-white/70"}`}>
                     {new Date(m.createdAt).toLocaleString("es-ES")}
                   </div>
