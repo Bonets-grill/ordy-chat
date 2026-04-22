@@ -723,10 +723,11 @@ async def _build_menu_block(tenant_id: "UUID") -> str | None:  # noqa: F821
             precio = f"{it['price_cents'] / 100:.2f} €".replace(".", ",")
             base = f"- {it['name']} — {precio}"
             if it["desc"]:
-                # Trunca descripción para no inflar tokens (max 80 chars).
+                # Trunca descripción para no inflar tokens (max 300 chars —
+                # el mesero necesita conocer ingredientes, alérgenos y tamaño).
                 d = it["desc"].strip()
-                if len(d) > 80:
-                    d = d[:77] + "…"
+                if len(d) > 300:
+                    d = d[:297] + "…"
                 base += f" ({d})"
             lineas.append(base)
     lineas.append("</carta>")
