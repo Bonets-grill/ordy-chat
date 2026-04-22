@@ -16,6 +16,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { agentConfigs, menuItems, providerCredentials, tenants } from "@/lib/db/schema";
+import { MenuExperience } from "./menu-experience";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -53,6 +54,7 @@ async function loadTenantBundle(slug: string) {
 
   const items = await db
     .select({
+      id: menuItems.id,
       category: menuItems.category,
       name: menuItems.name,
       priceCents: menuItems.priceCents,
@@ -257,7 +259,8 @@ export default async function PublicMenuPage({ params }: PageParams) {
                   {list.map((it, idx) => (
                     <li
                       key={`${category}-${idx}`}
-                      className="flex items-baseline gap-4 border-b border-dashed border-stone-200 pb-4 last:border-b-0 last:pb-0"
+                      data-item-id={it.id}
+                      className="flex items-center gap-4 border-b border-dashed border-stone-200 pb-4 last:border-b-0 last:pb-0"
                     >
                       <div className="min-w-0 flex-1">
                         <h3 className="font-medium text-stone-900">{it.name}</h3>
@@ -299,12 +302,28 @@ export default async function PublicMenuPage({ params }: PageParams) {
         ) : null}
       </section>
 
-      <footer className="border-t border-stone-200 py-6 text-center text-[11px] text-stone-400">
+      <footer className="border-t border-stone-200 py-6 pb-32 text-center text-[11px] text-stone-400">
         Menú digital ·{" "}
         <a href="/" className="underline-offset-2 hover:text-stone-600 hover:underline">
           Powered by Ordy Chat
         </a>
       </footer>
+
+      {/* Client enhancement: mesero conversacional + carrito + i18n auto.
+          Se monta en cliente, no bloquea el SSR, inyecta botones "+" en
+          cada <li data-item-id>. */}
+      <MenuExperience
+        slug={slug}
+        tenantName={tenant.name}
+        brandColor={brandColor}
+        phoneNumber={phoneNumber}
+        items={items.map((it) => ({
+          id: it.id,
+          name: it.name,
+          priceCents: it.priceCents,
+          category: it.category,
+        }))}
+      />
     </main>
   );
 }
