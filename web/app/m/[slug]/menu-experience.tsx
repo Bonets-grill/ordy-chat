@@ -1063,6 +1063,20 @@ export function MenuExperience(props: Props) {
                   {conversational ? <Headphones className="h-5 w-5" /> : <HeadphoneOff className="h-5 w-5" />}
                 </button>
               ) : null}
+              {/* Selector de idioma manual (2026-04-23) */}
+              <select
+                value={lang}
+                onChange={(e) => setLang(e.target.value as Lang)}
+                aria-label="Idioma"
+                className="rounded-lg bg-transparent px-1.5 py-1 text-xs font-semibold text-white/70 outline-none transition hover:bg-white/10 hover:text-white"
+              >
+                <option value="es">ES</option>
+                <option value="en">EN</option>
+                <option value="fr">FR</option>
+                <option value="de">DE</option>
+                <option value="it">IT</option>
+                <option value="pt">PT</option>
+              </select>
               <button
                 type="button"
                 onClick={toggleVoice}
