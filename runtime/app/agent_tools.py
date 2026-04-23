@@ -465,3 +465,140 @@ async def listar_citas_del_cliente(
         }
         for r in rows
     ]
+
+
+
+async def pedir_cuenta(
+    tenant_id: UUID,
+    table_number: str,
+    sandbox: bool = False,
+) -> dict[str, Any]:
+    """Fase 3: el cliente pide la cuenta de su mesa. Valida la sesión,
+    transiciona a 'billing' y notifica al camarero por WhatsApp al
+    handoff_whatsapp_phone. Solo disponible si la sesión está en 'active'
+    (≥1 pedido aceptado por cocina). Si está 'pending' el bot debe
+    responder que aún no hay nada que cobrar.
+    """
+    from app.crypto import descifrar
+    from app.providers import obtener_proveedor
+
+    if not table_number or not table_number.strip():
+        return {"ok": False, "error": "no_table"}
+    mesa = table_number.strip()
+
+    pool = await inicializar_pool()
+    async with pool.acquire() as conn:
+        # Buscar la sesión viva de esa mesa (preferimos 'active', si solo hay
+        # pending devolvemos hint explícito).
+        row = await conn.fetchrow(
+            """
+            SELECT id, status, total_cents, bill_requested_at
+            FROM table_sessions
+            WHERE tenant_id = $1 AND table_number = $2
+              AND status IN ('pending', 'active', 'billing')
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            tenant_id, mesa,
+        )
+        if row is None:
+            return {
+                "ok": False,
+                "error": "no_active_session",
+                "hint": (
+                    "No hay ningún pedido abierto en esa mesa. El cliente "
+                    "aún no ha pedido nada — no hay nada que cobrar."
+                ),
+            }
+        if row["status"] == "pending":
+            return {
+                "ok": False,
+                "error": "kitchen_not_accepted_yet",
+                "hint": (
+                    "Cocina aún no ha aceptado ningún pedido. Dile al "
+                    "cliente que en cuanto su pedido entre en cocina "
+                    "podrás cerrar la cuenta."
+                ),
+            }
+        if row["status"] == "billing":
+            return {
+                "ok": True,
+                "session_id": str(row["id"]),
+                "total_cents": row["total_cents"],
+                "already_requested": True,
+                "hint": (
+                    "La cuenta ya estaba pedida. Dile al cliente que el "
+                    "camarero está al tanto y llegará enseguida."
+                ),
+            }
+
+        # Transición active → billing.
+        updated = await conn.fetchrow(
+            """
+            UPDATE table_sessions
+               SET status='billing',
+                   bill_requested_at=now(),
+                   updated_at=now()
+             WHERE id = $1 AND status = 'active'
+            RETURNING id, total_cents, bill_requested_at
+            """,
+            row["id"],
+        )
+        if updated is None:
+            return {"ok": False, "error": "race_transition_failed"}
+
+        # Cargar datos del tenant para avisar al camarero.
+        tenant_row = await conn.fetchrow(
+            """
+            SELECT t.name AS tenant_name,
+                   ac.handoff_whatsapp_phone,
+                   pc.provider, pc.credentials_encrypted
+            FROM tenants t
+            LEFT JOIN agent_configs ac ON ac.tenant_id = t.id
+            LEFT JOIN provider_credentials pc ON pc.tenant_id = t.id
+            WHERE t.id = $1
+            """,
+            tenant_id,
+        )
+
+    total_eur = (updated["total_cents"] or 0) / 100
+    notified = False
+    target_phone = (tenant_row["handoff_whatsapp_phone"] or "").strip() if tenant_row else ""
+    if target_phone and tenant_row:
+        try:
+            import json
+
+            creds: dict[str, Any] = {}
+            if tenant_row["credentials_encrypted"]:
+                try:
+                    creds = json.loads(descifrar(tenant_row["credentials_encrypted"]))
+                except Exception:
+                    creds = {}
+            adapter = obtener_proveedor(tenant_row["provider"] or "whapi", creds, "")
+            sandbox_header = "🧪 *PRUEBA PLAYGROUND* — ignora si no estabas testeando\n\n" if sandbox else ""
+            body = (
+                f"{sandbox_header}"
+                f"💰 *Cuenta pedida* — {tenant_row['tenant_name']}\n\n"
+                f"Mesa: {mesa}\n"
+                f"Total: {total_eur:.2f} €\n"
+                f"\nEl cliente está esperando la cuenta."
+            )
+            await adapter.enviar_mensaje(target_phone, body)
+            notified = True
+        except Exception:
+            logger.exception(
+                "fallo enviando WA pedir_cuenta",
+                extra={"event": "pedir_cuenta_wa_fail", "tenant_id": str(tenant_id)},
+            )
+
+    return {
+        "ok": True,
+        "session_id": str(updated["id"]),
+        "total_cents": updated["total_cents"],
+        "total_eur": total_eur,
+        "notified_waiter": notified,
+        "hint": (
+            "Confirma al cliente que avisaste al camarero y que la cuenta "
+            "llegará enseguida. Menciona el total."
+        ),
+    }

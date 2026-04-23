@@ -14,6 +14,7 @@ from app.agent_tools import (
     listar_citas_del_cliente,
     modificar_pedido,
     obtener_pedido_pendiente_eta,
+    pedir_cuenta,
     responder_eta_pedido,
 )
 from app.memory import actualizar_nombre_cliente, obtener_contexto_cliente
@@ -297,6 +298,31 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "pedir_cuenta",
+        "description": (
+            "Fase 3 sesión de mesa: cuando el cliente (desde el menú QR en "
+            "mesa) pide la cuenta. Solo funciona si al menos un pedido de "
+            "esa mesa ya fue aceptado por cocina (session.status='active'). "
+            "Si cocina aún no aceptó, la tool devuelve error y el bot debe "
+            "explicar que aún no hay nada que cobrar. Si ya se pidió la "
+            "cuenta antes, la tool devuelve already_requested=True y el bot "
+            "tranquiliza al cliente. "
+            "Al dispararse: transiciona la sesión a 'billing', pone "
+            "bill_requested_at=now(), y manda WhatsApp al camarero "
+            "(agent_configs.handoff_whatsapp_phone) con la mesa y el total."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["table_number"],
+            "properties": {
+                "table_number": {
+                    "type": "string",
+                    "description": "Número de mesa del cliente (viene del contexto <mesa>)",
+                },
+            },
+        },
+    },
+    {
         "name": "solicitar_humano",
         "description": (
             "Escala la conversación a un humano del negocio. ÚSALO cuando: (a) el cliente lo "
@@ -556,6 +582,14 @@ async def _ejecutar_tool(
             )
             return json.dumps(result)
 
+        if tool_name == "pedir_cuenta":
+            result = await pedir_cuenta(
+                tenant_id=tenant.id,
+                table_number=str(tool_input.get("table_number") or ""),
+                sandbox=is_test,
+            )
+            return json.dumps(result)
+
         if tool_name == "responder_eta_pedido":
             accepted = bool(tool_input.get("accepted"))
             result = await responder_eta_pedido(
@@ -803,6 +837,20 @@ def _build_menu_web_flow_block(mesa: str, drinks_pitch: str = "") -> str:
         "cliente confirme platos, llama modificar_pedido con el order_id del "
         "pedido anterior para AÑADIR la comida — NUNCA llames crear_pedido "
         "otra vez en la misma visita.\n"
+        "\n"
+        "PEDIR LA CUENTA (Fase 3): cuando el cliente diga 'la cuenta', "
+        "'cobrar', 'tráeme la cuenta', 'pagar', etc., LLAMA la tool "
+        "`pedir_cuenta(table_number=<mesa>)`. \n"
+        "- Si la tool devuelve error kitchen_not_accepted_yet: dile al "
+        "cliente que en cuanto el primer pedido entre en cocina podrá "
+        "cerrar la cuenta.\n"
+        "- Si devuelve error no_active_session: dile al cliente que aún "
+        "no ha pedido nada, no hay cuenta que cobrar.\n"
+        "- Si devuelve ok con already_requested=True: dile que el camarero "
+        "ya está avisado y llega enseguida.\n"
+        "- Si devuelve ok nuevo: confirma al cliente que avisaste al "
+        "camarero, menciona el total (total_eur), y dile que alguien pasará "
+        "enseguida a cobrar.\n"
         "\n"
         "NO actives este flujo si el cliente claramente pide takeaway o para "
         "llevar desde el principio (raro vía QR de mesa pero posible).\n"
