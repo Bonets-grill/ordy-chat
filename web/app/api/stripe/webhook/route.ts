@@ -4,10 +4,12 @@ import type Stripe from "stripe";
 import { db } from "@/lib/db";
 import {
   auditLog,
+  orders,
   resellerCommissions,
   resellerPayouts,
   resellers,
   stripeEvents,
+  tableSessions,
   tenants,
 } from "@/lib/db/schema";
 import { markOrderPaidBySession } from "@/lib/orders";
@@ -95,6 +97,40 @@ export async function POST(req: Request) {
               // 'error' para remediation manual desde el dashboard del tenant.
             }
           }
+        }
+
+        // Flow C (Fase 4): sesión de mesa completa pagada por el cliente
+        // desde su móvil. Transiciona la sesión a 'paid' y marca todos los
+        // orders linkeados como paid también. Webhooks idempotentes: si
+        // la sesión ya está paid, los UPDATE con WHERE status=... no tocan.
+        const tableSessionId = sess.metadata?.table_session_id;
+        if (tableSessionId && sess.mode === "payment") {
+          const now = new Date();
+          await db
+            .update(tableSessions)
+            .set({
+              status: "paid",
+              paymentMethod: "stripe",
+              paidAt: now,
+              updatedAt: now,
+            })
+            .where(
+              and(
+                eq(tableSessions.id, tableSessionId),
+                // Idempotencia: si otro webhook ya lo marcó, no retrocedemos.
+                sql`${tableSessions.status} IN ('billing', 'active', 'pending')`,
+              ),
+            );
+          // Marcar todos los pedidos de la sesión como paid.
+          await db
+            .update(orders)
+            .set({ status: "paid", paidAt: now, updatedAt: now })
+            .where(
+              and(
+                eq(orders.sessionId, tableSessionId),
+                sql`${orders.status} <> 'paid'`,
+              ),
+            );
         }
         break;
       }
