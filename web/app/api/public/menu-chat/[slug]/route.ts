@@ -145,8 +145,14 @@ export async function POST(
         { status: 502 },
       );
     }
-    const data = (await r.json()) as { response?: string };
-    return NextResponse.json({ response: data.response ?? "" });
+    const data = (await r.json()) as {
+      response?: string;
+      cards?: Array<Record<string, unknown>>;
+    };
+    return NextResponse.json({
+      response: data.response ?? "",
+      cards: data.cards ?? [],
+    });
   } catch (err) {
     return NextResponse.json(
       { error: "fetch_failed", detail: String(err).slice(0, 200) },

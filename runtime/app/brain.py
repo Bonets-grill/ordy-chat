@@ -449,6 +449,38 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "mostrar_producto",
+        "description": (
+            "Muestra al cliente una TARJETA VISUAL de un producto concreto: "
+            "imagen, descripción y alérgenos. El frontend renderiza la "
+            "tarjeta debajo de tu mensaje de texto.\n\n"
+            "ÚSALA cuando el cliente pregunta por un item específico "
+            "('¿tenéis la Dakota?', 'enséñame la Kentucky') o cuando le "
+            "recomiendas UN plato concreto y quieres que lo vea. "
+            "UNA tarjeta por tool-call — si recomiendas 3 platos, llama "
+            "la tool 3 veces.\n\n"
+            "NO la llames para categorías genéricas ('enséñame las "
+            "hamburguesas') ni para items que no existan en <carta>. "
+            "Si el cliente pide algo ambiguo, primero usa consultar_carta "
+            "para desambiguar y luego mostrar_producto con el nombre exacto."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["item_name"],
+            "properties": {
+                "item_name": {
+                    "type": "string",
+                    "description": (
+                        "Nombre EXACTO del item tal como aparece en <carta>. "
+                        "Ej: 'Dakota Burger', 'Kentucky Burger', 'Coca-Cola'."
+                    ),
+                    "minLength": 2,
+                    "maxLength": 200,
+                },
+            },
+        },
+    },
+    {
         "name": "modificar_pedido",
         "description": (
             "Añade un cambio al ÚLTIMO pedido que el cliente acaba de hacer, SIEMPRE "
@@ -500,6 +532,7 @@ async def _ejecutar_tool(
     tool_input: dict[str, Any],
     customer_phone: str,
     sandbox: bool = False,
+    cards_sink: list[dict[str, Any]] | None = None,
 ) -> str:
     """Ejecuta una tool solicitada por Claude y devuelve el resultado serializable.
 
@@ -677,6 +710,42 @@ async def _ejecutar_tool(
                 return json.dumps({"ok": False, "error": "query muy corta (min 2 chars)"})
             results = await buscar_items(tenant.id, query, limit=5)
             return json.dumps({"ok": True, "query": query, "count": len(results), "results": results})
+
+        if tool_name == "mostrar_producto":
+            # Busca el item por nombre exacto o fuzzy, construye una card
+            # estructurada y la emite al frontend via cards_sink. Devuelve
+            # a Claude solo un confirm (para que siga escribiendo texto
+            # sin repetir lo que ya muestra la card).
+            from app.menu_search import buscar_items
+
+            item_name = (tool_input.get("item_name") or "").strip()
+            if len(item_name) < 2:
+                return json.dumps({"ok": False, "error": "item_name requerido"})
+            results = await buscar_items(tenant.id, item_name, limit=1)
+            if not results:
+                return json.dumps({
+                    "ok": False,
+                    "error": "item_not_found",
+                    "detail": f"'{item_name}' no está en la carta",
+                })
+            top = results[0]
+            card = {
+                "type": "item",
+                "name": top.get("name"),
+                "price_eur": top.get("price_eur"),
+                "category": top.get("category"),
+                "description": top.get("description"),
+                "image_url": top.get("image_url"),
+                "allergens": top.get("allergens") or [],
+            }
+            if cards_sink is not None:
+                cards_sink.append(card)
+            return json.dumps({
+                "ok": True,
+                "showed": card["name"],
+                "has_image": bool(card.get("image_url")),
+                "has_allergens": bool(card.get("allergens")),
+            })
 
         return json.dumps({"ok": False, "error": f"tool desconocida: {tool_name}"})
     except Exception as e:
@@ -1006,6 +1075,16 @@ def _build_menu_web_flow_block(
             "menciona explícitamente ('sin cebolla', 'extra bacon') se "
             "aceptan como nota del pedido aunque no estén en la descripción.\n"
             "\n"
+            "MOSTRAR PRODUCTO (visual): cuando el cliente menciona UN plato "
+            "concreto por su nombre ('quiero una Kentucky', 'la Dakota', "
+            "'la Coca-Cola') o cuando le recomiendas UN plato específico, "
+            "llama mostrar_producto(item_name=<nombre exacto>) DESPUÉS "
+            "de tu texto — el frontend renderizará una tarjeta con foto, "
+            "descripción y alérgenos. NO la llames para categorías "
+            "('las hamburguesas') ni para items ambiguos (usa consultar_carta "
+            "primero si dudas del nombre). UNA tarjeta por item — si "
+            "recomiendas 2 platos, llama la tool 2 veces con los nombres.\n"
+            "\n"
             "CUÁNDO CREAR EL PEDIDO (crítico):\n"
             "En cuanto tengas los 3 datos — order_type + mesa + al menos 1 "
             "item — llama a crear_pedido(order_type='dine_in', "
@@ -1076,6 +1155,7 @@ async def generar_respuesta(
     sandbox: bool = False,
     channel: str | None = None,
     table_number: str | None = None,
+    cards_sink: list[dict[str, Any]] | None = None,
 ) -> tuple[str, int, int]:
     """
     Devuelve (respuesta, tokens_in, tokens_out).
@@ -1374,7 +1454,8 @@ async def generar_respuesta(
             for block in resp.content:
                 if getattr(block, "type", None) == "tool_use":
                     resultado = await _ejecutar_tool(
-                        tenant, block.name, block.input, customer_phone, sandbox=sandbox,
+                        tenant, block.name, block.input, customer_phone,
+                        sandbox=sandbox, cards_sink=cards_sink,
                     )
                     tool_results.append({
                         "type": "tool_result",

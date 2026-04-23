@@ -35,7 +35,20 @@ type Props = {
   items: ItemLite[];
 };
 
-type ChatMsg = { role: "user" | "assistant"; content: string };
+type ItemCard = {
+  type: "item";
+  name: string;
+  price_eur: number | null;
+  category?: string | null;
+  description?: string | null;
+  image_url?: string | null;
+  allergens?: string[];
+};
+type ChatMsg = {
+  role: "user" | "assistant";
+  content: string;
+  cards?: ItemCard[];
+};
 
 type CartLine = { itemId: string; qty: number };
 
@@ -584,9 +597,16 @@ export function MenuExperience(props: Props) {
         setError(body?.error ?? `HTTP ${r.status}`);
         return;
       }
-      const data = (await r.json()) as { response?: string };
+      const data = (await r.json()) as {
+        response?: string;
+        cards?: ItemCard[];
+      };
       const reply = data.response ?? "";
-      setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+      const cards = Array.isArray(data.cards) ? data.cards : [];
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: reply, cards: cards.length ? cards : undefined },
+      ]);
       if (reply) {
         // Barge-in (2026-04-23): en modo conversacional abrimos el mic YA
         // mientras el bot empieza a hablar. El VAD detecta habla del
@@ -1124,20 +1144,67 @@ export function MenuExperience(props: Props) {
             {/* Messages */}
             <div className="flex-1 space-y-3 overflow-y-auto bg-stone-50 px-4 py-4">
               {messages.map((m, i) => (
-                <div
-                  key={i}
-                  className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
-                >
-                  <div
-                    className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
-                      m.role === "user"
-                        ? "bg-stone-900 text-white"
-                        : "bg-white text-stone-900 ring-1 ring-stone-200"
-                    }`}
-                  >
-                    {m.content}
+                <React.Fragment key={i}>
+                  <div className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+                    <div
+                      className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
+                        m.role === "user"
+                          ? "bg-stone-900 text-white"
+                          : "bg-white text-stone-900 ring-1 ring-stone-200"
+                      }`}
+                    >
+                      {m.content}
+                    </div>
                   </div>
-                </div>
+                  {/* ItemCards emitidas por la tool `mostrar_producto`. */}
+                  {m.cards?.map((card, j) => (
+                    <div key={`${i}-card-${j}`} className="flex justify-start">
+                      <div className="w-full max-w-[85%] overflow-hidden rounded-2xl bg-white ring-1 ring-stone-200">
+                        {card.image_url && (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={card.image_url}
+                            alt={card.name}
+                            loading="lazy"
+                            className="h-44 w-full object-cover"
+                            onError={(e) => {
+                              e.currentTarget.style.display = "none";
+                            }}
+                          />
+                        )}
+                        <div className="space-y-1.5 px-4 py-3">
+                          <div className="flex items-baseline justify-between gap-3">
+                            <h3 className="text-sm font-semibold text-stone-900">
+                              {card.name}
+                            </h3>
+                            {card.price_eur !== null && card.price_eur !== undefined && (
+                              <span className="whitespace-nowrap text-sm font-semibold text-stone-900">
+                                {card.price_eur.toFixed(2).replace(".", ",")} €
+                              </span>
+                            )}
+                          </div>
+                          {card.description && (
+                            <p className="text-xs leading-relaxed text-stone-600">
+                              {card.description}
+                            </p>
+                          )}
+                          {card.allergens && card.allergens.length > 0 && (
+                            <div className="flex flex-wrap gap-1 pt-1">
+                              {card.allergens.map((a) => (
+                                <span
+                                  key={a}
+                                  className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800 ring-1 ring-amber-200"
+                                >
+                                  {a}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </React.Fragment>
               ))}
               {sending ? (
                 <div className="flex justify-start">

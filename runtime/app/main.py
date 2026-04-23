@@ -419,6 +419,9 @@ async def internal_playground_generate(request: Request):
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"tenant: {type(e).__name__}")
 
+    # cards_sink recoge las tarjetas visuales que el bot emite (tool
+    # mostrar_producto). El frontend las renderiza como ItemCards.
+    cards: list[dict] = []
     try:
         respuesta, tin, tout = await generar_respuesta(
             tenant,
@@ -429,6 +432,7 @@ async def internal_playground_generate(request: Request):
             sandbox=True,
             channel=channel,
             table_number=table_number,
+            cards_sink=cards,
         )
     except Exception as e:
         logger.exception(
@@ -457,7 +461,12 @@ async def internal_playground_generate(request: Request):
             extra={"event": "playground_persist_error", "tenant_slug": tenant_slug},
         )
 
-    return {"response": respuesta, "tokens_in": tin, "tokens_out": tout}
+    return {
+        "response": respuesta,
+        "tokens_in": tin,
+        "tokens_out": tout,
+        "cards": cards,
+    }
 
 
 @app.post("/internal/public-menu/transcribe")
