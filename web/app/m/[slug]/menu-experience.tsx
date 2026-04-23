@@ -269,6 +269,10 @@ export function MenuExperience(props: Props) {
   const [transcribing, setTranscribing] = React.useState(false);
   const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
   const audioChunksRef = React.useRef<Blob[]>([]);
+  // Timestamp de inicio de grabación. En modo tap-to-talk sin VAD, usamos
+  // esto para rechazar audios <500ms que suelen ser clicks accidentales
+  // y que Whisper suele responder con alucinaciones de YouTube.
+  const recordingStartMsRef = React.useRef<number>(0);
   const mediaStreamRef = React.useRef<MediaStream | null>(null);
   // VAD (voice activity detection) — solo se monta cuando arrancamos con vad=true.
   const audioCtxRef = React.useRef<AudioContext | null>(null);
@@ -687,14 +691,30 @@ export function MenuExperience(props: Props) {
         hadSpeechRef.current = false;
         if (chunks.length === 0) return;
         const blob = new Blob(chunks, { type: mr.mimeType || mime || "audio/webm" });
-        // Mínimo 300ms para evitar clics accidentales.
-        if (blob.size < 2000) return;
+        // Duración mínima por tiempo real (no bytes) — 500ms para que Whisper
+        // tenga material suficiente. Audios más cortos producen alucinaciones
+        // ("Subtítulos realizados por la comunidad de Amara.org" y similares).
+        const durationMs = recordingStartMsRef.current > 0
+          ? Date.now() - recordingStartMsRef.current
+          : 0;
+        recordingStartMsRef.current = 0;
+        if (durationMs < 500) {
+          // En modo tap-to-talk avisamos; en VAD el ciclo hands-free vuelve
+          // a escuchar en silencio sin molestar al usuario.
+          if (!useVAD) setError(t.errorNoSpeech);
+          return;
+        }
+        if (blob.size < 2000) {
+          if (!useVAD) setError(t.errorNoSpeech);
+          return;
+        }
         // En modo VAD: solo transcribir si realmente detectamos habla; evita
         // mandar ruido ambiente cuando el usuario no dijo nada.
         if (useVAD && !hadSpeech) return;
         void transcribeAndSend(blob);
       };
       mediaRecorderRef.current = mr;
+      recordingStartMsRef.current = Date.now();
       mr.start();
       setRecording(true);
 

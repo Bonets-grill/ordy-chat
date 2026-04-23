@@ -16,6 +16,7 @@ from app.audio import (
     AudioTooLargeError,
     OpenAIKeyMissingError,
     _ext_from_mime,
+    es_alucinacion_whisper,
     obtener_openai_api_key,
     transcribir_audio,
 )
@@ -93,6 +94,93 @@ async def test_transcribir_audio_respuesta_vacia() -> None:
     with patch("app.audio.AsyncOpenAI", return_value=fake_client):
         result = await transcribir_audio(b"x", "audio/ogg", "sk-fake")
     assert result == ""
+
+
+class TestEsAlucinacionWhisper:
+    """Cubre el filtro post-Whisper que descarta alucinaciones sobre silencio."""
+
+    @pytest.mark.parametrize(
+        "texto",
+        [
+            "Subtítulos realizados por la comunidad de Amara.org",
+            "subtítulos realizados por la comunidad de amara.org",
+            "SUBTITULOS REALIZADOS POR LA COMUNIDAD DE AMARA.ORG",
+            "Subtítulos por la comunidad de Amara.org",
+            "Subtitulado por la comunidad de Amara.org",
+            "www.amara.org",
+            "Amara.org",
+            "¡Gracias por ver el video!",
+            "Gracias por ver el vídeo.",
+            "Suscríbete al canal",
+            "Dale like y suscríbete",
+            "Thanks for watching!",
+            "Thank you for watching",
+            "Please subscribe",
+            ".",
+            "...",
+            "♪",
+            "[Música]",
+            "[music]",
+            "you",
+            "  You.  ",
+        ],
+    )
+    def test_detecta_alucinaciones_conocidas(self, texto: str) -> None:
+        assert es_alucinacion_whisper(texto), f"debería filtrar: {texto!r}"
+
+    @pytest.mark.parametrize(
+        "texto",
+        [
+            "Quiero una hamburguesa con queso",
+            "Mesa para dos, por favor",
+            "¿Tenéis opciones sin gluten?",
+            "Una coca-cola y dos aguas",
+            "Gracias por la reserva",  # no es la alucinación exacta
+            "Me gustaría hablar con un camarero",
+        ],
+    )
+    def test_no_filtra_mensajes_reales(self, texto: str) -> None:
+        assert not es_alucinacion_whisper(texto), f"no debería filtrar: {texto!r}"
+
+    def test_vacio_no_es_alucinacion(self) -> None:
+        # "" lo trata el caller — es_alucinacion_whisper devuelve False para
+        # preservar la semántica "este texto no es una alucinación, es nada".
+        assert es_alucinacion_whisper("") is False
+
+    def test_solo_puntuacion_es_alucinacion(self) -> None:
+        assert es_alucinacion_whisper("...") is True
+        assert es_alucinacion_whisper("?¿!¡.,;:") is True
+
+
+@pytest.mark.asyncio
+async def test_transcribir_audio_filtra_alucinacion_amara() -> None:
+    # Reproduce el incidente prod 2026-04-23: cliente tocó el mic en silencio,
+    # Whisper devolvió créditos de YouTube, el chat los mostró como mensaje
+    # del cliente. El filtro debe devolver "" sin llegar al caller.
+    fake_resp = SimpleNamespace(
+        text="Subtítulos realizados por la comunidad de Amara.org",
+    )
+    fake_client = SimpleNamespace(
+        audio=SimpleNamespace(transcriptions=SimpleNamespace(
+            create=AsyncMock(return_value=fake_resp),
+        )),
+    )
+    with patch("app.audio.AsyncOpenAI", return_value=fake_client):
+        result = await transcribir_audio(b"x", "audio/webm", "sk-fake")
+    assert result == ""
+
+
+@pytest.mark.asyncio
+async def test_transcribir_audio_no_filtra_mensaje_real() -> None:
+    fake_resp = SimpleNamespace(text="Quiero una hamburguesa")
+    fake_client = SimpleNamespace(
+        audio=SimpleNamespace(transcriptions=SimpleNamespace(
+            create=AsyncMock(return_value=fake_resp),
+        )),
+    )
+    with patch("app.audio.AsyncOpenAI", return_value=fake_client):
+        result = await transcribir_audio(b"x", "audio/webm", "sk-fake")
+    assert result == "Quiero una hamburguesa"
 
 
 @pytest.mark.asyncio

@@ -27,6 +27,92 @@ logger = logging.getLogger("ordychat.audio")
 MAX_AUDIO_BYTES = 25 * 1024 * 1024  # 25 MB, límite API Whisper
 WHISPER_MODEL = "whisper-1"
 
+# Whisper alucina frases de su corpus de entrenamiento (sobre todo créditos
+# de YouTube en ES/EN) cuando recibe audio corto, silencio o ruido sin
+# habla. Este filtro devuelve "" en esos casos para que el caller no trate
+# la alucinación como un mensaje real del usuario. Incidente prod 2026-04-23:
+# un cliente del widget público recibió la frase "Subtítulos realizados por
+# la comunidad de Amara.org" como si la hubiera dicho él.
+_WHISPER_HALLUCINATIONS: frozenset[str] = frozenset(
+    {
+        # YouTube credits (ES)
+        "subtitulos realizados por la comunidad de amara.org",
+        "subtitulos por la comunidad de amara.org",
+        "subtitulos realizados por amara.org",
+        "subtitulado por la comunidad de amara.org",
+        "subtitulos creados por la comunidad de amara.org",
+        "subtitulos por la comunidad",
+        "www.amara.org",
+        "amara.org",
+        # Cierres virales (ES)
+        "gracias por ver el video",
+        "gracias por ver el vídeo",
+        "muchas gracias por ver el video",
+        "suscribete al canal",
+        "suscribanse al canal",
+        "dale like y suscribete",
+        "no olvides suscribirte",
+        # YouTube credits (EN) — el idioma de Whisper puede fugarse aunque lang=es
+        "thanks for watching",
+        "thanks for watching!",
+        "thank you for watching",
+        "thank you for watching!",
+        "please subscribe",
+        "subscribe to the channel",
+        "like and subscribe",
+        # Ruido / música / silencio
+        ".",
+        "..",
+        "...",
+        "♪",
+        "♪♪",
+        "♪♪♪",
+        "[music]",
+        "[musica]",
+        "[música]",
+        "[silence]",
+        "[silencio]",
+        "[applause]",
+        "[aplausos]",
+        "you",  # alucinación frecuente de Whisper en silencio
+    }
+)
+
+
+def _normaliza_texto_para_alucinacion(texto: str) -> str:
+    """Pasa a minúsculas, strip y elimina acentos. Preserva corchetes porque
+    Whisper los emite literal cuando detecta ruido (`[Music]`, `[Silence]`)."""
+    import unicodedata
+
+    base = texto.strip().lower()
+    # Strip puntuación blanda de ambos lados, sin tocar corchetes ni interior.
+    base = base.strip(".!?¡¿,;:'\"")
+    base = base.strip()
+    # Normaliza acentos: "subtítulos" → "subtitulos" para match robusto.
+    nfkd = unicodedata.normalize("NFKD", base)
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+
+def es_alucinacion_whisper(texto: str) -> bool:
+    """True si el texto es una alucinación conocida de Whisper sobre silencio.
+
+    Match directo contra lista canónica + heurística para frases que siempre
+    implican alucinación (mención de amara.org o subtítulos+comunidad).
+    """
+    if not texto:
+        return False
+    norm = _normaliza_texto_para_alucinacion(texto)
+    if not norm:
+        return True  # sólo puntuación → ruido
+    if norm in _WHISPER_HALLUCINATIONS:
+        return True
+    if "amara.org" in norm:
+        return True
+    if "subtitulos" in norm and ("comunidad" in norm or "amara" in norm):
+        return True
+    return False
+
+
 _MIME_EXT = {
     "audio/ogg": "ogg",
     "audio/opus": "ogg",
@@ -94,6 +180,17 @@ async def transcribir_audio(
         language=language,
     )
     texto = (getattr(resp, "text", "") or "").strip()
+    if es_alucinacion_whisper(texto):
+        logger.info(
+            "whisper hallucination filtrada",
+            extra={
+                "event": "whisper_hallucination_filtered",
+                "bytes": len(audio_bytes),
+                "mime": mime,
+                "text_filtered": texto[:120],
+            },
+        )
+        return ""
     logger.info(
         "audio transcrito",
         extra={
