@@ -17,6 +17,7 @@
 import { Headphones, HeadphoneOff, Mic, MicOff, Minus, Plus, Send, ShoppingCart, Sparkles, Volume2, VolumeX, X } from "lucide-react";
 import * as React from "react";
 import { DEFAULT_LANG, detectLang, LANG_BCP47, type Lang, strings } from "./translations";
+import { normalizeForSpeech } from "./speech-normalize";
 
 type ItemLite = {
   id: string;
@@ -51,25 +52,8 @@ function micSupportedSync(): boolean {
   );
 }
 
-// speechSynthesis lee los emojis como texto ("👋" → "mano saludando").
-// También leería URLs ("https dos puntos barra barra…") que es horrible.
-// Los quitamos antes de sintetizar. Markdown simple fuera y espacios
-// colapsados — el mesero solo envía texto plano al TTS.
-function stripForSpeech(text: string): string {
-  return text
-    // Markdown links [label](url) → deja solo el label.
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1")
-    // URLs desnudas http(s):// o www. — el TTS las lee carácter a carácter.
-    .replace(/https?:\/\/\S+/gi, "")
-    .replace(/\bwww\.\S+/gi, "")
-    .replace(/\p{Extended_Pictographic}/gu, "") // emojis
-    .replace(/[️‍]/g, "") // variation selectors + ZWJ
-    .replace(/[*_`#>]/g, "") // markdown muy básico
-    .replace(/[ \t]+/g, " ")
-    .replace(/\s+\n/g, "\n")
-    .replace(/\s+([.,;!?])/g, "$1") // limpia espacios sueltos donde había URL
-    .trim();
-}
+// La normalización para TTS (emojis, URLs, precios, abreviaciones) vive en
+// ./speech-normalize y se aplica antes de pasar el texto a speechSynthesis.
 
 export function MenuExperience(props: Props) {
   const { slug, tenantName, brandColor, phoneNumber, items } = props;
@@ -256,7 +240,7 @@ export function MenuExperience(props: Props) {
         onDone?.();
         return;
       }
-      const clean = stripForSpeech(text);
+      const clean = normalizeForSpeech(text, lang);
       if (!clean) {
         onDone?.();
         return;
@@ -321,7 +305,7 @@ export function MenuExperience(props: Props) {
     setVoiceUnlocked(true);
     if (typeof window === "undefined") return;
     if (!("speechSynthesis" in window)) return;
-    const greetingText = stripForSpeech(strings[lang].greeting(tenantName));
+    const greetingText = normalizeForSpeech(strings[lang].greeting(tenantName), lang);
     if (!greetingText) return;
     try {
       window.speechSynthesis.cancel();
