@@ -959,15 +959,44 @@ def _build_menu_web_flow_block(
     else:
         # En marcha: ya hay pedido o conversación previa. NO reinicies el
         # saludo, NO preguntes mesa otra vez (ya la tienes en <mesa>), NO
-        # vuelvas a ofrecer bebidas por defecto.
+        # vuelvas a ofrecer bebidas por defecto. Instrucciones fortalecidas
+        # 2026-04-23 tras ver al bot olvidar items entre turnos y duplicar
+        # preguntas (conversación Bonets 10:19-10:20): bot olvidó la Dakota
+        # ya pedida, preguntó 2× "¿para aquí o para llevar?", respondió "¡Hola!"
+        # a un "gracias". Fix: reglas de MEMORIA + CONSOLIDACIÓN explícitas.
         flujo = (
             "<flujo_carta_qr fase='en_marcha'>\n"
-            "La conversación con este cliente YA está en curso. NO saludes "
-            "de nuevo como si acabara de llegar, NO vuelvas a preguntar la "
-            "mesa, NO vuelvas a ofrecer bebidas desde cero. Mira el "
-            "historial: continúa donde lo dejasteis.\n"
-            "Si añade platos → modificar_pedido con el order_id del pedido "
-            "de esta mesa. NUNCA crear_pedido de nuevo si ya hay uno abierto.\n"
+            "La conversación con este cliente YA está en curso. Antes de "
+            "responder, lee TODO el historial de mensajes y construye "
+            "mentalmente el estado actual:\n"
+            "  • order_type confirmado (dine_in/takeaway): ¿lo dijo ya en "
+            "algún turno? Si sí, NO vuelvas a preguntar.\n"
+            "  • mesa confirmada: está en <mesa>. NO la pidas otra vez.\n"
+            "  • items mencionados por el cliente a lo largo de la "
+            "conversación: ACUMÚLALOS mentalmente. Son el pedido en "
+            "construcción. No los pierdas entre turnos.\n"
+            "\n"
+            "REGLAS DURAS:\n"
+            "1. NO saludes de nuevo ('hola', 'bienvenido') a mitad de "
+            "conversación. Si el cliente dice 'gracias' / 'ok' / 'perfecto', "
+            "confirma o cierra con naturalidad — NUNCA respondas con un "
+            "saludo desde cero.\n"
+            "2. NO repitas una pregunta que el cliente YA respondió en un "
+            "turno anterior. Especialmente '¿para comer aquí o para llevar?' "
+            "y '¿en qué mesa estáis?'.\n"
+            "3. Si un mensaje del cliente es raro, vacío o parece un audio "
+            "mal transcrito (ej. créditos de YouTube), responde 'No te "
+            "entendí bien, ¿podéis repetirlo?' y CONTINÚA la conversación "
+            "desde el punto donde estaba — NO reinicies el flujo.\n"
+            "\n"
+            "CUÁNDO CREAR EL PEDIDO (crítico):\n"
+            "En cuanto tengas los 3 datos — order_type + mesa + al menos 1 "
+            "item — llama a crear_pedido(order_type='dine_in', "
+            "table_number=<mesa>, items=[...]) SIN pedir más confirmaciones "
+            "redundantes. Si el cliente añade algo más después → "
+            "modificar_pedido con el order_id. NUNCA crear_pedido dos veces "
+            "en la misma visita de mesa.\n"
+            "\n"
             "Si pide la cuenta ('cuenta', 'cobrar', 'pagar') → tool "
             "pedir_cuenta(table_number=<mesa>).\n"
             "Si tiene una duda fuera del pedido (alergia, horario, baño) "
