@@ -153,6 +153,13 @@ export const agentConfigs = pgTable("agent_configs", {
   // primer turno del flujo QR de mesa. El tenant lo edita en /dashboard/carta.
   // NULL/vacío → el bot pregunta "¿qué os apetece beber?" de forma abierta.
   drinksGreetingPitch: text("drinks_greeting_pitch"),
+  // Migración 033: post-cuenta flow — enlaces de reseña + redes sociales.
+  // El agente los comparte tras cobrar la mesa. Opcionales todos.
+  reviewGoogleUrl: text("review_google_url"),
+  reviewTripadvisorUrl: text("review_tripadvisor_url"),
+  socialInstagramUrl: text("social_instagram_url"),
+  socialFacebookUrl: text("social_facebook_url"),
+  socialTiktokUrl: text("social_tiktok_url"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
