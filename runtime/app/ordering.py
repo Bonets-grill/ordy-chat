@@ -96,6 +96,24 @@ async def crear_pedido(
         json=payload,
         headers={"Content-Type": "application/json", "x-internal-secret": _internal_secret()},
     )
+    # Fase 6: si la sesión de mesa está en 'billing', web devuelve 409 con
+    # error=session_in_billing. Lo propagamos estructurado para que el
+    # brain lo traduzca a un mensaje al cliente ("la cuenta ya se pidió…").
+    if r.status_code == 409:
+        try:
+            body = r.json()
+        except Exception:
+            body = {}
+        if body.get("error") == "session_in_billing":
+            return {
+                "ok": False,
+                "error": "session_in_billing",
+                "hint": (
+                    "La cuenta ya está pedida en esta mesa. El camarero "
+                    "está al tanto. Si el cliente quiere añadir algo, que "
+                    "avise al camarero cuando llegue, no lo metas por aquí."
+                ),
+            }
     if r.status_code != 200:
         raise RuntimeError(f"crear_pedido fallo {r.status_code}: {r.text[:300]}")
     return r.json()

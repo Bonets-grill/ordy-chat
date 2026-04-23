@@ -42,6 +42,15 @@ type Copy = {
   conversationOn: string;
   conversationOff: string;
   listening: string;
+  // Fase 2 sesión de mesa: badge de cabecera + modal X-guard.
+  tableLabel: (mesa: string) => string;
+  sessionStatusPending: string;
+  sessionStatusActive: string;
+  sessionStatusBilling: string;
+  sessionStatusPaid: string;
+  closeGuardTitle: string;
+  closeGuardBody: (total: string) => string;
+  closeGuardContinue: string;
 };
 
 // Mapeo BCP-47 para Web Speech API (SpeechRecognition + SpeechSynthesis).
@@ -82,6 +91,15 @@ export const strings: Record<Lang, Copy> = {
     conversationOn: "Conversación continua",
     conversationOff: "Detener conversación",
     listening: "Te escucho…",
+    tableLabel: (m) => `Mesa ${m}`,
+    sessionStatusPending: "Preparando",
+    sessionStatusActive: "En cocina",
+    sessionStatusBilling: "Cuenta pedida",
+    sessionStatusPaid: "Pagado",
+    closeGuardTitle: "Tenéis un pedido en marcha",
+    closeGuardBody: (t) =>
+      `No podemos cerrar el chat hasta que paguéis. Total actual: ${t}. Cuando queráis la cuenta, pedídmela aquí.`,
+    closeGuardContinue: "Seguir aquí",
   },
   en: {
     greeting: (n) => `Welcome to ${n}! Want a recommendation?`,
@@ -110,6 +128,15 @@ export const strings: Record<Lang, Copy> = {
     conversationOn: "Hands-free chat",
     conversationOff: "Stop conversation",
     listening: "Listening…",
+    tableLabel: (m) => `Table ${m}`,
+    sessionStatusPending: "Preparing",
+    sessionStatusActive: "In the kitchen",
+    sessionStatusBilling: "Bill requested",
+    sessionStatusPaid: "Paid",
+    closeGuardTitle: "You have an open order",
+    closeGuardBody: (t) =>
+      `We can't close the chat until you pay. Current total: ${t}. When you're ready for the bill, ask me here.`,
+    closeGuardContinue: "Keep chatting",
   },
   fr: {
     greeting: (n) => `Bienvenue à ${n} ! Voulez-vous une recommandation ?`,
@@ -138,6 +165,15 @@ export const strings: Record<Lang, Copy> = {
     conversationOn: "Conversation continue",
     conversationOff: "Arrêter la conversation",
     listening: "J'écoute…",
+    tableLabel: (m) => `Table ${m}`,
+    sessionStatusPending: "En préparation",
+    sessionStatusActive: "En cuisine",
+    sessionStatusBilling: "Addition demandée",
+    sessionStatusPaid: "Payé",
+    closeGuardTitle: "Vous avez une commande en cours",
+    closeGuardBody: (t) =>
+      `Nous ne pouvons pas fermer le chat avant le paiement. Total actuel : ${t}. Pour l'addition, demandez-la-moi ici.`,
+    closeGuardContinue: "Rester ici",
   },
   de: {
     greeting: (n) => `Willkommen bei ${n}! Soll ich dir etwas empfehlen?`,
@@ -166,6 +202,15 @@ export const strings: Record<Lang, Copy> = {
     conversationOn: "Freisprech-Modus",
     conversationOff: "Gespräch beenden",
     listening: "Ich höre zu…",
+    tableLabel: (m) => `Tisch ${m}`,
+    sessionStatusPending: "In Vorbereitung",
+    sessionStatusActive: "In der Küche",
+    sessionStatusBilling: "Rechnung gewünscht",
+    sessionStatusPaid: "Bezahlt",
+    closeGuardTitle: "Ihr habt eine offene Bestellung",
+    closeGuardBody: (t) =>
+      `Wir können den Chat nicht schließen, bis bezahlt ist. Aktuelle Summe: ${t}. Für die Rechnung fragt mich hier.`,
+    closeGuardContinue: "Hier bleiben",
   },
   it: {
     greeting: (n) => `Benvenuto a ${n}! Vuoi un consiglio?`,
@@ -194,6 +239,15 @@ export const strings: Record<Lang, Copy> = {
     conversationOn: "Conversazione continua",
     conversationOff: "Ferma conversazione",
     listening: "Ti ascolto…",
+    tableLabel: (m) => `Tavolo ${m}`,
+    sessionStatusPending: "In preparazione",
+    sessionStatusActive: "In cucina",
+    sessionStatusBilling: "Conto richiesto",
+    sessionStatusPaid: "Pagato",
+    closeGuardTitle: "Avete un ordine in corso",
+    closeGuardBody: (t) =>
+      `Non possiamo chiudere la chat finché non pagate. Totale attuale: ${t}. Per il conto, chiedetemelo qui.`,
+    closeGuardContinue: "Restiamo qui",
   },
   pt: {
     greeting: (n) => `Bem-vindo ao ${n}! Quer uma recomendação?`,
@@ -222,5 +276,14 @@ export const strings: Record<Lang, Copy> = {
     conversationOn: "Conversa contínua",
     conversationOff: "Parar conversa",
     listening: "Estou a ouvir…",
+    tableLabel: (m) => `Mesa ${m}`,
+    sessionStatusPending: "A preparar",
+    sessionStatusActive: "Na cozinha",
+    sessionStatusBilling: "Conta pedida",
+    sessionStatusPaid: "Pago",
+    closeGuardTitle: "Têm um pedido em curso",
+    closeGuardBody: (t) =>
+      `Não podemos fechar o chat até que paguem. Total atual: ${t}. Para a conta, peçam-me aqui.`,
+    closeGuardContinue: "Ficar aqui",
   },
 };

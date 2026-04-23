@@ -182,6 +182,56 @@ export function MenuExperience(props: Props) {
   const [inputText, setInputText] = React.useState("");
   const [sending, setSending] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+
+  // Estado de la sesión de mesa (mig 032, Fase 1). Poll al mount si hay
+  // tableNumber, y tras cada sendMessage para capturar la transición a
+  // active cuando cocina acepta el pedido.
+  type SessionState = {
+    id: string;
+    status: "pending" | "active" | "billing" | "paid" | "closed";
+    totalCents: number;
+    billRequestedAt: string | null;
+    paidAt: string | null;
+    paymentMethod: string | null;
+    closedAt: string | null;
+    createdAt: string;
+  };
+  const [sessionState, setSessionState] = React.useState<SessionState | null>(null);
+  const [closeGuardOpen, setCloseGuardOpen] = React.useState(false);
+
+  const refreshSession = React.useCallback(async () => {
+    if (!tableNumber) return;
+    try {
+      const r = await fetch(
+        `/api/public/menu-chat/${slug}/session?mesa=${encodeURIComponent(tableNumber)}`,
+        { cache: "no-store" },
+      );
+      if (!r.ok) return;
+      const data = (await r.json()) as { session: SessionState | null };
+      setSessionState(data.session ?? null);
+    } catch {
+      /* silent — el chat sigue funcionando sin session info */
+    }
+  }, [slug, tableNumber]);
+
+  // Fetch inicial al montar si hay mesa en URL.
+  React.useEffect(() => {
+    void refreshSession();
+  }, [refreshSession]);
+
+  // Polling cada 20s mientras la sesión esté viva (por si cocina acepta
+  // o el camarero marca pagado). Paramos cuando está paid/closed.
+  React.useEffect(() => {
+    if (!tableNumber) return;
+    const live =
+      sessionState &&
+      (sessionState.status === "pending" ||
+        sessionState.status === "active" ||
+        sessionState.status === "billing");
+    if (!live) return;
+    const tmr = window.setInterval(() => void refreshSession(), 20_000);
+    return () => window.clearInterval(tmr);
+  }, [tableNumber, sessionState, refreshSession]);
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
 
   // ── Voz ────────────────────────────────────────────────────
@@ -475,6 +525,10 @@ export function MenuExperience(props: Props) {
       setError(t.errorFallback);
     } finally {
       setSending(false);
+      // Tras cada turno el bot puede haber llamado crear_pedido → refetch
+      // session. Si cocina acepta en ese mismo turno, el UI ya muestra
+      // "active" y el botón pedir-cuenta queda disponible.
+      void refreshSession();
     }
   }
 
@@ -664,6 +718,23 @@ export function MenuExperience(props: Props) {
     });
   }
 
+  // El intento del usuario de cerrar el chat. Si hay sesión de mesa viva
+  // (pending/active/billing), NO cerramos — abrimos un modal explicando que
+  // tienen pedido en marcha y no pueden cerrar hasta pagar. Así se evita
+  // perder la conversación mid-pedido (reporte de Mario 2026-04-23).
+  function attemptCloseChat() {
+    const live =
+      sessionState &&
+      (sessionState.status === "pending" ||
+        sessionState.status === "active" ||
+        sessionState.status === "billing");
+    if (live) {
+      setCloseGuardOpen(true);
+      return;
+    }
+    closeChat();
+  }
+
   function closeChat() {
     setChatOpen(false);
     stopSpeaking();
@@ -843,14 +914,41 @@ export function MenuExperience(props: Props) {
                 <Sparkles className="h-5 w-5" />
               </div>
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-semibold">{t.chatTitle(tenantName)}</div>
+                <div className="truncate text-sm font-semibold">
+                  {sessionState && tableNumber
+                    ? `${t.chatTitle(tenantName)} · ${t.tableLabel(tableNumber)}`
+                    : t.chatTitle(tenantName)}
+                </div>
                 <div className="flex items-center gap-1.5 text-[11px] text-white/60">
                   <span
                     className={`inline-block h-1.5 w-1.5 rounded-full ${
-                      conversational && recording ? "animate-pulse bg-rose-400" : "bg-emerald-400"
+                      conversational && recording
+                        ? "animate-pulse bg-rose-400"
+                        : sessionState?.status === "billing"
+                          ? "bg-amber-400"
+                          : sessionState?.status === "paid"
+                            ? "bg-sky-400"
+                            : "bg-emerald-400"
                     }`}
                   />
-                  {conversational && recording ? t.listening : t.chatSubtitle}
+                  {conversational && recording
+                    ? t.listening
+                    : sessionState
+                      ? (() => {
+                          const totalStr = `${(sessionState.totalCents / 100).toFixed(2).replace(".", ",")} €`;
+                          const statusLabel =
+                            sessionState.status === "pending"
+                              ? t.sessionStatusPending
+                              : sessionState.status === "active"
+                                ? t.sessionStatusActive
+                                : sessionState.status === "billing"
+                                  ? t.sessionStatusBilling
+                                  : sessionState.status === "paid"
+                                    ? t.sessionStatusPaid
+                                    : t.chatSubtitle;
+                          return `${statusLabel} · ${totalStr}`;
+                        })()
+                      : t.chatSubtitle}
                 </div>
               </div>
               {micSupported && voiceEnabled ? (
@@ -879,7 +977,7 @@ export function MenuExperience(props: Props) {
               </button>
               <button
                 type="button"
-                onClick={closeChat}
+                onClick={attemptCloseChat}
                 aria-label={t.close}
                 className="rounded-lg p-2 text-white/70 transition hover:bg-white/10 hover:text-white"
               >
@@ -966,6 +1064,27 @@ export function MenuExperience(props: Props) {
                 <Send className="h-4 w-4" />
               </button>
             </form>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Close guard — no se puede cerrar el chat si hay pedido en marcha */}
+      {closeGuardOpen && sessionState ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-stone-950/60 p-6 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl">
+            <h3 className="text-lg font-semibold text-stone-900">
+              {t.closeGuardTitle}
+            </h3>
+            <p className="mt-2 text-sm leading-relaxed text-stone-600">
+              {t.closeGuardBody(`${(sessionState.totalCents / 100).toFixed(2).replace(".", ",")} €`)}
+            </p>
+            <button
+              type="button"
+              onClick={() => setCloseGuardOpen(false)}
+              className="mt-5 w-full rounded-xl bg-stone-900 py-3 text-sm font-semibold text-white transition active:scale-95 hover:bg-stone-800"
+            >
+              {t.closeGuardContinue}
+            </button>
           </div>
         </div>
       ) : null}
