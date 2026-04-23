@@ -112,7 +112,13 @@ async def scrape_url_to_items(
     client = _get_client(anthropic_api_key)
     msg = await client.messages.create(
         model=MODEL_ID,
-        max_tokens=4096,
+        # Subido de 4096 → 16384 (2026-04-23) tras incidente Bonets: la
+        # carta tenía 76 items y cada uno lleva image_url (~100 chars por
+        # URL de CloudFront). 4096 tokens se quedaban cortos → Claude
+        # truncaba el JSON a mitad de string y el parser fallaba con
+        # "Unterminated string starting at line 219". Sonnet 4.6 acepta
+        # hasta 64K output; 16K cubre cartas de ~150 items con imágenes.
+        max_tokens=16384,
         temperature=0,
         system=_EXTRACT_PROMPT,
         messages=[{"role": "user", "content": text}],
@@ -129,7 +135,14 @@ async def scrape_url_to_items(
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError as e:
-        raise ValueError(f"Claude devolvió JSON inválido: {str(e)[:200]}")
+        # Si hay truncamiento por max_tokens, el mensaje de error
+        # típicamente es "Unterminated string" / "Expecting value".
+        # Ayuda a diagnosticar el caso de carta gigante.
+        stop_reason = getattr(msg, "stop_reason", None)
+        raise ValueError(
+            f"Claude devolvió JSON inválido: {str(e)[:200]} "
+            f"(stop_reason={stop_reason}, raw_len={len(raw)})"
+        )
 
     items = parsed.get("items") if isinstance(parsed, dict) else None
     if not isinstance(items, list):
