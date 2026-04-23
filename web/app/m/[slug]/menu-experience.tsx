@@ -14,7 +14,7 @@
 
 "use client";
 
-import { Headphones, HeadphoneOff, Mic, MicOff, Minus, Plus, Send, ShoppingCart, Sparkles, Volume2, VolumeX, X } from "lucide-react";
+import { Headphones, HeadphoneOff, MessageSquareText, Mic, MicOff, Minus, Plus, Send, ShoppingCart, Sparkles, Volume2, VolumeX, X } from "lucide-react";
 import * as React from "react";
 import { DEFAULT_LANG, detectLang, LANG_BCP47, type Lang, strings } from "./translations";
 import { normalizeForSpeech } from "./speech-normalize";
@@ -54,6 +54,11 @@ const MAX_PERSISTED_MESSAGES = 40;
 // cualquier siguiente tap (send, 🎧, mic) lo cubre — sin molestar con la
 // cortina negra otra vez.
 const VOICE_UNLOCKED_PREFIX = "ordy-voice-unlocked:";
+// Choice del cliente en la cortina de bienvenida: 'text' | 'voice' | null.
+// 'text'  → sin TTS, sin mic. Chat tipo escribir.
+// 'voice' → TTS desbloqueado + modo conversacional activo por defecto.
+// null    → aún no eligió; mostramos la cortina.
+const VOICE_CHOICE_PREFIX = "ordy-voice-choice:";
 
 function micSupportedSync(): boolean {
   if (typeof window === "undefined") return false;
@@ -248,12 +253,19 @@ export function MenuExperience(props: Props) {
   // hasta ese momento `voiceUnlocked=false` y speak() no hace nada.
   const [voiceEnabled, setVoiceEnabled] = React.useState(true);
   const [voiceUnlocked, setVoiceUnlocked] = React.useState(false);
+  // Choice del user en la cortina: null → cortina visible; 'text' → chat
+  // escribiendo; 'voice' → TTS + modo conversacional. Persistido por mesa.
+  const [voiceChoice, setVoiceChoice] = React.useState<"text" | "voice" | null>(null);
   const [conversational, setConversational] = React.useState(false);
   const conversationalRef = React.useRef(false);
   React.useEffect(() => {
     conversationalRef.current = conversational;
   }, [conversational]);
   const [recording, setRecording] = React.useState(false);
+  const recordingRef = React.useRef(false);
+  React.useEffect(() => {
+    recordingRef.current = recording;
+  }, [recording]);
   const [transcribing, setTranscribing] = React.useState(false);
   const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
   const audioChunksRef = React.useRef<Blob[]>([]);
@@ -262,6 +274,10 @@ export function MenuExperience(props: Props) {
   const audioCtxRef = React.useRef<AudioContext | null>(null);
   const analyserRef = React.useRef<AnalyserNode | null>(null);
   const rafRef = React.useRef<number | null>(null);
+  // Barge-in: cuando el TTS está hablando en modo conversacional, el mic
+  // puede estar abierto detectando habla del cliente con umbral alto para
+  // ignorar eco del altavoz. Si detecta → cancela TTS.
+  const ttsSpeakingRef = React.useRef(false);
   const silenceStartRef = React.useRef<number | null>(null);
   const hadSpeechRef = React.useRef(false);
   const micSupported = React.useMemo(() => micSupportedSync(), []);
@@ -318,13 +334,18 @@ export function MenuExperience(props: Props) {
         const fire = () => {
           if (fired) return;
           fired = true;
+          ttsSpeakingRef.current = false;
           onDone?.();
+        };
+        u.onstart = () => {
+          ttsSpeakingRef.current = true;
         };
         u.onend = fire;
         u.onerror = fire;
         window.speechSynthesis.speak(u);
       } catch {
         // navegador bloquea autoplay → ignorar silenciosamente
+        ttsSpeakingRef.current = false;
         onDone?.();
       }
     },
@@ -338,25 +359,36 @@ export function MenuExperience(props: Props) {
     } catch {
       /* noop */
     }
+    ttsSpeakingRef.current = false;
   }, []);
 
   const greetingKey = `${GREETING_SHOWN_PREFIX}${slug}`;
   const dismissedKey = `${CHAT_DISMISSED_PREFIX}${slug}`;
   const messagesKey = `${CHAT_MESSAGES_PREFIX}${slug}`;
   const voiceUnlockedKey = `${VOICE_UNLOCKED_PREFIX}${slug}`;
+  const voiceChoiceKey = `${VOICE_CHOICE_PREFIX}${slug}`;
 
-  // Rehidratación del voice unlock: si el usuario ya tocó la cortina negra
-  // antes del reload forzado, no le volvemos a mostrar el overlay gigante.
+  // Rehidratación del voice unlock + voice choice: si el user ya eligió
+  // modo (chat o voz) en un visit anterior de la misma pestaña, no le
+  // volvemos a mostrar la cortina.
   React.useEffect(() => {
     if (typeof window === "undefined") return;
     try {
       if (window.sessionStorage.getItem(voiceUnlockedKey) === "1") {
         setVoiceUnlocked(true);
       }
+      const choice = window.sessionStorage.getItem(voiceChoiceKey);
+      if (choice === "text" || choice === "voice") {
+        setVoiceChoice(choice);
+        if (choice === "text") {
+          setVoiceEnabled(false);
+          setVoiceUnlocked(true); // oculta overlay; no TTS por voiceEnabled=false
+        }
+      }
     } catch {
       /* noop */
     }
-  }, [voiceUnlockedKey]);
+  }, [voiceUnlockedKey, voiceChoiceKey]);
 
   // Rehidratación de mensajes: cargar historial de la sesión al montar.
   // Cubre el caso de un reload forzado por el Service Worker mid-pedido.
@@ -404,14 +436,30 @@ export function MenuExperience(props: Props) {
     }
   }, [messages, messagesKey]);
 
-  // Auto-abrir el chat con saludo al montar. Siempre que el user NO haya
-  // cerrado explícitamente en esta sesión y no haya ya mensajes rehidratados.
+  // Auto-abrir el chat con saludo al montar. Regla (fix 2026-04-23):
+  //   - Si el user cerró explícitamente Y NO hay sesión de mesa viva → respetamos.
+  //   - Si HAY sesión viva (pending/active/billing) → el chat SIEMPRE se abre,
+  //     aunque el user lo haya cerrado antes. El pedido en marcha manda.
   // Pequeño delay para que el idioma se haya detectado. TTS NO se reproduce
   // aquí — espera al user gesture del overlay (unlockVoice).
   React.useEffect(() => {
     if (typeof window === "undefined") return;
     const userDismissed = window.sessionStorage.getItem(dismissedKey);
-    if (userDismissed) return;
+    const sessionAlive =
+      sessionState !== null &&
+      (sessionState.status === "pending" ||
+        sessionState.status === "active" ||
+        sessionState.status === "billing");
+    if (userDismissed && !sessionAlive) return;
+    // Si el user había cerrado pero hay sesión viva, limpiamos el flag para
+    // que no vuelva a bloquear futuros auto-open.
+    if (userDismissed && sessionAlive) {
+      try {
+        window.sessionStorage.removeItem(dismissedKey);
+      } catch {
+        /* noop */
+      }
+    }
     const timer = window.setTimeout(() => {
       setChatOpen(true);
       setMessages((prev) => {
@@ -421,20 +469,34 @@ export function MenuExperience(props: Props) {
       });
     }, 500);
     return () => window.clearTimeout(timer);
-  }, [dismissedKey, lang, tenantName]);
+  }, [dismissedKey, lang, tenantName, sessionState]);
 
-  // Unlock: primer user gesture → desbloquea TTS + reproduce saludo.
-  // Persistimos la preferencia en sessionStorage: tras un reload del SW no
-  // volvemos a mostrar la cortina negra. El siguiente tap del usuario
-  // (send, 🎧, mic) servirá como gesture para que speechSynthesis arranque.
-  function unlockVoice() {
-    if (voiceUnlocked) return;
-    setVoiceUnlocked(true);
+  // Choice "Chatear": el user prefiere escribir. Nada de TTS, nada de mic.
+  function chooseChatOnly() {
+    setVoiceChoice("text");
+    setVoiceEnabled(false); // silencia TTS
+    setVoiceUnlocked(true); // oculta overlay
     if (typeof window === "undefined") return;
     try {
+      window.sessionStorage.setItem(voiceChoiceKey, "text");
+    } catch {
+      /* noop */
+    }
+  }
+
+  // Choice "Hablar con el mesero": desbloquea TTS, reproduce saludo y
+  // arranca modo conversacional de inmediato. Consume el user gesture.
+  function chooseVoiceMode() {
+    setVoiceChoice("voice");
+    setVoiceEnabled(true);
+    setVoiceUnlocked(true);
+    setConversational(true);
+    if (typeof window === "undefined") return;
+    try {
+      window.sessionStorage.setItem(voiceChoiceKey, "voice");
       window.sessionStorage.setItem(voiceUnlockedKey, "1");
     } catch {
-      /* storage lleno / safari privado: seguimos */
+      /* noop */
     }
     if (!("speechSynthesis" in window)) return;
     const greetingText = normalizeForSpeech(strings[lang].greeting(tenantName), lang);
@@ -445,6 +507,11 @@ export function MenuExperience(props: Props) {
       u.lang = LANG_BCP47[lang];
       u.rate = 1.0;
       u.pitch = 1.0;
+      // Al acabar el saludo, abrimos el mic para que el cliente conteste sin
+      // tener que tocar nada (modo conversacional activo).
+      u.onend = () => {
+        if (conversationalRef.current) void startRecording(true);
+      };
       window.speechSynthesis.speak(u);
     } catch {
       /* autoplay bloqueado — el toggle 🔊 sigue funcional */
@@ -512,11 +579,18 @@ export function MenuExperience(props: Props) {
       const reply = data.response ?? "";
       setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
       if (reply) {
+        // Barge-in (2026-04-23): en modo conversacional abrimos el mic YA
+        // mientras el bot empieza a hablar. El VAD detecta habla del
+        // cliente con umbral alto (ignora eco del TTS) y si se dispara,
+        // cancela el TTS al vuelo. Mario: "cuando el cliente interrumpa,
+        // el agente debe parar y escuchar".
+        if (conversationalRef.current && !recordingRef.current) {
+          void startRecording(true);
+        }
         speak(reply, () => {
-          // En modo conversacional: tras acabar la respuesta del mesero,
-          // reabrir el mic automáticamente para que el cliente responda sin
-          // tocar ningún botón.
-          if (conversationalRef.current) {
+          // Fallback: si por lo que sea el barge-in no arrancó el mic,
+          // lo arrancamos al onend del TTS.
+          if (conversationalRef.current && !recordingRef.current) {
             void startRecording(true);
           }
         });
@@ -641,6 +715,10 @@ export function MenuExperience(props: Props) {
         const buf = new Float32Array(analyser.fftSize);
         const SILENCE_MS = 1200;
         const SPEECH_RMS = 0.015;
+        // Barge-in: cuando el TTS está hablando, subimos el umbral para
+        // ignorar eco del altavoz. La habla humana cruza este threshold,
+        // el eco TTS tras echo-cancellation del navegador no.
+        const BARGE_IN_RMS = 0.04;
         const MAX_MS = 20000;
         const startedAt = performance.now();
         silenceStartRef.current = null;
@@ -653,9 +731,21 @@ export function MenuExperience(props: Props) {
           for (let i = 0; i < buf.length; i++) sumSq += buf[i] * buf[i];
           const rms = Math.sqrt(sumSq / buf.length);
           const now = performance.now();
-          if (rms > SPEECH_RMS) {
+          const ttsSpeaking = ttsSpeakingRef.current;
+          const threshold = ttsSpeaking ? BARGE_IN_RMS : SPEECH_RMS;
+          if (rms > threshold) {
             hadSpeechRef.current = true;
             silenceStartRef.current = null;
+            // Barge-in: si estamos detectando habla del cliente durante
+            // el TTS, cortamos el TTS YA y seguimos grabando al cliente.
+            if (ttsSpeaking) {
+              try {
+                window.speechSynthesis?.cancel();
+              } catch {
+                /* noop */
+              }
+              ttsSpeakingRef.current = false;
+            }
           } else if (hadSpeechRef.current) {
             if (silenceStartRef.current == null) silenceStartRef.current = now;
             if (now - silenceStartRef.current > SILENCE_MS) {
@@ -866,36 +956,43 @@ export function MenuExperience(props: Props) {
         </div>
       ) : null}
 
-      {/* Overlay "toca para hablar" — requisito legal de autoplay en todos
-          los navegadores. Al tocar, desbloquea TTS + reproduce saludo. */}
-      {chatOpen && !voiceUnlocked && voiceEnabled ? (
-        <button
-          type="button"
-          onClick={unlockVoice}
-          aria-label={t.openChat}
-          className="fixed inset-0 z-[60] flex flex-col items-center justify-center gap-6 bg-stone-950/90 p-8 text-center backdrop-blur-md transition active:bg-stone-950/95"
-        >
+      {/* Cortina de bienvenida con 2 opciones: Chatear o Hablar. El user
+          gesture del tap de un botón desbloquea TTS (si eligió voz). Si
+          eligió chat, desactivamos TTS y queda silenciado. */}
+      {chatOpen && voiceChoice === null ? (
+        <div className="fixed inset-0 z-[60] flex flex-col items-center justify-center gap-6 bg-stone-950/90 p-8 text-center backdrop-blur-md">
           <div
-            className="flex h-32 w-32 items-center justify-center rounded-full text-white shadow-2xl ring-[6px] ring-white/20"
+            className="flex h-24 w-24 items-center justify-center rounded-full text-white shadow-2xl ring-[6px] ring-white/20"
             style={{ backgroundColor: brandColor }}
           >
-            <Mic className="h-14 w-14 animate-pulse" />
+            <Sparkles className="h-12 w-12" />
           </div>
-          <div className="max-w-sm space-y-3">
+          <div className="max-w-sm space-y-2">
             <div className="text-2xl font-bold leading-tight text-white">
               {tenantName}
             </div>
             <div className="text-base leading-snug text-white/85">
               {t.greeting(tenantName)}
             </div>
-            <div className="pt-2 text-sm font-semibold uppercase tracking-wider text-white">
-              👆 {t.openChat}
-            </div>
           </div>
-          <div className="absolute bottom-8 text-[11px] text-white/50">
-            {t.voiceOff} → <VolumeX className="inline h-3 w-3" />
+          <div className="flex w-full max-w-sm flex-col gap-3 pt-2">
+            <button
+              type="button"
+              onClick={chooseChatOnly}
+              className="flex items-center justify-center gap-2 rounded-2xl bg-white px-5 py-4 text-base font-semibold text-stone-900 shadow-lg transition active:scale-95"
+            >
+              <MessageSquareText className="h-5 w-5" /> {t.chooseChat}
+            </button>
+            <button
+              type="button"
+              onClick={chooseVoiceMode}
+              className="flex items-center justify-center gap-2 rounded-2xl px-5 py-4 text-base font-semibold text-white shadow-lg ring-1 ring-white/30 transition active:scale-95"
+              style={{ backgroundColor: brandColor }}
+            >
+              <Mic className="h-5 w-5" /> {t.chooseVoice}
+            </button>
           </div>
-        </button>
+        </div>
       ) : null}
 
       {/* Chat panel */}

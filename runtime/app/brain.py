@@ -818,7 +818,12 @@ def _build_post_cuenta_block(tenant: TenantContext) -> str | None:
     return "\n".join(lineas)
 
 
-def _build_menu_web_flow_block(mesa: str, drinks_pitch: str = "") -> str:
+def _build_menu_web_flow_block(
+    mesa: str,
+    drinks_pitch: str = "",
+    session_status: str | None = None,
+    historial_len: int = 0,
+) -> str:
     """Bloque system para el flujo 'bebidas primero' cuando el cliente abre
     /m/<slug>?mesa=N (QR de mesa). Se inyecta solo si channel=menu_web.
 
@@ -826,85 +831,122 @@ def _build_menu_web_flow_block(mesa: str, drinks_pitch: str = "") -> str:
     preparándose en el bar. El bot abre pidiendo bebidas para aprovechar ese
     tiempo muerto, luego añade la comida por modificar_pedido.
 
-    `drinks_pitch`: texto libre que el tenant edita en /dashboard/carta para
-    que el bot ofrezca bebidas CURADAS (mig 031). Si está vacío, el bot
-    pregunta "¿qué os apetece beber?" de forma abierta.
+    CONTEXT-AWARE (fix 2026-04-23): antes el bloque decía literalmente "TU
+    PRIMER TURNO" — el bot lo leía también turnos 2/3/4 y "reiniciaba" el
+    saludo como si el cliente acabara de llegar. Ahora distinguimos la
+    fase por `session_status` (pasado desde generar_respuesta):
+      - None o "pending" sin historial → fase bienvenida (saludo + mesa + bebidas).
+      - "pending"/"active"/"billing" con historial → fase ayudar-en-marcha.
+      - "paid"/"closed" → fase post-pago, cerrar con naturalidad.
     """
     mesa_linea = (
         f"<mesa>{mesa}</mesa>"
         if mesa
-        else "<mesa>NO INDICADA — pregúntasela al cliente en tu primer turno y confírmala antes de nada</mesa>"
+        else "<mesa>NO INDICADA — si aún no la has preguntado, pregúntasela y confírmala antes de crear pedido</mesa>"
     )
     pitch_clean = (drinks_pitch or "").strip()
     if pitch_clean:
-        # Recortamos por seguridad (evita prompts kilométricos del tenant).
         pitch_clean = pitch_clean[:500]
         bebidas_linea = (
             f"<bebidas_curadas>\n{pitch_clean}\n</bebidas_curadas>\n"
-            "INSTRUCCIÓN RÍGIDA: ofrece EXACTAMENTE las bebidas de "
-            "<bebidas_curadas>. NO inventes otras bebidas, NO sugieras del "
-            "resto de la carta en este primer turno. Si el cliente pide una "
-            "bebida que no está en <bebidas_curadas> pero sí está en la "
-            "<carta> general, sírvela sin problema; pero tu OFERTA inicial "
-            "es literalmente ese texto.\n"
-        )
-        paso_3 = (
-            "3. Ofrece las bebidas de <bebidas_curadas> LITERALMENTE. "
-            "Frase tipo: '¿Os apetece algo para beber mientras miráis la carta? "
-            "Tenemos [literal del texto curado].' NO listes comida todavía, "
-            "NO inventes bebidas."
+            "INSTRUCCIÓN RÍGIDA cuando ofrezcas bebidas de entrada: ofrece "
+            "EXACTAMENTE las bebidas de <bebidas_curadas>. NO inventes otras, "
+            "NO sugieras del resto de la carta en la oferta inicial. Si el "
+            "cliente pide una bebida fuera de <bebidas_curadas> pero sí en la "
+            "<carta>, sírvela sin problema.\n"
         )
     else:
         bebidas_linea = ""
-        paso_3 = (
-            "3. Pregunta al cliente qué bebida le apetece con una frase "
-            "abierta, tipo '¿Os apetece algo para beber mientras miráis la "
-            "carta?'. Toma su respuesta tal cual. NO listes comida todavía."
+
+    # Fase del flujo. `session_status` es autoritativo; `historial_len` es un
+    # backup defensivo (si el runtime no pudo leer la sesión).
+    is_welcome = (
+        (session_status is None or session_status == "pending") and historial_len == 0
+    )
+    is_post_paid = session_status in ("paid", "closed")
+
+    if is_welcome:
+        flujo = (
+            "<flujo_carta_qr fase='bienvenida'>\n"
+            "El cliente acaba de escanear el QR y abrió el chat. Este ES el "
+            "primer turno y no hay conversación previa.\n"
+            "EN ESTE TURNO debes (orden estricto):\n"
+            "1. Saludo breve (una línea), en el idioma del cliente.\n"
+            "2. Si <mesa> trae número, CONFÍRMALA literalmente "
+            "('Estáis en la mesa X, ¿correcto?'). Si dice NO INDICADA, "
+            "pregunta '¿en qué mesa estáis?' y espera respuesta.\n"
+            + (
+                "3. Ofrece las bebidas de <bebidas_curadas> LITERALMENTE. "
+                "Frase tipo '¿Os apetece algo para beber mientras miráis la "
+                "carta? Tenemos [texto curado].' NO listes comida todavía.\n"
+                if pitch_clean
+                else "3. Pregunta al cliente qué bebida le apetece abierto, "
+                "tipo '¿Os apetece algo para beber mientras miráis la carta?'. "
+                "NO listes comida todavía.\n"
+            )
+            + "</flujo_carta_qr>"
+        )
+    elif is_post_paid:
+        flujo = (
+            "<flujo_carta_qr fase='post_pago'>\n"
+            "La mesa ya está pagada. NO crees más pedidos. Si el cliente "
+            "escribe, responde con naturalidad (agradecer, invitar a volver, "
+            "responder a dudas), pero no insinúes que se puede seguir "
+            "pidiendo — la cuenta está cerrada.\n"
+            "</flujo_carta_qr>"
+        )
+    else:
+        # En marcha: ya hay pedido o conversación previa. NO reinicies el
+        # saludo, NO preguntes mesa otra vez (ya la tienes en <mesa>), NO
+        # vuelvas a ofrecer bebidas por defecto.
+        flujo = (
+            "<flujo_carta_qr fase='en_marcha'>\n"
+            "La conversación con este cliente YA está en curso. NO saludes "
+            "de nuevo como si acabara de llegar, NO vuelvas a preguntar la "
+            "mesa, NO vuelvas a ofrecer bebidas desde cero. Mira el "
+            "historial: continúa donde lo dejasteis.\n"
+            "Si añade platos → modificar_pedido con el order_id del pedido "
+            "de esta mesa. NUNCA crear_pedido de nuevo si ya hay uno abierto.\n"
+            "Si pide la cuenta ('cuenta', 'cobrar', 'pagar') → tool "
+            "pedir_cuenta(table_number=<mesa>).\n"
+            "Si tiene una duda fuera del pedido (alergia, horario, baño) "
+            "respóndela con naturalidad sin romper el contexto.\n"
+            "</flujo_carta_qr>"
         )
     return (
         "<canal>menu_web</canal>\n"
         f"{mesa_linea}\n"
+        f"<session_status>{session_status or 'none'}</session_status>\n"
         f"{bebidas_linea}"
-        "<flujo_carta_qr>\n"
-        "El cliente está sentado en el restaurante y abrió la carta por QR en su mesa.\n"
-        "TU PRIMER TURNO debe (orden estricto):\n"
-        "1. Saludo breve (una línea), en el idioma del cliente.\n"
-        "2. Si la mesa viene en <mesa> como número, CONFÍRMALA literalmente "
-        "('Estáis en la mesa X, ¿correcto?'). Si dice NO INDICADA, pregunta "
-        "'¿en qué mesa estáis?' y espera respuesta antes de seguir.\n"
-        f"{paso_3}\n"
+        f"{flujo}\n"
         "\n"
-        "CUANDO EL CLIENTE CONFIRME LAS BEBIDAS y tengas número de mesa:\n"
-        "- Llama crear_pedido INMEDIATAMENTE con order_type='dine_in', "
-        "table_number=<número de mesa confirmado>, items=[las bebidas que "
-        "pidieron, cada una con name/quantity/unit_price_cents/notes=null]. "
-        "NO pidas nombre ni teléfono del cliente — comen aquí en la mesa.\n"
-        "- Tras crear_pedido, di algo como: 'Marchando vuestras bebidas para "
-        "la mesa X. Mientras, decidme si queréis que os recomiende comida o "
-        "si preferís pedirla vosotros.'\n"
+        "<reglas_universales>\n"
+        "CREAR EL PRIMER PEDIDO de la mesa: cuando tengas mesa confirmada + "
+        "items confirmados por el cliente, llama crear_pedido con "
+        "order_type='dine_in', table_number=<mesa>, items=[...]. NO pidas "
+        "nombre ni teléfono — comen aquí.\n"
         "\n"
-        "DESPUÉS (segundo/tercer turno): ayuda con la comida. Cuando el "
-        "cliente confirme platos, llama modificar_pedido con el order_id del "
-        "pedido anterior para AÑADIR la comida — NUNCA llames crear_pedido "
-        "otra vez en la misma visita.\n"
+        "AÑADIR MÁS ITEMS tras el primer pedido: usa modificar_pedido con el "
+        "order_id del pedido abierto. NUNCA llames crear_pedido dos veces en "
+        "la misma visita de mesa.\n"
         "\n"
-        "PEDIR LA CUENTA (Fase 3): cuando el cliente diga 'la cuenta', "
-        "'cobrar', 'tráeme la cuenta', 'pagar', etc., LLAMA la tool "
-        "`pedir_cuenta(table_number=<mesa>)`. \n"
-        "- Si la tool devuelve error kitchen_not_accepted_yet: dile al "
-        "cliente que en cuanto el primer pedido entre en cocina podrá "
-        "cerrar la cuenta.\n"
-        "- Si devuelve error no_active_session: dile al cliente que aún "
-        "no ha pedido nada, no hay cuenta que cobrar.\n"
-        "- Si devuelve ok con already_requested=True: dile que el camarero "
-        "ya está avisado y llega enseguida.\n"
-        "- Si devuelve ok nuevo: confirma al cliente que avisaste al "
-        "camarero, menciona el total (total_eur), y dile que alguien pasará "
-        "enseguida a cobrar.\n"
+        "TRAS CUALQUIER PEDIDO: confirma con una frase corta tipo "
+        "'Marchando para la mesa X'. NO digas 'pedido confirmado' ni recites "
+        "items como factura.\n"
+        "\n"
+        "PEDIR LA CUENTA: cuando el cliente diga 'la cuenta', 'cobrar', "
+        "'tráeme la cuenta', 'pagar', etc., llama pedir_cuenta(table_number=<mesa>):\n"
+        "- error kitchen_not_accepted_yet → dile que en cuanto cocina acepte "
+        "el primer pedido podrás cerrar la cuenta.\n"
+        "- error no_active_session → dile que aún no ha pedido nada.\n"
+        "- ok con already_requested=True → dile que el camarero ya está "
+        "avisado y llega enseguida.\n"
+        "- ok nuevo → confirma que avisaste al camarero, menciona el total_eur, "
+        "dile que alguien pasará enseguida.\n"
         "\n"
         "NO actives este flujo si el cliente claramente pide takeaway o para "
         "llevar desde el principio (raro vía QR de mesa pero posible).\n"
-        "</flujo_carta_qr>"
+        "</reglas_universales>"
     )
 
 
@@ -1057,12 +1099,42 @@ async def generar_respuesta(
     # table_number=N, items=bebidas). Comida posterior → modificar_pedido.
     if channel == "menu_web":
         mesa_value = table_number.strip() if table_number else ""
+        # Lookup estado de la sesión de mesa para saber en qué fase estamos
+        # (bienvenida vs en_marcha vs post_paid). Best-effort: si falla, el
+        # bloque se renderiza en modo "bienvenida" por defecto — mejor que
+        # no inyectar nada.
+        session_status_now: str | None = None
+        if mesa_value:
+            try:
+                from app.memory import inicializar_pool
+
+                pool = await inicializar_pool()
+                async with pool.acquire() as conn:
+                    row = await conn.fetchrow(
+                        """
+                        SELECT status FROM table_sessions
+                        WHERE tenant_id = $1 AND table_number = $2
+                          AND status IN ('pending','active','billing','paid','closed')
+                        ORDER BY created_at DESC
+                        LIMIT 1
+                        """,
+                        tenant.id, mesa_value,
+                    )
+                if row:
+                    session_status_now = row["status"]
+            except Exception:
+                logger.exception(
+                    "no se pudo leer session_status para menu_web flow",
+                    extra={"tenant_slug": tenant.slug, "event": "session_status_lookup_error"},
+                )
         system_blocks.append(
             {
                 "type": "text",
                 "text": _build_menu_web_flow_block(
                     mesa_value,
                     drinks_pitch=tenant.drinks_greeting_pitch,
+                    session_status=session_status_now,
+                    historial_len=len(historial),
                 ),
             }
         )
