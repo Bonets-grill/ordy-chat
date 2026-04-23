@@ -140,6 +140,8 @@ def _match_images_to_items(
 
         # Fase 1: match por slug dentro del filename de la URL.
         if item_slug:
+            from html import unescape as _html_unescape
+
             for url, _pos in all_imgs:
                 if url in used:
                     continue
@@ -147,6 +149,11 @@ def _match_images_to_items(
                 filename = url.rsplit("/", 1)[-1].split("?", 1)[0]
                 # Strip extensión conocida.
                 filename = re.sub(r"\.(webp|jpe?g|png|gif|avif)$", "", filename, flags=re.I)
+                # Decodificar entidades HTML — el HTML de codemida tiene
+                # `&amp;` literal en los filenames ("Aros &amp; Bacon").
+                # Sin este unescape el slug queda "arosampbacon" y no
+                # matchea el item slug "arosbacon". Fix Bonets 2026-04-23.
+                filename = _html_unescape(filename)
                 filename_slug = _slugify(filename)
                 if item_slug in filename_slug:
                     matched = url

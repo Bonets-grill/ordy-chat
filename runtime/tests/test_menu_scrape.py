@@ -138,6 +138,19 @@ class TestMatchImagesToItems:
         _match_images_to_items(html, items)
         assert items[0]["_matched_image_raw"] is None
 
+    def test_filename_con_amp_entity_matchea(self) -> None:
+        """Bug Bonets 2026-04-23: "Aros &amp; Bacon" en filename del HTML
+        no matcheaba el item "Aros de Queso & Bacon" (slug). Fix: unescape
+        HTML entities en filename antes de slugify."""
+        html = (
+            '<img src="https://cdn/Aros de Queso &amp; Bacon.webp">'
+            '<p>Aros de Queso &amp; Bacon 8,90€</p>'
+        )
+        items = [{"name": "Aros de Queso & Bacon"}]
+        _match_images_to_items(html, items)
+        assert items[0]["_matched_image_raw"] is not None
+        assert "Bacon" in items[0]["_matched_image_raw"]
+
 
 class TestSanitizarImageUrl:
     def test_url_absoluta_https_pasa(self) -> None:
