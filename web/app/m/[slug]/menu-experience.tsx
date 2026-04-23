@@ -47,6 +47,12 @@ const CHAT_DISMISSED_PREFIX = "ordy-chat-dismissed:";
 // aparecer mañana). Por tenant para no mezclar conversaciones.
 const CHAT_MESSAGES_PREFIX = "ordy-chat-messages:";
 const MAX_PERSISTED_MESSAGES = 40;
+// Voice unlock persistido: tras un reload del SW no queremos re-mostrar el
+// overlay gigante si el usuario ya había desbloqueado la voz. Los
+// navegadores siguen requiriendo un gesture para speechSynthesis, pero
+// cualquier siguiente tap (send, 🎧, mic) lo cubre — sin molestar con la
+// cortina negra otra vez.
+const VOICE_UNLOCKED_PREFIX = "ordy-voice-unlocked:";
 
 function micSupportedSync(): boolean {
   if (typeof window === "undefined") return false;
@@ -286,6 +292,20 @@ export function MenuExperience(props: Props) {
   const greetingKey = `${GREETING_SHOWN_PREFIX}${slug}`;
   const dismissedKey = `${CHAT_DISMISSED_PREFIX}${slug}`;
   const messagesKey = `${CHAT_MESSAGES_PREFIX}${slug}`;
+  const voiceUnlockedKey = `${VOICE_UNLOCKED_PREFIX}${slug}`;
+
+  // Rehidratación del voice unlock: si el usuario ya tocó la cortina negra
+  // antes del reload forzado, no le volvemos a mostrar el overlay gigante.
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      if (window.sessionStorage.getItem(voiceUnlockedKey) === "1") {
+        setVoiceUnlocked(true);
+      }
+    } catch {
+      /* noop */
+    }
+  }, [voiceUnlockedKey]);
 
   // Rehidratación de mensajes: cargar historial de la sesión al montar.
   // Cubre el caso de un reload forzado por el Service Worker mid-pedido.
@@ -353,10 +373,18 @@ export function MenuExperience(props: Props) {
   }, [dismissedKey, lang, tenantName]);
 
   // Unlock: primer user gesture → desbloquea TTS + reproduce saludo.
+  // Persistimos la preferencia en sessionStorage: tras un reload del SW no
+  // volvemos a mostrar la cortina negra. El siguiente tap del usuario
+  // (send, 🎧, mic) servirá como gesture para que speechSynthesis arranque.
   function unlockVoice() {
     if (voiceUnlocked) return;
     setVoiceUnlocked(true);
     if (typeof window === "undefined") return;
+    try {
+      window.sessionStorage.setItem(voiceUnlockedKey, "1");
+    } catch {
+      /* storage lleno / safari privado: seguimos */
+    }
     if (!("speechSynthesis" in window)) return;
     const greetingText = normalizeForSpeech(strings[lang].greeting(tenantName), lang);
     if (!greetingText) return;
