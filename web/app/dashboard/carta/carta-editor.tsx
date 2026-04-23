@@ -141,20 +141,53 @@ export function CartaEditor({ initial }: { initial: MenuItem[] }) {
     }
   }
 
+  // Status por-item para feedback visual durante delete/toggle. null cuando
+  // no hay acción en curso, string cuando hay error.
+  const [rowStatus, setRowStatus] = React.useState<Record<string, "busy" | string>>({});
+  const setRowBusy = (id: string, v: "busy" | string | null) =>
+    setRowStatus((prev) => {
+      const next = { ...prev };
+      if (v === null) delete next[id];
+      else next[id] = v;
+      return next;
+    });
+
   async function deleteItem(id: string) {
     if (!confirm("¿Borrar este item?")) return;
-    const res = await fetch(`/api/tenant/menu/${id}`, { method: "DELETE" });
-    if (res.ok) setItems((prev) => prev.filter((i) => i.id !== id));
+    setRowBusy(id, "busy");
+    try {
+      const res = await fetch(`/api/tenant/menu/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        setItems((prev) => prev.filter((i) => i.id !== id));
+        setRowBusy(id, null);
+        return;
+      }
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      setRowBusy(id, `borrar falló: ${body.error ?? `HTTP ${res.status}`}`);
+    } catch (e) {
+      setRowBusy(id, `borrar falló: ${e instanceof Error ? e.message : "desconocido"}`);
+    }
   }
 
   async function toggleAvailable(it: MenuItem) {
-    const res = await fetch(`/api/tenant/menu/${it.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ available: !it.available }),
-    });
-    if (res.ok) {
-      setItems((prev) => prev.map((i) => (i.id === it.id ? { ...i, available: !i.available } : i)));
+    setRowBusy(it.id, "busy");
+    try {
+      const res = await fetch(`/api/tenant/menu/${it.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ available: !it.available }),
+      });
+      if (res.ok) {
+        setItems((prev) =>
+          prev.map((i) => (i.id === it.id ? { ...i, available: !i.available } : i)),
+        );
+        setRowBusy(it.id, null);
+        return;
+      }
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      setRowBusy(it.id, `cambio falló: ${body.error ?? `HTTP ${res.status}`}`);
+    } catch (e) {
+      setRowBusy(it.id, `cambio falló: ${e instanceof Error ? e.message : "desconocido"}`);
     }
   }
 
@@ -326,29 +359,43 @@ export function CartaEditor({ initial }: { initial: MenuItem[] }) {
                           <p className="mt-1 text-xs text-neutral-500">{it.description}</p>
                         )}
                       </div>
-                      <div className="flex shrink-0 gap-1">
-                        <button
-                          type="button"
-                          onClick={() => toggleAvailable(it)}
-                          className="rounded px-2 py-1 text-xs text-neutral-500 hover:bg-neutral-100"
-                          title={it.available ? "Marcar agotado" : "Marcar disponible"}
-                        >
-                          {it.available ? "Activo" : "Inactivo"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => startEdit(it)}
-                          className="rounded px-2 py-1 text-xs text-neutral-700 hover:bg-neutral-100"
-                        >
-                          Editar
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => deleteItem(it.id)}
-                          className="rounded px-2 py-1 text-xs text-rose-600 hover:bg-rose-50"
-                        >
-                          Borrar
-                        </button>
+                      <div className="flex shrink-0 flex-col items-end gap-1">
+                        <div className="flex gap-1">
+                          <button
+                            type="button"
+                            onClick={() => toggleAvailable(it)}
+                            disabled={rowStatus[it.id] === "busy"}
+                            className="rounded px-2 py-1 text-xs text-neutral-500 hover:bg-neutral-100 disabled:opacity-50"
+                            title={it.available ? "Marcar agotado" : "Marcar disponible"}
+                          >
+                            {rowStatus[it.id] === "busy"
+                              ? "…"
+                              : it.available
+                                ? "Activo"
+                                : "Inactivo"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => startEdit(it)}
+                            disabled={rowStatus[it.id] === "busy"}
+                            className="rounded px-2 py-1 text-xs text-neutral-700 hover:bg-neutral-100 disabled:opacity-50"
+                          >
+                            Editar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => deleteItem(it.id)}
+                            disabled={rowStatus[it.id] === "busy"}
+                            className="rounded px-2 py-1 text-xs text-rose-600 hover:bg-rose-50 disabled:opacity-50"
+                          >
+                            Borrar
+                          </button>
+                        </div>
+                        {rowStatus[it.id] && rowStatus[it.id] !== "busy" && (
+                          <span className="text-[11px] text-rose-600">
+                            {rowStatus[it.id]}
+                          </span>
+                        )}
                       </div>
                     </li>
                   ))}
