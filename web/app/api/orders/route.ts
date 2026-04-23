@@ -62,16 +62,31 @@ export async function POST(req: Request) {
     .limit(1);
   if (!tenant) return NextResponse.json({ error: "tenant_not_found" }, { status: 404 });
 
-  const order = await createOrder({
-    tenantId: tenant.id,
-    orderType: parsed.data.orderType,
-    customerPhone: parsed.data.customerPhone,
-    customerName: parsed.data.customerName,
-    tableNumber: parsed.data.tableNumber,
-    notes: parsed.data.notes,
-    items: parsed.data.items,
-    isTest: parsed.data.isTest ?? false,
-  });
+  let order;
+  try {
+    order = await createOrder({
+      tenantId: tenant.id,
+      orderType: parsed.data.orderType,
+      customerPhone: parsed.data.customerPhone,
+      customerName: parsed.data.customerName,
+      tableNumber: parsed.data.tableNumber,
+      notes: parsed.data.notes,
+      items: parsed.data.items,
+      isTest: parsed.data.isTest ?? false,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // Fase 6: bloqueo de añadir items tras pedir la cuenta. El runtime lee
+    // este error y traduce a un mensaje al cliente ("la cuenta ya se pidió,
+    // avisa al camarero si quieres añadir algo").
+    if (msg === "session_in_billing") {
+      return NextResponse.json(
+        { error: "session_in_billing" },
+        { status: 409 },
+      );
+    }
+    throw err;
+  }
 
   return NextResponse.json({
     orderId: order.id,

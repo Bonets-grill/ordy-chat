@@ -167,9 +167,13 @@ export async function getOrCreateActiveSession(input: {
   tableNumber: string;
   isTest?: boolean;
 }): Promise<string> {
-  // Intentar leer la activa primero.
+  // Mig 032 + Fase 6: solo reusamos sesión si está 'pending' o 'active'.
+  // En 'billing' (el cliente ya pidió la cuenta) bloqueamos nuevos pedidos
+  // para evitar: cliente paga X € en Stripe, al mismo tiempo añaden un
+  // plato que sube el total → descuadre. Si el cliente quiere algo más
+  // tras pedir cuenta, el camarero lo añade a mano o se abre sesión nueva.
   const existing = await db
-    .select({ id: tableSessions.id })
+    .select({ id: tableSessions.id, status: tableSessions.status })
     .from(tableSessions)
     .where(
       and(
@@ -179,7 +183,15 @@ export async function getOrCreateActiveSession(input: {
       ),
     )
     .limit(1);
-  if (existing.length > 0) return existing[0].id;
+  if (existing.length > 0) {
+    if (existing[0].status === "billing") {
+      // Surface explícito al caller — el runtime lo tradurá a un mensaje
+      // al cliente del estilo "la cuenta ya se pidió, avisa al camarero si
+      // quieres añadir algo más".
+      throw new Error("session_in_billing");
+    }
+    return existing[0].id;
+  }
 
   // Crear. Si hay race con otra transacción creando justo, el unique partial
   // nos rechaza; entonces releeemos.
@@ -196,7 +208,7 @@ export async function getOrCreateActiveSession(input: {
     return created.id;
   } catch {
     const [after] = await db
-      .select({ id: tableSessions.id })
+      .select({ id: tableSessions.id, status: tableSessions.status })
       .from(tableSessions)
       .where(
         and(
@@ -207,6 +219,7 @@ export async function getOrCreateActiveSession(input: {
       )
       .limit(1);
     if (!after) throw new Error("session_insert_race_unresolvable");
+    if (after.status === "billing") throw new Error("session_in_billing");
     return after.id;
   }
 }
