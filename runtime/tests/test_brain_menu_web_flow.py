@@ -88,6 +88,28 @@ class TestFaseEnMarcha:
         block = _build_menu_web_flow_block("3", session_status="active", historial_len=6)
         assert "fase='en_marcha'" in block
 
+    def test_maneja_saludos_sociales_sin_romper_flujo(self) -> None:
+        """Incidente Bonets 2026-04-23: cliente dijo 'un saludo' a mitad
+        del pedido y el bot respondió 'No te entendí bien'. Debe
+        reconocerlo y seguir."""
+        block = self._block()
+        assert "SALUDOS SOCIALES" in block
+        assert "un saludo" in block.lower()
+        assert "NUNCA respondas 'no te entendí' a un saludo" in block
+        assert "SIGUE inmediatamente desde donde quedaste" in block
+
+    def test_no_inventa_opciones_de_personalizacion(self) -> None:
+        """Incidente Bonets: la Kentucky Burger (200g carne normal) no
+        tiene opción smash/medallón pero el bot la inventó porque otras
+        burgers del menú sí tienen smash. Regla dura: solo preguntar
+        variantes que estén LITERAL en la descripción del item."""
+        block = self._block()
+        assert "NUNCA INVENTES OPCIONES DE PERSONALIZACIÓN" in block
+        assert "LITERAL en la descripción" in block
+        assert "smash vs medallón" in block
+        # Excepción: toppings explícitos del cliente sí se aceptan.
+        assert "sin cebolla" in block or "extra bacon" in block
+
 
 class TestFasePostPago:
     def test_mesa_paid_no_crea_mas_pedidos(self) -> None:
