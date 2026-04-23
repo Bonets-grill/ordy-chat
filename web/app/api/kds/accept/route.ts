@@ -12,7 +12,7 @@ import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { agentConfigs, orders, tenants } from "@/lib/db/schema";
+import { agentConfigs, orders, tableSessions, tenants } from "@/lib/db/schema";
 import { requireTenantOrKiosk } from "@/lib/kiosk-auth";
 
 export const runtime = "nodejs";
@@ -96,7 +96,24 @@ export async function POST(req: Request) {
       pickupEtaMinutes: orders.pickupEtaMinutes,
       customerPhone: orders.customerPhone,
       totalCents: orders.totalCents,
+      sessionId: orders.sessionId,
     });
+
+  // Mig 032: transición de sesión de mesa pending → active al aceptar el
+  // primer pedido. A partir de este momento el cliente ya puede pedir la
+  // cuenta. Si la sesión ya estaba active (2º pedido de la misma mesa),
+  // el UPDATE con WHERE status='pending' no hace nada.
+  if (updated?.sessionId) {
+    await db
+      .update(tableSessions)
+      .set({ status: "active", updatedAt: new Date() })
+      .where(
+        and(
+          eq(tableSessions.id, updated.sessionId),
+          eq(tableSessions.status, "pending"),
+        ),
+      );
+  }
 
   // Notificar al cliente vía WA con la propuesta de ETA. Best-effort.
   // Mig 029: saltamos si el pedido es de playground (customer_phone ficticio
