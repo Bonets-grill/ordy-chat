@@ -28,9 +28,17 @@ const payloadSchema = z.object({
   socialTiktokUrl: urlOrEmpty,
 });
 
-export type ReviewsSocialsInput = z.infer<typeof payloadSchema>;
+// NOTA: "use server" files sólo pueden exportar async functions. El tipo del
+// input vive inline en el editor client (reviews-socials-editor.tsx) —
+// mismos campos que este schema. Si hay que cambiar la shape, cambiar ambos.
 
-export async function setReviewsSocialsAction(input: ReviewsSocialsInput) {
+export async function setReviewsSocialsAction(input: {
+  reviewGoogleUrl: string;
+  reviewTripadvisorUrl: string;
+  socialInstagramUrl: string;
+  socialFacebookUrl: string;
+  socialTiktokUrl: string;
+}) {
   const session = await auth();
   const bundle = await requireTenant();
   if (!session?.user?.id || !bundle) {
