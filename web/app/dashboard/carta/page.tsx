@@ -8,9 +8,10 @@ import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { menuItems } from "@/lib/db/schema";
+import { agentConfigs, menuItems } from "@/lib/db/schema";
 import { requireTenant } from "@/lib/tenant";
 import { CartaEditor } from "./carta-editor";
+import { DrinksPitchEditor } from "./drinks-pitch-editor";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +26,13 @@ export default async function CartaPage() {
     .from(menuItems)
     .where(eq(menuItems.tenantId, bundle.tenant.id))
     .orderBy(asc(menuItems.category), asc(menuItems.sortOrder), asc(menuItems.name));
+
+  const [cfg] = await db
+    .select({ drinksGreetingPitch: agentConfigs.drinksGreetingPitch })
+    .from(agentConfigs)
+    .where(eq(agentConfigs.tenantId, bundle.tenant.id))
+    .limit(1);
+  const drinksPitch = cfg?.drinksGreetingPitch ?? null;
 
   const initial = items.map((it) => ({
     id: it.id,
@@ -51,6 +59,9 @@ export default async function CartaPage() {
             a tus clientes. Importa desde tu web o añade items uno por uno.
           </p>
         </header>
+        <div className="mb-6">
+          <DrinksPitchEditor initialPitch={drinksPitch} />
+        </div>
         <CartaEditor initial={initial} />
       </div>
     </AppShell>
