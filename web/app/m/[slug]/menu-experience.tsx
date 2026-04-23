@@ -31,6 +31,7 @@ type Props = {
   tenantName: string;
   brandColor: string;
   phoneNumber: string | null;
+  tableNumber?: string | null;
   items: ItemLite[];
 };
 
@@ -68,7 +69,7 @@ function micSupportedSync(): boolean {
 // ./speech-normalize y se aplica antes de pasar el texto a speechSynthesis.
 
 export function MenuExperience(props: Props) {
-  const { slug, tenantName, brandColor, phoneNumber, items } = props;
+  const { slug, tenantName, brandColor, phoneNumber, tableNumber = null, items } = props;
 
   const [lang, setLang] = React.useState<Lang>(DEFAULT_LANG);
   const t = strings[lang];
@@ -447,7 +448,10 @@ export function MenuExperience(props: Props) {
       const r = await fetch(`/api/public/menu-chat/${slug}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: nextMessages }),
+        body: JSON.stringify({
+          messages: nextMessages,
+          table_number: tableNumber,
+        }),
       });
       if (!r.ok) {
         const body = await r.json().catch(() => ({}));

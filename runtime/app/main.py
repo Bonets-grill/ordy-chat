@@ -375,6 +375,21 @@ async def internal_playground_generate(request: Request):
     body = await request.json()
     tenant_slug = (body or {}).get("tenant_slug")
     messages = (body or {}).get("messages") or []
+    # Flujo "QR en mesa" (fase A): /m/<slug>?mesa=N → la web envía table_number
+    # + channel. El brain inyecta un bloque system específico para el flujo
+    # "bebidas primero + KDS con mesa". Ambos opcionales.
+    raw_channel = (body or {}).get("channel")
+    raw_table = (body or {}).get("table_number")
+    channel = str(raw_channel).strip() if isinstance(raw_channel, str) else None
+    table_number = str(raw_table).strip() if isinstance(raw_table, str) else None
+    # Validación paranoica: 1-8 chars alfanuméricos para evitar prompt injection.
+    if table_number and not (
+        1 <= len(table_number) <= 8
+        and all(c.isalnum() or c == "-" for c in table_number)
+    ):
+        table_number = None
+    if channel not in ("menu_web", None):
+        channel = None
     if not tenant_slug:
         raise HTTPException(status_code=400, detail="tenant_slug requerido")
     if not isinstance(messages, list) or not messages:
@@ -412,6 +427,8 @@ async def internal_playground_generate(request: Request):
             customer_phone="playground-sandbox",
             media_blocks=None,
             sandbox=True,
+            channel=channel,
+            table_number=table_number,
         )
     except Exception as e:
         logger.exception(

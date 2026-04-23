@@ -21,7 +21,23 @@ import { MenuExperience } from "./menu-experience";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type PageParams = { params: Promise<{ slug: string }> };
+type PageParams = {
+  params: Promise<{ slug: string }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+};
+
+/** Extrae y sanitiza el número de mesa de la URL (?mesa=3 o ?table=3).
+ * Solo acepta 1-4 dígitos o alfanumérico corto tipo "B2" que algunos
+ * restaurantes usan. Devuelve null si no hay o es inválido. */
+function pickTableNumber(raw: string | string[] | undefined): string | null {
+  if (!raw) return null;
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim().slice(0, 8);
+  if (!trimmed) return null;
+  if (!/^[A-Za-z0-9\-]{1,8}$/.test(trimmed)) return null;
+  return trimmed;
+}
 
 /** Detecta la descripción placeholder que genera el onboarding por defecto
  * ("Enjoy <name> where and when you want! ..."). No es texto del tenant —
@@ -101,8 +117,11 @@ export async function generateMetadata({ params }: PageParams): Promise<Metadata
   };
 }
 
-export default async function PublicMenuPage({ params }: PageParams) {
+export default async function PublicMenuPage({ params, searchParams }: PageParams) {
   const { slug } = await params;
+  const sp = searchParams ? await searchParams : undefined;
+  // La mesa puede llegar como ?mesa=3 (recomendado en ES) o ?table=3 (fallback).
+  const tableNumber = pickTableNumber(sp?.mesa) ?? pickTableNumber(sp?.table);
   const bundle = await loadTenantBundle(slug);
   if (!bundle) notFound();
 
@@ -317,6 +336,7 @@ export default async function PublicMenuPage({ params }: PageParams) {
         tenantName={tenant.name}
         brandColor={brandColor}
         phoneNumber={phoneNumber}
+        tableNumber={tableNumber}
         items={items.map((it) => ({
           id: it.id,
           name: it.name,

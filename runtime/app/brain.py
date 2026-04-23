@@ -734,6 +734,53 @@ async def _build_menu_block(tenant_id: "UUID") -> str | None:  # noqa: F821
     return "\n".join(lineas)
 
 
+def _build_menu_web_flow_block(mesa: str) -> str:
+    """Bloque system para el flujo 'bebidas primero' cuando el cliente abre
+    /m/<slug>?mesa=N (QR de mesa). Se inyecta solo si channel=menu_web.
+
+    Regla de negocio: mientras el cliente mira la carta, las bebidas pueden ir
+    preparándose en el bar. El bot abre pidiendo bebidas para aprovechar ese
+    tiempo muerto, luego añade la comida por modificar_pedido.
+    """
+    mesa_linea = (
+        f"<mesa>{mesa}</mesa>"
+        if mesa
+        else "<mesa>NO INDICADA — pregúntasela al cliente en tu primer turno y confírmala antes de nada</mesa>"
+    )
+    return (
+        "<canal>menu_web</canal>\n"
+        f"{mesa_linea}\n"
+        "<flujo_carta_qr>\n"
+        "El cliente está sentado en el restaurante y abrió la carta por QR en su mesa.\n"
+        "TU PRIMER TURNO debe (orden estricto):\n"
+        "1. Saludo breve (una línea), en el idioma del cliente.\n"
+        "2. Si la mesa viene en <mesa> como número, CONFÍRMALA literalmente "
+        "('Estáis en la mesa X, ¿correcto?'). Si dice NO INDICADA, pregunta "
+        "'¿en qué mesa estáis?' y espera respuesta antes de seguir.\n"
+        "3. Ofrece BEBIDAS primero mientras miran la carta. Frase tipo: "
+        "'¿Os apetece algo para beber mientras miráis la carta? Tenemos "
+        "[2-3 bebidas clave del menú].' NO listes comida todavía.\n"
+        "\n"
+        "CUANDO EL CLIENTE CONFIRME LAS BEBIDAS y tengas número de mesa:\n"
+        "- Llama crear_pedido INMEDIATAMENTE con order_type='dine_in', "
+        "table_number=<número de mesa confirmado>, items=[las bebidas que "
+        "pidieron, cada una con name/quantity/unit_price_cents/notes=null]. "
+        "NO pidas nombre ni teléfono del cliente — comen aquí en la mesa.\n"
+        "- Tras crear_pedido, di algo como: 'Marchando vuestras bebidas para "
+        "la mesa X. Mientras, decidme si queréis que os recomiende comida o "
+        "si preferís pedirla vosotros.'\n"
+        "\n"
+        "DESPUÉS (segundo/tercer turno): ayuda con la comida. Cuando el "
+        "cliente confirme platos, llama modificar_pedido con el order_id del "
+        "pedido anterior para AÑADIR la comida — NUNCA llames crear_pedido "
+        "otra vez en la misma visita.\n"
+        "\n"
+        "NO actives este flujo si el cliente claramente pide takeaway o para "
+        "llevar desde el principio (raro vía QR de mesa pero posible).\n"
+        "</flujo_carta_qr>"
+    )
+
+
 async def generar_respuesta(
     tenant: TenantContext,
     mensaje_usuario: str,
@@ -741,6 +788,8 @@ async def generar_respuesta(
     customer_phone: str = "",
     media_blocks: list[dict[str, Any]] | None = None,
     sandbox: bool = False,
+    channel: str | None = None,
+    table_number: str | None = None,
 ) -> tuple[str, int, int]:
     """
     Devuelve (respuesta, tokens_in, tokens_out).
@@ -871,6 +920,21 @@ async def generar_respuesta(
         logger.exception(
             "agent_rules_block falló (cliente responde sin reglas duras)",
             extra={"tenant_slug": tenant.slug, "event": "rules_block_error"},
+        )
+
+    # Canal menu_web (QR en mesa): flujo "bebidas primero + KDS con mesa".
+    # Cuando el cliente escanea el QR de su mesa y abre /m/<slug>?mesa=N,
+    # la web pasa channel="menu_web" + table_number al runtime. El bot
+    # debe saludar, confirmar mesa si falta, y pedir bebidas mientras el
+    # cliente sigue mirando la carta. Luego crear_pedido(order_type=dine_in,
+    # table_number=N, items=bebidas). Comida posterior → modificar_pedido.
+    if channel == "menu_web":
+        mesa_value = table_number.strip() if table_number else ""
+        system_blocks.append(
+            {
+                "type": "text",
+                "text": _build_menu_web_flow_block(mesa_value),
+            }
         )
 
     # Mig 027 Fase 6: si el cliente tiene un pedido en pending_kitchen_review
