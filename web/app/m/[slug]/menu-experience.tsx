@@ -14,7 +14,7 @@
 
 "use client";
 
-import { Mic, MicOff, Minus, Plus, Send, ShoppingCart, Sparkles, Volume2, VolumeX, X } from "lucide-react";
+import { Headphones, HeadphoneOff, Mic, MicOff, Minus, Plus, Send, ShoppingCart, Sparkles, Volume2, VolumeX, X } from "lucide-react";
 import * as React from "react";
 import { DEFAULT_LANG, detectLang, LANG_BCP47, type Lang, strings } from "./translations";
 
@@ -182,7 +182,10 @@ export function MenuExperience(props: Props) {
 
   // ── Voz ────────────────────────────────────────────────────
   // Entrada: MediaRecorder → POST audio blob a /api/public/menu-voice-transcribe
-  //   (Whisper server-side). Robusto en iOS Safari, Android Chrome y desktop.
+  //   (Whisper server-side). Dos modos:
+  //   - Manual push-to-talk (botón mic): tap para empezar, tap para parar.
+  //   - Conversacional hands-free: VAD (AnalyserNode RMS) auto-stop tras
+  //     silencio sostenido, y TTS `onend` auto-reanuda el mic → loop sin tocar.
   // Salida: speechSynthesis nativo (TTS) con toggle on/off por el usuario.
   //
   // IMPORTANTE: todos los navegadores bloquean autoplay de audio (incluido
@@ -191,29 +194,84 @@ export function MenuExperience(props: Props) {
   // hasta ese momento `voiceUnlocked=false` y speak() no hace nada.
   const [voiceEnabled, setVoiceEnabled] = React.useState(true);
   const [voiceUnlocked, setVoiceUnlocked] = React.useState(false);
+  const [conversational, setConversational] = React.useState(false);
+  const conversationalRef = React.useRef(false);
+  React.useEffect(() => {
+    conversationalRef.current = conversational;
+  }, [conversational]);
   const [recording, setRecording] = React.useState(false);
   const [transcribing, setTranscribing] = React.useState(false);
   const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
   const audioChunksRef = React.useRef<Blob[]>([]);
   const mediaStreamRef = React.useRef<MediaStream | null>(null);
+  // VAD (voice activity detection) — solo se monta cuando arrancamos con vad=true.
+  const audioCtxRef = React.useRef<AudioContext | null>(null);
+  const analyserRef = React.useRef<AnalyserNode | null>(null);
+  const rafRef = React.useRef<number | null>(null);
+  const silenceStartRef = React.useRef<number | null>(null);
+  const hadSpeechRef = React.useRef(false);
   const micSupported = React.useMemo(() => micSupportedSync(), []);
 
+  const stopVAD = React.useCallback(() => {
+    if (rafRef.current != null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    silenceStartRef.current = null;
+    try {
+      analyserRef.current?.disconnect();
+    } catch {
+      /* noop */
+    }
+    analyserRef.current = null;
+    const ctx = audioCtxRef.current;
+    audioCtxRef.current = null;
+    if (ctx) {
+      try {
+        void ctx.close();
+      } catch {
+        /* noop */
+      }
+    }
+  }, []);
+
   const speak = React.useCallback(
-    (text: string) => {
-      if (typeof window === "undefined") return;
-      if (!voiceEnabled || !voiceUnlocked) return;
-      if (!("speechSynthesis" in window)) return;
+    (text: string, onDone?: () => void) => {
+      if (typeof window === "undefined") {
+        onDone?.();
+        return;
+      }
+      if (!voiceEnabled || !voiceUnlocked) {
+        onDone?.();
+        return;
+      }
+      if (!("speechSynthesis" in window)) {
+        onDone?.();
+        return;
+      }
       const clean = stripForSpeech(text);
-      if (!clean) return;
+      if (!clean) {
+        onDone?.();
+        return;
+      }
       try {
         window.speechSynthesis.cancel();
         const u = new SpeechSynthesisUtterance(clean);
         u.lang = LANG_BCP47[lang];
         u.rate = 1.0;
         u.pitch = 1.0;
+        let fired = false;
+        const fire = () => {
+          if (fired) return;
+          fired = true;
+          onDone?.();
+        };
+        u.onend = fire;
+        u.onerror = fire;
         window.speechSynthesis.speak(u);
       } catch {
         // navegador bloquea autoplay → ignorar silenciosamente
+        onDone?.();
       }
     },
     [voiceEnabled, voiceUnlocked, lang],
@@ -327,7 +385,16 @@ export function MenuExperience(props: Props) {
       const data = (await r.json()) as { response?: string };
       const reply = data.response ?? "";
       setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
-      if (reply) speak(reply);
+      if (reply) {
+        speak(reply, () => {
+          // En modo conversacional: tras acabar la respuesta del mesero,
+          // reabrir el mic automáticamente para que el cliente responda sin
+          // tocar ningún botón.
+          if (conversationalRef.current) {
+            void startRecording(true);
+          }
+        });
+      }
     } catch {
       setError(t.errorFallback);
     } finally {
@@ -379,16 +446,8 @@ export function MenuExperience(props: Props) {
     }
   }
 
-  async function toggleMic() {
-    if (transcribing || sending) return;
-    if (recording) {
-      try {
-        mediaRecorderRef.current?.stop();
-      } catch {
-        /* noop */
-      }
-      return;
-    }
+  async function startRecording(useVAD: boolean) {
+    if (recording || transcribing || sending) return;
     if (!micSupported) {
       setError(t.errorFallback);
       return;
@@ -400,37 +459,140 @@ export function MenuExperience(props: Props) {
       const mime = pickMimeType();
       const mr = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
       audioChunksRef.current = [];
+      hadSpeechRef.current = false;
       mr.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data);
       };
       mr.onstop = () => {
         setRecording(false);
+        stopVAD();
         try {
           mediaStreamRef.current?.getTracks().forEach((tr) => tr.stop());
         } catch {
           /* noop */
         }
         mediaStreamRef.current = null;
+        const hadSpeech = hadSpeechRef.current;
         const chunks = audioChunksRef.current;
         audioChunksRef.current = [];
+        hadSpeechRef.current = false;
         if (chunks.length === 0) return;
         const blob = new Blob(chunks, { type: mr.mimeType || mime || "audio/webm" });
         // Mínimo 300ms para evitar clics accidentales.
         if (blob.size < 2000) return;
+        // En modo VAD: solo transcribir si realmente detectamos habla; evita
+        // mandar ruido ambiente cuando el usuario no dijo nada.
+        if (useVAD && !hadSpeech) return;
         void transcribeAndSend(blob);
       };
       mediaRecorderRef.current = mr;
       mr.start();
       setRecording(true);
+
+      if (useVAD && typeof window !== "undefined") {
+        // VAD: AnalyserNode RMS sobre el mismo stream. Si <SPEECH_RMS por
+        // SILENCE_MS tras detectar habla → auto-stop. MAX_MS es tope duro
+        // por seguridad (ej: usuario se va del tab).
+        type ACCtor = typeof AudioContext;
+        const win = window as unknown as { AudioContext?: ACCtor; webkitAudioContext?: ACCtor };
+        const AC = win.AudioContext ?? win.webkitAudioContext;
+        if (!AC) return;
+        const ctx = new AC();
+        audioCtxRef.current = ctx;
+        if (ctx.state === "suspended") {
+          void ctx.resume();
+        }
+        const source = ctx.createMediaStreamSource(stream);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 1024;
+        analyser.smoothingTimeConstant = 0.6;
+        source.connect(analyser);
+        analyserRef.current = analyser;
+        const buf = new Float32Array(analyser.fftSize);
+        const SILENCE_MS = 1200;
+        const SPEECH_RMS = 0.015;
+        const MAX_MS = 20000;
+        const startedAt = performance.now();
+        silenceStartRef.current = null;
+
+        const tick = () => {
+          const a = analyserRef.current;
+          if (!a) return;
+          a.getFloatTimeDomainData(buf);
+          let sumSq = 0;
+          for (let i = 0; i < buf.length; i++) sumSq += buf[i] * buf[i];
+          const rms = Math.sqrt(sumSq / buf.length);
+          const now = performance.now();
+          if (rms > SPEECH_RMS) {
+            hadSpeechRef.current = true;
+            silenceStartRef.current = null;
+          } else if (hadSpeechRef.current) {
+            if (silenceStartRef.current == null) silenceStartRef.current = now;
+            if (now - silenceStartRef.current > SILENCE_MS) {
+              try {
+                mediaRecorderRef.current?.stop();
+              } catch {
+                /* noop */
+              }
+              return;
+            }
+          }
+          if (now - startedAt > MAX_MS) {
+            try {
+              mediaRecorderRef.current?.stop();
+            } catch {
+              /* noop */
+            }
+            return;
+          }
+          rafRef.current = requestAnimationFrame(tick);
+        };
+        rafRef.current = requestAnimationFrame(tick);
+      }
     } catch {
       setRecording(false);
+      stopVAD();
       setError(t.errorFallback);
     }
+  }
+
+  function stopRecording() {
+    try {
+      mediaRecorderRef.current?.stop();
+    } catch {
+      /* noop */
+    }
+  }
+
+  async function toggleMic() {
+    if (transcribing || sending) return;
+    if (recording) {
+      stopRecording();
+      return;
+    }
+    await startRecording(false);
+  }
+
+  function toggleConversational() {
+    setConversational((prev) => {
+      const next = !prev;
+      if (!next) {
+        // Apagar: cortar TTS y cualquier recording activo.
+        stopSpeaking();
+        if (recording) stopRecording();
+      } else if (voiceUnlocked && !recording && !transcribing && !sending) {
+        // Encender: arrancar la primera escucha de inmediato.
+        void startRecording(true);
+      }
+      return next;
+    });
   }
 
   function closeChat() {
     setChatOpen(false);
     stopSpeaking();
+    setConversational(false);
+    if (recording) stopRecording();
     try {
       if (typeof window !== "undefined") {
         window.sessionStorage.setItem(dismissedKey, "1");
@@ -439,6 +601,28 @@ export function MenuExperience(props: Props) {
       /* noop */
     }
   }
+
+  // Cleanup global: si el componente se desmonta con algo activo, cortar todo.
+  React.useEffect(() => {
+    return () => {
+      try {
+        window.speechSynthesis?.cancel();
+      } catch {
+        /* noop */
+      }
+      try {
+        mediaRecorderRef.current?.stop();
+      } catch {
+        /* noop */
+      }
+      try {
+        mediaStreamRef.current?.getTracks().forEach((tr) => tr.stop());
+      } catch {
+        /* noop */
+      }
+      stopVAD();
+    };
+  }, [stopVAD]);
 
   function toggleVoice() {
     setVoiceEnabled((prev) => {
@@ -585,10 +769,29 @@ export function MenuExperience(props: Props) {
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-semibold">{t.chatTitle(tenantName)}</div>
                 <div className="flex items-center gap-1.5 text-[11px] text-white/60">
-                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                  {t.chatSubtitle}
+                  <span
+                    className={`inline-block h-1.5 w-1.5 rounded-full ${
+                      conversational && recording ? "animate-pulse bg-rose-400" : "bg-emerald-400"
+                    }`}
+                  />
+                  {conversational && recording ? t.listening : t.chatSubtitle}
                 </div>
               </div>
+              {micSupported && voiceEnabled ? (
+                <button
+                  type="button"
+                  onClick={toggleConversational}
+                  aria-label={conversational ? t.conversationOff : t.conversationOn}
+                  title={conversational ? t.conversationOff : t.conversationOn}
+                  className={`rounded-lg p-2 transition ${
+                    conversational
+                      ? "bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-400/40"
+                      : "text-white/70 hover:bg-white/10 hover:text-white"
+                  }`}
+                >
+                  {conversational ? <Headphones className="h-5 w-5" /> : <HeadphoneOff className="h-5 w-5" />}
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={toggleVoice}

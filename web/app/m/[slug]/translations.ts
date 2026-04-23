@@ -39,6 +39,9 @@ type Copy = {
   voiceOff: string;
   micStart: string;
   micStop: string;
+  conversationOn: string;
+  conversationOff: string;
+  listening: string;
 };
 
 // Mapeo BCP-47 para Web Speech API (SpeechRecognition + SpeechSynthesis).
@@ -76,6 +79,9 @@ export const strings: Record<Lang, Copy> = {
     voiceOff: "Silenciar voz",
     micStart: "Hablar",
     micStop: "Parar",
+    conversationOn: "Conversación continua",
+    conversationOff: "Detener conversación",
+    listening: "Te escucho…",
   },
   en: {
     greeting: (n) => `Welcome to ${n}! Want a recommendation?`,
@@ -101,6 +107,9 @@ export const strings: Record<Lang, Copy> = {
     voiceOff: "Mute voice",
     micStart: "Speak",
     micStop: "Stop",
+    conversationOn: "Hands-free chat",
+    conversationOff: "Stop conversation",
+    listening: "Listening…",
   },
   fr: {
     greeting: (n) => `Bienvenue à ${n} ! Voulez-vous une recommandation ?`,
@@ -126,6 +135,9 @@ export const strings: Record<Lang, Copy> = {
     voiceOff: "Couper la voix",
     micStart: "Parler",
     micStop: "Arrêter",
+    conversationOn: "Conversation continue",
+    conversationOff: "Arrêter la conversation",
+    listening: "J'écoute…",
   },
   de: {
     greeting: (n) => `Willkommen bei ${n}! Soll ich dir etwas empfehlen?`,
@@ -151,6 +163,9 @@ export const strings: Record<Lang, Copy> = {
     voiceOff: "Sprache stummschalten",
     micStart: "Sprechen",
     micStop: "Stopp",
+    conversationOn: "Freisprech-Modus",
+    conversationOff: "Gespräch beenden",
+    listening: "Ich höre zu…",
   },
   it: {
     greeting: (n) => `Benvenuto a ${n}! Vuoi un consiglio?`,
@@ -176,6 +191,9 @@ export const strings: Record<Lang, Copy> = {
     voiceOff: "Disattiva voce",
     micStart: "Parla",
     micStop: "Stop",
+    conversationOn: "Conversazione continua",
+    conversationOff: "Ferma conversazione",
+    listening: "Ti ascolto…",
   },
   pt: {
     greeting: (n) => `Bem-vindo ao ${n}! Quer uma recomendação?`,
@@ -201,5 +219,8 @@ export const strings: Record<Lang, Copy> = {
     voiceOff: "Silenciar voz",
     micStart: "Falar",
     micStop: "Parar",
+    conversationOn: "Conversa contínua",
+    conversationOff: "Parar conversa",
+    listening: "Estou a ouvir…",
   },
 };
