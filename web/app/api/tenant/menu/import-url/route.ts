@@ -14,7 +14,12 @@ import { agentConfigs, menuItems } from "@/lib/db/schema";
 import { requireTenant } from "@/lib/tenant";
 
 export const runtime = "nodejs";
-export const maxDuration = 60; // scrape + Claude extraction puede tardar ~30s
+// Scrape + extracción LLM con imágenes puede tardar 30-90s en cartas
+// grandes (Bonets: 76 items con image_url → ~6K tokens output, ~25-45s).
+// Dejamos 120s de margen. Vercel Pro acepta hasta 300s; Hobby hasta 60s.
+// Si el plan es Hobby, Vercel lo capará a 60 y habrá 504 en cartas grandes
+// — habría que partir el scrape en chunks. Por ahora asumimos Pro.
+export const maxDuration = 120;
 
 const schema = z.object({
   url: z.string().url(),

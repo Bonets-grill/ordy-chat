@@ -112,13 +112,15 @@ async def scrape_url_to_items(
     client = _get_client(anthropic_api_key)
     msg = await client.messages.create(
         model=MODEL_ID,
-        # Subido de 4096 → 16384 (2026-04-23) tras incidente Bonets: la
-        # carta tenía 76 items y cada uno lleva image_url (~100 chars por
-        # URL de CloudFront). 4096 tokens se quedaban cortos → Claude
-        # truncaba el JSON a mitad de string y el parser fallaba con
-        # "Unterminated string starting at line 219". Sonnet 4.6 acepta
-        # hasta 64K output; 16K cubre cartas de ~150 items con imágenes.
-        max_tokens=16384,
+        # Tuning 2026-04-23 tras tres intentos:
+        # - 4096 original → cortaba strings a mitad con cartas grandes.
+        # - 16384 → Claude tardaba >60s generando, y el endpoint web
+        #   tiene maxDuration=60s → HTTP 504 en Vercel.
+        # - 8192 (actual) → cabe la carta completa de 76 items
+        #   (~6K tokens output real) y tarda ~20-30s, dentro del budget
+        #   de Vercel. Sonnet 4.6 acepta 64K pero eso no significa que
+        #   debamos pedirlo: el tope real es el tiempo de generación.
+        max_tokens=8192,
         temperature=0,
         system=_EXTRACT_PROMPT,
         messages=[{"role": "user", "content": text}],
