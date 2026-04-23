@@ -21,10 +21,22 @@ from typing import Any
 
 import httpx
 
-from app.brain import _get_client, MODEL_ID
+from app.brain import _get_client
 from app.tenants import obtener_anthropic_api_key
 
 logger = logging.getLogger("ordychat.menu_scrape")
+
+# Para la extracción de carta usamos Haiku en vez de Sonnet. Razones:
+# 1. La tarea es simple (extraer JSON estructurado de HTML plano), no
+#    requiere razonamiento profundo — Haiku da la misma calidad.
+# 2. Haiku genera 2-3× más rápido que Sonnet. Con max_tokens=8192 y
+#    una carta de 76 items, Sonnet tardaba >60s (timeout Vercel 504);
+#    Haiku lo mismo en ~15-20s, dentro del budget.
+# 3. Coste inferior — importante porque el scraper se llama cada vez
+#    que un tenant importa o re-importa carta.
+# El `brain.py` principal sigue usando Sonnet porque sí necesita
+# razonamiento (decidir tools, mantener hilo, etc.).
+SCRAPER_MODEL_ID = "claude-haiku-4-5-20251001"
 
 # Límite del HTML que pasamos a Claude para no inflar tokens (~40KB ≈ 11K tokens).
 # Subido de 30K a 40K porque los marcadores [IMG:...] añaden volumen por
@@ -111,7 +123,7 @@ async def scrape_url_to_items(
 
     client = _get_client(anthropic_api_key)
     msg = await client.messages.create(
-        model=MODEL_ID,
+        model=SCRAPER_MODEL_ID,
         # Tuning 2026-04-23 tras tres intentos:
         # - 4096 original → cortaba strings a mitad con cartas grandes.
         # - 16384 → Claude tardaba >60s generando, y el endpoint web
