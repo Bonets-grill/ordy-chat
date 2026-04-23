@@ -52,15 +52,22 @@ function micSupportedSync(): boolean {
 }
 
 // speechSynthesis lee los emojis como texto ("👋" → "mano saludando").
-// Los quitamos antes de sintetizar. También tiramos markdown simple y
-// colapsamos espacios — el mesero solo envía texto plano al TTS.
+// También leería URLs ("https dos puntos barra barra…") que es horrible.
+// Los quitamos antes de sintetizar. Markdown simple fuera y espacios
+// colapsados — el mesero solo envía texto plano al TTS.
 function stripForSpeech(text: string): string {
   return text
+    // Markdown links [label](url) → deja solo el label.
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1")
+    // URLs desnudas http(s):// o www. — el TTS las lee carácter a carácter.
+    .replace(/https?:\/\/\S+/gi, "")
+    .replace(/\bwww\.\S+/gi, "")
     .replace(/\p{Extended_Pictographic}/gu, "") // emojis
     .replace(/[️‍]/g, "") // variation selectors + ZWJ
     .replace(/[*_`#>]/g, "") // markdown muy básico
     .replace(/[ \t]+/g, " ")
     .replace(/\s+\n/g, "\n")
+    .replace(/\s+([.,;!?])/g, "$1") // limpia espacios sueltos donde había URL
     .trim();
 }
 
