@@ -45,6 +45,13 @@ class TenantContext:
     # bot ofrezca bebidas curadas en el primer turno del QR de mesa. Vacío →
     # el bot pregunta "¿qué os apetece?" de forma abierta.
     drinks_greeting_pitch: str = ""
+    # Migración 033: post-cuenta flow — enlaces de reseña + redes sociales
+    # que el agente comparte tras cobrar. Todos opcionales.
+    review_google_url: str = ""
+    review_tripadvisor_url: str = ""
+    social_instagram_url: str = ""
+    social_facebook_url: str = ""
+    social_tiktok_url: str = ""
 
 
 class TenantNotFound(Exception):
@@ -68,6 +75,8 @@ async def cargar_tenant_por_slug(slug: str) -> TenantContext:
                 ac.tone, ac.business_description,
                 ac.payment_methods, ac.accept_online_payment,
                 ac.drinks_greeting_pitch,
+                ac.review_google_url, ac.review_tripadvisor_url,
+                ac.social_instagram_url, ac.social_facebook_url, ac.social_tiktok_url,
                 pc.provider, pc.credentials_encrypted, pc.webhook_secret
             FROM tenants t
             LEFT JOIN agent_configs ac ON ac.tenant_id = t.id
@@ -138,6 +147,11 @@ async def cargar_tenant_por_slug(slug: str) -> TenantContext:
         payment_methods=list(row["payment_methods"] or []),
         accept_online_payment=bool(row["accept_online_payment"]),
         drinks_greeting_pitch=(row["drinks_greeting_pitch"] or "").strip(),
+        review_google_url=(row["review_google_url"] or "").strip(),
+        review_tripadvisor_url=(row["review_tripadvisor_url"] or "").strip(),
+        social_instagram_url=(row["social_instagram_url"] or "").strip(),
+        social_facebook_url=(row["social_facebook_url"] or "").strip(),
+        social_tiktok_url=(row["social_tiktok_url"] or "").strip(),
     )
 
 

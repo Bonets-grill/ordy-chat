@@ -12,6 +12,7 @@ import { agentConfigs, menuItems } from "@/lib/db/schema";
 import { requireTenant } from "@/lib/tenant";
 import { CartaEditor } from "./carta-editor";
 import { DrinksPitchEditor } from "./drinks-pitch-editor";
+import { ReviewsSocialsEditor } from "./reviews-socials-editor";
 
 export const dynamic = "force-dynamic";
 
@@ -28,11 +29,25 @@ export default async function CartaPage() {
     .orderBy(asc(menuItems.category), asc(menuItems.sortOrder), asc(menuItems.name));
 
   const [cfg] = await db
-    .select({ drinksGreetingPitch: agentConfigs.drinksGreetingPitch })
+    .select({
+      drinksGreetingPitch: agentConfigs.drinksGreetingPitch,
+      reviewGoogleUrl: agentConfigs.reviewGoogleUrl,
+      reviewTripadvisorUrl: agentConfigs.reviewTripadvisorUrl,
+      socialInstagramUrl: agentConfigs.socialInstagramUrl,
+      socialFacebookUrl: agentConfigs.socialFacebookUrl,
+      socialTiktokUrl: agentConfigs.socialTiktokUrl,
+    })
     .from(agentConfigs)
     .where(eq(agentConfigs.tenantId, bundle.tenant.id))
     .limit(1);
   const drinksPitch = cfg?.drinksGreetingPitch ?? null;
+  const reviewsSocials = {
+    reviewGoogleUrl: cfg?.reviewGoogleUrl ?? null,
+    reviewTripadvisorUrl: cfg?.reviewTripadvisorUrl ?? null,
+    socialInstagramUrl: cfg?.socialInstagramUrl ?? null,
+    socialFacebookUrl: cfg?.socialFacebookUrl ?? null,
+    socialTiktokUrl: cfg?.socialTiktokUrl ?? null,
+  };
 
   const initial = items.map((it) => ({
     id: it.id,
@@ -61,6 +76,9 @@ export default async function CartaPage() {
         </header>
         <div className="mb-6">
           <DrinksPitchEditor initialPitch={drinksPitch} />
+        </div>
+        <div className="mb-6">
+          <ReviewsSocialsEditor initial={reviewsSocials} />
         </div>
         <CartaEditor initial={initial} />
       </div>

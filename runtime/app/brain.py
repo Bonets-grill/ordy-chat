@@ -768,6 +768,56 @@ async def _build_menu_block(tenant_id: "UUID") -> str | None:  # noqa: F821
     return "\n".join(lineas)
 
 
+def _build_post_cuenta_block(tenant: TenantContext) -> str | None:
+    """Bloque post-cuenta (mig 033): cuando el cliente ya pidió/pagó la
+    cuenta, el agente se despide con agradecimiento + enlaces de reseña
+    + redes sociales del tenant.
+
+    Devuelve None si el tenant no configuró NINGÚN enlace (no tiene nada
+    que compartir; el agente simplemente agradece).
+    """
+    bits: list[str] = []
+    if tenant.review_google_url:
+        bits.append(f"- Reseña Google: {tenant.review_google_url}")
+    if tenant.review_tripadvisor_url:
+        bits.append(f"- Reseña TripAdvisor: {tenant.review_tripadvisor_url}")
+    socials: list[str] = []
+    if tenant.social_instagram_url:
+        socials.append(f"Instagram {tenant.social_instagram_url}")
+    if tenant.social_facebook_url:
+        socials.append(f"Facebook {tenant.social_facebook_url}")
+    if tenant.social_tiktok_url:
+        socials.append(f"TikTok {tenant.social_tiktok_url}")
+    if not bits and not socials:
+        return None
+    lineas = ["<post_cuenta>"]
+    lineas.append(
+        "El cliente ya pidió la cuenta o ya pagó. Tu próxima respuesta (o "
+        "cuando el cliente diga 'gracias', 'adiós', 'hasta luego', etc.) "
+        "debe ser una despedida CÁLIDA Y BREVE (1-2 frases) que incluya:"
+    )
+    if bits:
+        lineas.append(
+            "1. Una mención EDUCADA a la reseña. Ejemplo: "
+            "'Si os ha gustado, un detalle enorme sería una reseña 🙏'. "
+            "Incluye los enlaces literalmente — el cliente los tocará en el "
+            "chat (NO los leas en voz alta, el TTS los filtra solo):"
+        )
+        lineas.extend(bits)
+    if socials:
+        lineas.append(
+            "2. Comparte nuestras redes sociales para que nos sigan: "
+            + " · ".join(socials)
+        )
+    lineas.append(
+        "REGLAS: (a) UNA SOLA mención — no insistas en los siguientes turnos; "
+        "(b) NO dupliques enlaces si ya los mencionaste en un turno anterior; "
+        "(c) tono natural, no parezcas spam."
+    )
+    lineas.append("</post_cuenta>")
+    return "\n".join(lineas)
+
+
 def _build_menu_web_flow_block(
     mesa: str,
     drinks_pitch: str = "",
@@ -1088,6 +1138,31 @@ async def generar_respuesta(
                 ),
             }
         )
+        # Mig 033 post-cuenta: si la sesión de esta mesa está en billing/paid,
+        # inyectamos el bloque <post_cuenta> con los enlaces del tenant.
+        if mesa_value:
+            try:
+                from app.memory import inicializar_pool
+                pool = await inicializar_pool()
+                async with pool.acquire() as conn:
+                    sess_row = await conn.fetchrow(
+                        """
+                        SELECT status FROM table_sessions
+                        WHERE tenant_id = $1 AND table_number = $2
+                          AND status IN ('billing','paid')
+                        ORDER BY created_at DESC LIMIT 1
+                        """,
+                        tenant.id, mesa_value,
+                    )
+                if sess_row:
+                    pc = _build_post_cuenta_block(tenant)
+                    if pc:
+                        system_blocks.append({"type": "text", "text": pc})
+            except Exception:
+                logger.exception(
+                    "post_cuenta block lookup failed",
+                    extra={"tenant_slug": tenant.slug, "event": "post_cuenta_lookup_error"},
+                )
 
     # Mig 027 Fase 6: si el cliente tiene un pedido en pending_kitchen_review
     # con kitchen_decision='accepted' Y customer_eta_decision NULL, inyectamos
