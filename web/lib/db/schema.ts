@@ -149,6 +149,10 @@ export const agentConfigs = pgTable("agent_configs", {
   // Default a gen_random_uuid()::text en DB para que INSERTs sin el campo (p.ej.
   // onboarding-fast provision) lo generen solos.
   kioskToken: text("kiosk_token").notNull().default(_sqlTag`gen_random_uuid()::text`),
+  // Migración 031: texto libre con las bebidas que el bot ofrece en el
+  // primer turno del flujo QR de mesa. El tenant lo edita en /dashboard/carta.
+  // NULL/vacío → el bot pregunta "¿qué os apetece beber?" de forma abierta.
+  drinksGreetingPitch: text("drinks_greeting_pitch"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -309,11 +313,35 @@ export const orders = pgTable(
     // Migración 029: true = pedido creado desde el playground. KDS filtra
     // is_test=false por defecto; workers proactivos WA saltan estas filas.
     isTest: boolean("is_test").notNull().default(false),
+    // Migración 032: link a la sesión de mesa. NULL en órdenes viejas o
+    // takeaway sin mesa. Para dine_in, crear_pedido resuelve o crea la
+    // sesión y linkea el pedido.
+    sessionId: uuid("session_id").references((): AnyPgColumn => tableSessions.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     paidAt: timestamp("paid_at", { withTimezone: true }),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
 );
+
+// Sesión de mesa (mig 032). Una fila por "mesa abierta" en un restaurante.
+// Acumula pedidos hasta que se cobra (Stripe o camarero marca pagado).
+// Partial unique a nivel DB: solo una sesión viva por (tenant, table_number).
+export const tableSessions = pgTable("table_sessions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  tableNumber: text("table_number").notNull(),
+  // ENUM table_session_status: pending | active | billing | paid | closed
+  status: text("status").notNull().default("pending"),
+  totalCents: integer("total_cents").notNull().default(0),
+  billRequestedAt: timestamp("bill_requested_at", { withTimezone: true }),
+  paidAt: timestamp("paid_at", { withTimezone: true }),
+  paymentMethod: text("payment_method"),
+  stripeCheckoutSessionId: text("stripe_checkout_session_id").unique(),
+  closedAt: timestamp("closed_at", { withTimezone: true }),
+  isTest: boolean("is_test").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 export const orderItems = pgTable("order_items", {
   id: uuid("id").primaryKey().defaultRandom(),

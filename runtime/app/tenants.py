@@ -41,6 +41,10 @@ class TenantContext:
     business_description: str = ""
     payment_methods: list[str] = field(default_factory=list)
     accept_online_payment: bool = False
+    # Migración 031: texto que el tenant edita en /dashboard/carta para que el
+    # bot ofrezca bebidas curadas en el primer turno del QR de mesa. Vacío →
+    # el bot pregunta "¿qué os apetece?" de forma abierta.
+    drinks_greeting_pitch: str = ""
 
 
 class TenantNotFound(Exception):
@@ -63,6 +67,7 @@ async def cargar_tenant_por_slug(slug: str) -> TenantContext:
                 ac.max_messages_per_hour, ac.schedule, ac.reservations_closed_for,
                 ac.tone, ac.business_description,
                 ac.payment_methods, ac.accept_online_payment,
+                ac.drinks_greeting_pitch,
                 pc.provider, pc.credentials_encrypted, pc.webhook_secret
             FROM tenants t
             LEFT JOIN agent_configs ac ON ac.tenant_id = t.id
@@ -132,6 +137,7 @@ async def cargar_tenant_por_slug(slug: str) -> TenantContext:
         business_description=row["business_description"] or "",
         payment_methods=list(row["payment_methods"] or []),
         accept_online_payment=bool(row["accept_online_payment"]),
+        drinks_greeting_pitch=(row["drinks_greeting_pitch"] or "").strip(),
     )
 
 

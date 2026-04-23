@@ -734,22 +734,53 @@ async def _build_menu_block(tenant_id: "UUID") -> str | None:  # noqa: F821
     return "\n".join(lineas)
 
 
-def _build_menu_web_flow_block(mesa: str) -> str:
+def _build_menu_web_flow_block(mesa: str, drinks_pitch: str = "") -> str:
     """Bloque system para el flujo 'bebidas primero' cuando el cliente abre
     /m/<slug>?mesa=N (QR de mesa). Se inyecta solo si channel=menu_web.
 
     Regla de negocio: mientras el cliente mira la carta, las bebidas pueden ir
     preparándose en el bar. El bot abre pidiendo bebidas para aprovechar ese
     tiempo muerto, luego añade la comida por modificar_pedido.
+
+    `drinks_pitch`: texto libre que el tenant edita en /dashboard/carta para
+    que el bot ofrezca bebidas CURADAS (mig 031). Si está vacío, el bot
+    pregunta "¿qué os apetece beber?" de forma abierta.
     """
     mesa_linea = (
         f"<mesa>{mesa}</mesa>"
         if mesa
         else "<mesa>NO INDICADA — pregúntasela al cliente en tu primer turno y confírmala antes de nada</mesa>"
     )
+    pitch_clean = (drinks_pitch or "").strip()
+    if pitch_clean:
+        # Recortamos por seguridad (evita prompts kilométricos del tenant).
+        pitch_clean = pitch_clean[:500]
+        bebidas_linea = (
+            f"<bebidas_curadas>\n{pitch_clean}\n</bebidas_curadas>\n"
+            "INSTRUCCIÓN RÍGIDA: ofrece EXACTAMENTE las bebidas de "
+            "<bebidas_curadas>. NO inventes otras bebidas, NO sugieras del "
+            "resto de la carta en este primer turno. Si el cliente pide una "
+            "bebida que no está en <bebidas_curadas> pero sí está en la "
+            "<carta> general, sírvela sin problema; pero tu OFERTA inicial "
+            "es literalmente ese texto.\n"
+        )
+        paso_3 = (
+            "3. Ofrece las bebidas de <bebidas_curadas> LITERALMENTE. "
+            "Frase tipo: '¿Os apetece algo para beber mientras miráis la carta? "
+            "Tenemos [literal del texto curado].' NO listes comida todavía, "
+            "NO inventes bebidas."
+        )
+    else:
+        bebidas_linea = ""
+        paso_3 = (
+            "3. Pregunta al cliente qué bebida le apetece con una frase "
+            "abierta, tipo '¿Os apetece algo para beber mientras miráis la "
+            "carta?'. Toma su respuesta tal cual. NO listes comida todavía."
+        )
     return (
         "<canal>menu_web</canal>\n"
         f"{mesa_linea}\n"
+        f"{bebidas_linea}"
         "<flujo_carta_qr>\n"
         "El cliente está sentado en el restaurante y abrió la carta por QR en su mesa.\n"
         "TU PRIMER TURNO debe (orden estricto):\n"
@@ -757,9 +788,7 @@ def _build_menu_web_flow_block(mesa: str) -> str:
         "2. Si la mesa viene en <mesa> como número, CONFÍRMALA literalmente "
         "('Estáis en la mesa X, ¿correcto?'). Si dice NO INDICADA, pregunta "
         "'¿en qué mesa estáis?' y espera respuesta antes de seguir.\n"
-        "3. Ofrece BEBIDAS primero mientras miran la carta. Frase tipo: "
-        "'¿Os apetece algo para beber mientras miráis la carta? Tenemos "
-        "[2-3 bebidas clave del menú].' NO listes comida todavía.\n"
+        f"{paso_3}\n"
         "\n"
         "CUANDO EL CLIENTE CONFIRME LAS BEBIDAS y tengas número de mesa:\n"
         "- Llama crear_pedido INMEDIATAMENTE con order_type='dine_in', "
@@ -933,7 +962,10 @@ async def generar_respuesta(
         system_blocks.append(
             {
                 "type": "text",
-                "text": _build_menu_web_flow_block(mesa_value),
+                "text": _build_menu_web_flow_block(
+                    mesa_value,
+                    drinks_pitch=tenant.drinks_greeting_pitch,
+                ),
             }
         )
 
