@@ -1,4 +1,4 @@
-import { Bot, BookOpen, CalendarCheck, CalendarX, ChefHat, CreditCard, FileText, FlaskConical, LayoutDashboard, Menu, MessageSquareText, Settings } from "lucide-react";
+import { Bot, BookOpen, CalendarCheck, CalendarX, ChefHat, CreditCard, FileText, FlaskConical, LayoutDashboard, Menu, MessageSquareText, QrCode, Settings } from "lucide-react";
 import Link from "next/link";
 import type { Session } from "next-auth";
 import { Badge } from "./ui/badge";
@@ -13,6 +13,7 @@ const NAV: NavItem[] = [
   { href: "/agent", label: "Mi agente", icon: Bot },
   { href: "/agent/knowledge", label: "Conocimiento", icon: BookOpen },
   { href: "/dashboard/carta", label: "Carta", icon: Menu },
+  { href: "/agent/tables", label: "Mesas y QRs", icon: QrCode },
   { href: "/agent/kds", label: "KDS Cocina & Bar", icon: ChefHat },
   { href: "/agent/reservations", label: "Reservas", icon: CalendarCheck },
   { href: "/agent/closed-days", label: "Días cerrados", icon: CalendarX },
