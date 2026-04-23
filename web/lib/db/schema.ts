@@ -149,6 +149,10 @@ export const agentConfigs = pgTable("agent_configs", {
   // Default a gen_random_uuid()::text en DB para que INSERTs sin el campo (p.ej.
   // onboarding-fast provision) lo generen solos.
   kioskToken: text("kiosk_token").notNull().default(_sqlTag`gen_random_uuid()::text`),
+  // Migración 031: texto libre con las bebidas que el bot ofrece en el
+  // primer turno del flujo QR de mesa. El tenant lo edita en /dashboard/carta.
+  // NULL/vacío → el bot pregunta "¿qué os apetece beber?" de forma abierta.
+  drinksGreetingPitch: text("drinks_greeting_pitch"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
