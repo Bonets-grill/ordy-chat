@@ -35,6 +35,7 @@ async def buscar_items(tenant_id: UUID, query: str, limit: int = 5) -> list[dict
         rows = await conn.fetch(
             """
             SELECT id, category, name, price_cents, description,
+                   image_url, allergens,
                    CASE
                      WHEN LOWER(name) = LOWER($2) THEN 1
                      WHEN LOWER(name) LIKE LOWER($2) || '%' THEN 2
@@ -61,6 +62,8 @@ async def buscar_items(tenant_id: UUID, query: str, limit: int = 5) -> list[dict
             "name": r["name"],
             "price_eur": (r["price_cents"] or 0) / 100,
             "description": r["description"] or "",
+            "image_url": r["image_url"],
+            "allergens": list(r["allergens"] or []),
         }
         for r in rows
     ]
