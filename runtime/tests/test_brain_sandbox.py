@@ -85,10 +85,12 @@ async def test_sandbox_crear_pedido_ejecuta_real_con_is_test() -> None:
     assert m_pedido.await_count == 1, "sandbox ya no stubbea — debe llamar crear_pedido real"
     _, kwargs = m_pedido.call_args
     assert kwargs.get("is_test") is True, "mig 029: crear_pedido recibe is_test=True en sandbox"
-    # El nombre oportunista SÍ se guarda en sandbox (marcado is_test).
-    assert m_name.await_count == 1
-    _, name_kwargs = m_name.call_args
-    assert name_kwargs.get("is_test") is True
+    # fix aislamiento 2026-04-23: el phone 'playground-sandbox' se comparte entre
+    # visitantes anónimos del widget público; persistir el nombre contra él
+    # provoca que otro visitante reciba "Hola <nombre ajeno>". Skip persist.
+    assert m_name.await_count == 0, (
+        "en sesiones anónimas NO persistimos customer_name (bug Bonets 2026-04-23)"
+    )
 
     parsed = json.loads(raw)
     assert parsed["ok"] is True
@@ -122,8 +124,13 @@ async def test_sandbox_agendar_cita_ejecuta_real_con_is_test() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sandbox_recordar_cliente_persiste_con_is_test() -> None:
-    """recordar_cliente en sandbox → actualizar_nombre_cliente(..., is_test=True)."""
+async def test_sandbox_recordar_cliente_no_persiste_en_anonimo() -> None:
+    """recordar_cliente en sandbox con phone='playground-sandbox' → NO debe
+    persistir el nombre. El phone es un placeholder compartido entre
+    múltiples visitantes anónimos del widget público (fix aislamiento
+    2026-04-23, incidente Bonets: un tester se presentó como Mario y todos
+    los clientes posteriores recibían "Hola, Mario"). La tool devuelve ok
+    para que el modelo no rompa el flujo, pero el store queda intacto."""
     with patch.object(brain, "actualizar_nombre_cliente", new=AsyncMock()) as m_name:
         raw = await brain._ejecutar_tool(
             _FakeTenant(),  # type: ignore[arg-type]
@@ -133,17 +140,35 @@ async def test_sandbox_recordar_cliente_persiste_con_is_test() -> None:
             sandbox=True,
         )
 
-    assert m_name.await_count == 1, (
-        "mig 029: ya NO saltamos actualizar_nombre_cliente en sandbox — "
-        "persistimos la conversación con is_test=true para que aparezca "
-        "en /dashboard/conversations con el toggle 'Incluir pruebas'."
+    assert m_name.await_count == 0, (
+        "fix 2026-04-23: anónimo → skip actualizar_nombre_cliente. Si se "
+        "persistiera, el siguiente visitante del widget recibiría el nombre."
     )
-    _, kwargs = m_name.call_args
-    assert kwargs.get("is_test") is True
 
     parsed = json.loads(raw)
+    # El tool sigue devolviendo ok=True para que Claude no rompa el flujo.
+    # El nombre sigue usándose en la conversación actual (lo tiene en el
+    # turno user), simplemente no cruza la frontera de sesión.
     assert parsed["ok"] is True
     assert parsed["is_test"] is True
+
+
+@pytest.mark.asyncio
+async def test_sandbox_recordar_cliente_si_persiste_con_phone_real() -> None:
+    """Contraparte: con phone E.164 real (cliente real de WhatsApp), SÍ
+    persistimos el nombre con is_test=True cuando sandbox=True."""
+    with patch.object(brain, "actualizar_nombre_cliente", new=AsyncMock()) as m_name:
+        await brain._ejecutar_tool(
+            _FakeTenant(),  # type: ignore[arg-type]
+            "recordar_cliente",
+            {"customer_name": "Pedro", "nombre": "Pedro"},
+            customer_phone="+34612345678",
+            sandbox=True,
+        )
+
+    assert m_name.await_count == 1
+    _, kwargs = m_name.call_args
+    assert kwargs.get("is_test") is True
 
 
 @pytest.mark.asyncio
