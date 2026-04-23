@@ -667,6 +667,24 @@ export const menuItems = pgTable("menu_items", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// ── Restaurant tables (migración 035) ──────────────────────────
+// Plano de mesas del tenant. Cada fila representa una mesa con su QR
+// correspondiente (URL /m/<slug>?mesa=<number>). El widget valida que
+// `number` existe y está activa antes de aceptar pedidos.
+export const restaurantTables = pgTable("restaurant_tables", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  // Identificador que viaja en la URL del QR. Texto para permitir
+  // "T1", "Terraza-3", no sólo numéricos. Unique por tenant.
+  number: text("number").notNull(),
+  zone: text("zone"),
+  seats: integer("seats").notNull().default(4),
+  active: boolean("active").notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // ── Menu overrides (migración 019) ──────────────────────────
 export const menuOverrides = pgTable("menu_overrides", {
   id: uuid("id").primaryKey().defaultRandom(),
