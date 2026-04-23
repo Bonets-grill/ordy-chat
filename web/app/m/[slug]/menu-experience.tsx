@@ -51,6 +51,19 @@ function micSupportedSync(): boolean {
   );
 }
 
+// speechSynthesis lee los emojis como texto ("👋" → "mano saludando").
+// Los quitamos antes de sintetizar. También tiramos markdown simple y
+// colapsamos espacios — el mesero solo envía texto plano al TTS.
+function stripForSpeech(text: string): string {
+  return text
+    .replace(/\p{Extended_Pictographic}/gu, "") // emojis
+    .replace(/[️‍]/g, "") // variation selectors + ZWJ
+    .replace(/[*_`#>]/g, "") // markdown muy básico
+    .replace(/[ \t]+/g, " ")
+    .replace(/\s+\n/g, "\n")
+    .trim();
+}
+
 export function MenuExperience(props: Props) {
   const { slug, tenantName, brandColor, phoneNumber, items } = props;
 
@@ -190,9 +203,11 @@ export function MenuExperience(props: Props) {
       if (typeof window === "undefined") return;
       if (!voiceEnabled || !voiceUnlocked) return;
       if (!("speechSynthesis" in window)) return;
+      const clean = stripForSpeech(text);
+      if (!clean) return;
       try {
         window.speechSynthesis.cancel();
-        const u = new SpeechSynthesisUtterance(text);
+        const u = new SpeechSynthesisUtterance(clean);
         u.lang = LANG_BCP47[lang];
         u.rate = 1.0;
         u.pitch = 1.0;
@@ -241,7 +256,8 @@ export function MenuExperience(props: Props) {
     setVoiceUnlocked(true);
     if (typeof window === "undefined") return;
     if (!("speechSynthesis" in window)) return;
-    const greetingText = strings[lang].greeting(tenantName);
+    const greetingText = stripForSpeech(strings[lang].greeting(tenantName));
+    if (!greetingText) return;
     try {
       window.speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(greetingText);
