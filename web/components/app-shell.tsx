@@ -2,6 +2,7 @@ import { Bot, BookOpen, CalendarCheck, CalendarX, ChefHat, CreditCard, FileText,
 import Link from "next/link";
 import type { Session } from "next-auth";
 import { Badge } from "./ui/badge";
+import { NotificationsBell } from "./notifications-bell";
 
 type NavItem = { href: string; label: string; icon: React.ComponentType<{ className?: string }> };
 
@@ -48,6 +49,7 @@ export function AppShell({
             ) : subscriptionStatus ? (
               <Badge tone="warn">{subscriptionStatus}</Badge>
             ) : null}
+            <NotificationsBell />
             {isAdmin && (
               <Link href="/admin" className="text-neutral-700 hover:text-neutral-900">
                 Admin
