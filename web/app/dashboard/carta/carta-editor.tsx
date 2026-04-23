@@ -152,42 +152,73 @@ export function CartaEditor({ initial }: { initial: MenuItem[] }) {
       return next;
     });
 
+  // Toast global al top de la página para feedback ultra-visible (Mario
+  // reportó que "no funciona" aunque la feedback inline ya existía — el
+  // toast vive aquí fuera del row). null = sin toast.
+  const [toast, setToast] = React.useState<{ kind: "ok" | "err"; msg: string } | null>(null);
+  React.useEffect(() => {
+    if (!toast) return;
+    const t = window.setTimeout(() => setToast(null), 4000);
+    return () => window.clearTimeout(t);
+  }, [toast]);
+
   async function deleteItem(id: string) {
     if (!confirm("¿Borrar este item?")) return;
     setRowBusy(id, "busy");
+    // eslint-disable-next-line no-console
+    console.log("[carta] delete", id);
     try {
-      const res = await fetch(`/api/tenant/menu/${id}`, { method: "DELETE" });
+      const res = await fetch(`/api/tenant/menu/${id}`, {
+        method: "DELETE",
+        cache: "no-store",
+      });
       if (res.ok) {
         setItems((prev) => prev.filter((i) => i.id !== id));
         setRowBusy(id, null);
+        setToast({ kind: "ok", msg: "Item borrado" });
         return;
       }
       const body = (await res.json().catch(() => ({}))) as { error?: string };
-      setRowBusy(id, `borrar falló: ${body.error ?? `HTTP ${res.status}`}`);
+      const err = `borrar falló: ${body.error ?? `HTTP ${res.status}`}`;
+      setRowBusy(id, err);
+      setToast({ kind: "err", msg: err });
     } catch (e) {
-      setRowBusy(id, `borrar falló: ${e instanceof Error ? e.message : "desconocido"}`);
+      const err = `borrar falló: ${e instanceof Error ? e.message : "desconocido"}`;
+      setRowBusy(id, err);
+      setToast({ kind: "err", msg: err });
     }
   }
 
   async function toggleAvailable(it: MenuItem) {
     setRowBusy(it.id, "busy");
+    // eslint-disable-next-line no-console
+    console.log("[carta] toggle", it.id, "→", !it.available);
     try {
       const res = await fetch(`/api/tenant/menu/${it.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ available: !it.available }),
+        cache: "no-store",
       });
       if (res.ok) {
         setItems((prev) =>
           prev.map((i) => (i.id === it.id ? { ...i, available: !i.available } : i)),
         );
         setRowBusy(it.id, null);
+        setToast({
+          kind: "ok",
+          msg: !it.available ? "Item activado" : "Item marcado agotado",
+        });
         return;
       }
       const body = (await res.json().catch(() => ({}))) as { error?: string };
-      setRowBusy(it.id, `cambio falló: ${body.error ?? `HTTP ${res.status}`}`);
+      const err = `cambio falló: ${body.error ?? `HTTP ${res.status}`}`;
+      setRowBusy(it.id, err);
+      setToast({ kind: "err", msg: err });
     } catch (e) {
-      setRowBusy(it.id, `cambio falló: ${e instanceof Error ? e.message : "desconocido"}`);
+      const err = `cambio falló: ${e instanceof Error ? e.message : "desconocido"}`;
+      setRowBusy(it.id, err);
+      setToast({ kind: "err", msg: err });
     }
   }
 
@@ -206,6 +237,19 @@ export function CartaEditor({ initial }: { initial: MenuItem[] }) {
 
   return (
     <div className="space-y-6">
+      {/* Toast global fixed top — sobrevive 4s, feedback ultra-visible */}
+      {toast && (
+        <div
+          role="status"
+          className={`fixed inset-x-4 top-4 z-50 mx-auto max-w-md rounded-lg px-4 py-3 text-sm font-medium shadow-lg ${
+            toast.kind === "ok"
+              ? "bg-emerald-600 text-white"
+              : "bg-rose-600 text-white"
+          }`}
+        >
+          {toast.msg}
+        </div>
+      )}
       {/* Importar desde URL */}
       <section className="rounded-xl border border-violet-200 bg-violet-50 p-5">
         <h2 className="text-lg font-semibold text-violet-900">Importar carta desde URL</h2>
