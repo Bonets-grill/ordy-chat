@@ -6,9 +6,9 @@
 // Checkout Session dedicated a esa orden y devuelve la URL al bot para que la
 // reenvíe al comensal.
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { agentConfigs, orderItems, orders, tenants } from "@/lib/db/schema";
+import { agentConfigs, orderItems, orders, tableSessions, tenants } from "@/lib/db/schema";
 import { stripeClient } from "@/lib/stripe";
 import { computeTotals as computeTotalsImpl } from "@/lib/tax/compute";
 
@@ -76,6 +76,19 @@ export async function createOrder(input: CreateOrderInput) {
   );
 
   const orderType = input.orderType ?? "takeaway";
+
+  // Mig 032: sesión de mesa. Para dine_in con tableNumber → resolvemos o
+  // creamos la sesión activa y linkeamos el pedido. Para takeaway u órdenes
+  // sin mesa, sessionId queda NULL (comportamiento legacy).
+  let sessionId: string | null = null;
+  if (orderType === "dine_in" && input.tableNumber) {
+    sessionId = await getOrCreateActiveSession({
+      tenantId: input.tenantId,
+      tableNumber: input.tableNumber,
+      isTest: input.isTest ?? false,
+    });
+  }
+
   const [order] = await db
     .insert(orders)
     .values({
@@ -97,8 +110,21 @@ export async function createOrder(input: CreateOrderInput) {
       currency: "EUR",
       // Mig 029: marca playground. Solo el runtime con x-internal-secret puede setear true.
       isTest: input.isTest ?? false,
+      // Mig 032: link a sesión de mesa (NULL para takeaway).
+      sessionId,
     })
     .returning();
+
+  // Mig 032: recalcular total de la sesión con la suma denormalizada.
+  if (sessionId) {
+    await db
+      .update(tableSessions)
+      .set({
+        totalCents: sql`${tableSessions.totalCents} + ${totals.totalCents}`,
+        updatedAt: new Date(),
+      })
+      .where(eq(tableSessions.id, sessionId));
+  }
 
   if (input.items.length > 0) {
     await db.insert(orderItems).values(
@@ -124,6 +150,65 @@ export async function createOrder(input: CreateOrderInput) {
   }
 
   return order;
+}
+
+/**
+ * Mig 032: resuelve la sesión activa de (tenant, table_number) o crea una
+ * nueva. "Activa" = status NO en (paid, closed). La constraint partial-unique
+ * a nivel DB garantiza que solo hay UNA. Si el caller intenta crear y ya
+ * existe (race), hacemos el SELECT y devolvemos la existente.
+ *
+ * Nota: is_test se propaga del pedido. Una mesa con una sesión is_test=true
+ * abierta + un pedido real daría problemas, pero en la práctica eso solo
+ * pasa en playground donde el tenant ya sabe lo que hace.
+ */
+export async function getOrCreateActiveSession(input: {
+  tenantId: string;
+  tableNumber: string;
+  isTest?: boolean;
+}): Promise<string> {
+  // Intentar leer la activa primero.
+  const existing = await db
+    .select({ id: tableSessions.id })
+    .from(tableSessions)
+    .where(
+      and(
+        eq(tableSessions.tenantId, input.tenantId),
+        eq(tableSessions.tableNumber, input.tableNumber),
+        inArray(tableSessions.status, ["pending", "active", "billing"]),
+      ),
+    )
+    .limit(1);
+  if (existing.length > 0) return existing[0].id;
+
+  // Crear. Si hay race con otra transacción creando justo, el unique partial
+  // nos rechaza; entonces releeemos.
+  try {
+    const [created] = await db
+      .insert(tableSessions)
+      .values({
+        tenantId: input.tenantId,
+        tableNumber: input.tableNumber,
+        status: "pending",
+        isTest: input.isTest ?? false,
+      })
+      .returning({ id: tableSessions.id });
+    return created.id;
+  } catch {
+    const [after] = await db
+      .select({ id: tableSessions.id })
+      .from(tableSessions)
+      .where(
+        and(
+          eq(tableSessions.tenantId, input.tenantId),
+          eq(tableSessions.tableNumber, input.tableNumber),
+          inArray(tableSessions.status, ["pending", "active", "billing"]),
+        ),
+      )
+      .limit(1);
+    if (!after) throw new Error("session_insert_race_unresolvable");
+    return after.id;
+  }
 }
 
 export type PaymentLinkResult =
