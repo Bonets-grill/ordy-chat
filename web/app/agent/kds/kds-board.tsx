@@ -641,33 +641,60 @@ function ReservationsPanel({ reservations }: { reservations: KdsReservation[] })
                 const isImminent = minutesUntil >= -10 && minutesUntil <= 60;
                 const personasMatch = (r.title || "").match(/\d+/);
                 const personas = personasMatch ? Number(personasMatch[0]) : null;
+                const isCancelled = r.status === "cancelada" || r.status === "cancelado";
                 return (
                   <div
                     key={r.id}
-                    className={`rounded-lg border bg-white p-3 text-sm shadow-sm ${
-                      isImminent ? "border-amber-300 ring-1 ring-amber-200" : "border-indigo-200"
+                    className={`rounded-lg border p-3 text-sm shadow-sm ${
+                      isCancelled
+                        ? "border-rose-300 bg-rose-50"
+                        : isImminent
+                          ? "border-amber-300 bg-white ring-1 ring-amber-200"
+                          : "border-indigo-200 bg-white"
                     }`}
                   >
                     <div className="flex items-baseline justify-between gap-2">
-                      <span className="font-semibold text-neutral-900">{fmtTime.format(new Date(r.startsAt))}</span>
-                      {personas !== null && (
-                        <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] uppercase text-neutral-600">
-                          {personas} {personas === 1 ? "pax" : "pax"}
+                      <span
+                        className={`font-semibold ${
+                          isCancelled ? "text-rose-700 line-through" : "text-neutral-900"
+                        }`}
+                      >
+                        {fmtTime.format(new Date(r.startsAt))}
+                      </span>
+                      {isCancelled ? (
+                        <span className="rounded-full bg-rose-600 px-2 py-0.5 text-[10px] font-semibold uppercase text-white">
+                          Cancelada
                         </span>
+                      ) : (
+                        personas !== null && (
+                          <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] uppercase text-neutral-600">
+                            {personas} {personas === 1 ? "pax" : "pax"}
+                          </span>
+                        )
                       )}
                     </div>
-                    <div className="mt-1 truncate text-xs font-medium text-neutral-700">
+                    <div
+                      className={`mt-1 truncate text-xs font-medium ${
+                        isCancelled ? "text-rose-700/80 line-through" : "text-neutral-700"
+                      }`}
+                    >
                       {r.customerName ?? "Sin nombre"}
                     </div>
                     {r.title && (
-                      <div className="mt-0.5 truncate text-[11px] text-neutral-500">{r.title}</div>
+                      <div
+                        className={`mt-0.5 truncate text-[11px] ${
+                          isCancelled ? "text-rose-700/70 line-through" : "text-neutral-500"
+                        }`}
+                      >
+                        {r.title}
+                      </div>
                     )}
-                    {r.notes && (
+                    {r.notes && !isCancelled && (
                       <div className="mt-1 rounded bg-amber-50 px-1.5 py-0.5 text-[11px] italic text-amber-800">
                         {r.notes}
                       </div>
                     )}
-                    {isImminent && (
+                    {isImminent && !isCancelled && (
                       <div className="mt-1 text-[10px] font-medium uppercase tracking-wider text-amber-700">
                         {minutesUntil < 0 ? "En curso" : `En ${minutesUntil} min`}
                       </div>
