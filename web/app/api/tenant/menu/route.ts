@@ -20,6 +20,9 @@ const createSchema = z.object({
   name: z.string().min(1).max(200),
   priceCents: z.number().int().min(0).max(100_000),
   description: z.string().max(500).optional().nullable(),
+  // URL absoluta de imagen del item. Para los items que no se
+  // capturaron del scrape o que Mario quiere reemplazar.
+  imageUrl: z.string().url().max(500).optional().nullable(),
   available: z.boolean().default(true),
   sortOrder: z.number().int().min(0).max(10_000).default(0),
 });
@@ -54,6 +57,7 @@ export async function POST(req: Request) {
       name: parsed.data.name,
       priceCents: parsed.data.priceCents,
       description: parsed.data.description ?? null,
+      imageUrl: parsed.data.imageUrl ?? null,
       available: parsed.data.available,
       sortOrder: parsed.data.sortOrder,
       source: "manual",

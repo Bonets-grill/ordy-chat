@@ -12,10 +12,10 @@
 //     playground (decidido en mig 029). Los pedidos reales se generan via
 //     deep link WhatsApp desde el carrito, no desde el chat.
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { tenants } from "@/lib/db/schema";
+import { restaurantTables, tenants } from "@/lib/db/schema";
 import { limitByIpWebchat } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
@@ -44,7 +44,7 @@ export async function POST(
   // Validar slug → tenant (evita que un spammer martillee el runtime con
   // slugs aleatorios inexistentes).
   const [tenant] = await db
-    .select({ slug: tenants.slug })
+    .select({ id: tenants.id, slug: tenants.slug })
     .from(tenants)
     .where(eq(tenants.slug, slug))
     .limit(1);
@@ -61,8 +61,41 @@ export async function POST(
   // Mesa opcional — viene de /m/<slug>?mesa=N. Validación paranoica: máx 8
   // chars, solo alfanumérico/guion, para evitar prompt injection por URL.
   const rawTable = typeof body?.table_number === "string" ? body.table_number.trim() : "";
-  const tableNumber =
+  let tableNumber =
     rawTable && /^[A-Za-z0-9\-]{1,8}$/.test(rawTable) ? rawTable : null;
+
+  // Validación soft: si el tenant tiene mesas configuradas, el number
+  // DEBE existir y estar activa. Backwards-compat: tenants sin mesas
+  // configuradas (restaurant_tables vacío para el tenant) aceptan
+  // cualquier number, como antes del rollout del plano de mesas.
+  if (tableNumber) {
+    const [configured] = await db
+      .select({ id: restaurantTables.id })
+      .from(restaurantTables)
+      .where(eq(restaurantTables.tenantId, tenant.id))
+      .limit(1);
+    if (configured) {
+      const [match] = await db
+        .select({ id: restaurantTables.id, active: restaurantTables.active })
+        .from(restaurantTables)
+        .where(
+          and(
+            eq(restaurantTables.tenantId, tenant.id),
+            eq(restaurantTables.number, tableNumber),
+          ),
+        )
+        .limit(1);
+      if (!match || !match.active) {
+        return NextResponse.json(
+          {
+            error: "table_not_found",
+            detail: `La mesa "${tableNumber}" no está configurada. Avisa al camarero.`,
+          },
+          { status: 400 },
+        );
+      }
+    }
+  }
   if (!Array.isArray(rawMessages) || rawMessages.length === 0) {
     return NextResponse.json({ error: "messages_required" }, { status: 400 });
   }
