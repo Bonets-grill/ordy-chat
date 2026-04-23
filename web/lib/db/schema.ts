@@ -655,6 +655,9 @@ export const menuItems = pgTable("menu_items", {
   name: text("name").notNull(),
   priceCents: integer("price_cents").notNull(),
   description: text("description"),
+  // URL absoluta de la imagen del item (webp/jpg/png). El scraper de URL la
+  // extrae del HTML; en items manuales es nullable. Migración 034.
+  imageUrl: text("image_url"),
   allergens: text("allergens").array().notNull().default(_sqlTag`ARRAY[]::text[]`),
   available: boolean("available").notNull().default(true),
   sortOrder: integer("sort_order").notNull().default(0),
