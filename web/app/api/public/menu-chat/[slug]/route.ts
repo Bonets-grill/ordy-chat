@@ -53,8 +53,16 @@ export async function POST(
   }
 
   // Parse body
-  const body = (await req.json().catch(() => null)) as { messages?: Msg[] } | null;
+  const body = (await req.json().catch(() => null)) as {
+    messages?: Msg[];
+    table_number?: string | null;
+  } | null;
   const rawMessages = body?.messages ?? [];
+  // Mesa opcional — viene de /m/<slug>?mesa=N. Validación paranoica: máx 8
+  // chars, solo alfanumérico/guion, para evitar prompt injection por URL.
+  const rawTable = typeof body?.table_number === "string" ? body.table_number.trim() : "";
+  const tableNumber =
+    rawTable && /^[A-Za-z0-9\-]{1,8}$/.test(rawTable) ? rawTable : null;
   if (!Array.isArray(rawMessages) || rawMessages.length === 0) {
     return NextResponse.json({ error: "messages_required" }, { status: 400 });
   }
@@ -88,7 +96,14 @@ export async function POST(
         "Content-Type": "application/json",
         "x-internal-secret": secret,
       },
-      body: JSON.stringify({ tenant_slug: slug, messages }),
+      body: JSON.stringify({
+        tenant_slug: slug,
+        messages,
+        // Pasamos la mesa al runtime sólo si llegó y es válida. El brain
+        // la inyecta como contexto del system prompt para el flujo
+        // "bebidas primero + KDS con mesa" de los QR en mesa.
+        ...(tableNumber ? { table_number: tableNumber, channel: "menu_web" } : {}),
+      }),
     });
     if (!r.ok) {
       const text = await r.text().catch(() => "");
