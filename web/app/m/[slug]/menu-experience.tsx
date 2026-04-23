@@ -450,7 +450,12 @@ export function MenuExperience(props: Props) {
       (sessionState.status === "pending" ||
         sessionState.status === "active" ||
         sessionState.status === "billing");
-    if (userDismissed && !sessionAlive) return;
+    // Fix 2026-04-23 #2: si el user ya eligió modo (voz o chat), tratamos
+    // la sesión como "en curso" y NO respetamos dismissed. Mario reportó
+    // que perdía la conversación tras cerrar y reabrir, aún sin sesión
+    // de mesa (ej. antes del primer pedido).
+    const hasChosen = voiceChoice !== null;
+    if (userDismissed && !sessionAlive && !hasChosen) return;
     // Si el user había cerrado pero hay sesión viva, limpiamos el flag para
     // que no vuelva a bloquear futuros auto-open.
     if (userDismissed && sessionAlive) {
@@ -469,7 +474,7 @@ export function MenuExperience(props: Props) {
       });
     }, 500);
     return () => window.clearTimeout(timer);
-  }, [dismissedKey, lang, tenantName, sessionState]);
+  }, [dismissedKey, lang, tenantName, sessionState, voiceChoice]);
 
   // Choice "Chatear": el user prefiere escribir. Nada de TTS, nada de mic.
   function chooseChatOnly() {

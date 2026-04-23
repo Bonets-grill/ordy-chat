@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 from anthropic import AsyncAnthropic, APIStatusError, APIConnectionError
 
 from app.agent_tools import (
+    cancelar_cita,
     crear_cita,
     crear_handoff,
     listar_citas_del_cliente,
@@ -259,6 +260,26 @@ TOOLS: list[dict[str, Any]] = [
                 },
                 "customer_name": {"type": "string", "description": "Nombre del cliente si lo sabes"},
                 "notes": {"type": "string", "description": "Preferencias o notas (ej: 'sin piñones', 'celíaco')"},
+            },
+        },
+    },
+    {
+        "name": "cancelar_cita",
+        "description": (
+            "Cancela una reserva/cita del cliente. ÚSALO cuando el cliente diga "
+            "'cancelar mi reserva', 'anular la mesa', 'no podré ir', etc. "
+            "Efectos: UPDATE status='cancelada' en DB + WA al equipo del "
+            "restaurante con los detalles de la cancelación. Tras llamar, "
+            "confirma al cliente con una frase cálida que quedó cancelada y "
+            "que el equipo ya fue avisado."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "appointment_id": {
+                    "type": "string",
+                    "description": "ID específico de la cita. Si no lo tienes, omítelo y cancelaremos la próxima futura.",
+                },
             },
         },
     },
@@ -563,6 +584,15 @@ async def _ejecutar_tool(
                 closed_for=tenant.reservations_closed_for,
                 tenant_timezone=tenant.timezone,
                 is_test=is_test,
+            )
+            return json.dumps(result)
+
+        if tool_name == "cancelar_cita":
+            result = await cancelar_cita(
+                tenant_id=tenant.id,
+                customer_phone=customer_phone,
+                appointment_id=tool_input.get("appointment_id") or None,
+                sandbox=is_test,
             )
             return json.dumps(result)
 
@@ -943,6 +973,16 @@ def _build_menu_web_flow_block(
         "avisado y llega enseguida.\n"
         "- ok nuevo → confirma que avisaste al camarero, menciona el total_eur, "
         "dile que alguien pasará enseguida.\n"
+        "\n"
+        "CIERRE DEL PEDIDO (cuando el cliente diga 'nada más', 'es todo', "
+        "'ya está', 'gracias eso es todo'): confirma CÁLIDAMENTE que su "
+        "pedido fue enviado a cocina y que pronto estará disfrutando de su "
+        "comida. Da las gracias por la visita. NO llames pedir_cuenta aquí "
+        "— el cliente aún no ha pedido la cuenta, sólo cerró el pedido. "
+        "Mantén el chat abierto: el cliente puede pedir más platos después, "
+        "y cuando quiera la cuenta te lo dirá. NO cierres la sesión de mesa "
+        "ni te despidas definitivamente; el flujo post-cuenta (con reseñas/"
+        "redes) viene sólo cuando piden la cuenta.\n"
         "\n"
         "NO actives este flujo si el cliente claramente pide takeaway o para "
         "llevar desde el principio (raro vía QR de mesa pero posible).\n"
