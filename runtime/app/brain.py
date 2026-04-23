@@ -129,6 +129,30 @@ def _get_client(api_key: str) -> AsyncAnthropic:
     return client
 
 
+# Placeholders que compartimos entre múltiples visitantes anónimos (widget
+# público /m/<slug>, playground admin). No identifican a un cliente real —
+# por tanto NUNCA debemos hidratar contexto persistente (nombre/pedido/
+# cita) contra ellos, o un visitante recibe datos de otro (incidente prod
+# 2026-04-23: bot saludaba "Hola Mario" a todos los clientes de Bonets
+# porque un tester había escrito su nombre bajo playground-sandbox, y
+# confabulaba "tu reserva de esta noche" por una cita de test del mismo
+# phone compartido).
+_ANONYMOUS_PHONE_SENTINELS: frozenset[str] = frozenset({"playground-sandbox"})
+
+
+def _is_anonymous_session(phone: str | None) -> bool:
+    """True si el phone no identifica a un cliente único. Los sentinels
+    compartidos y cualquier phone que no sea E.164 (no empieza con '+')
+    se tratan como anónimos — sin contexto persistente, sin guardar nombre."""
+    if not phone:
+        return True
+    if phone in _ANONYMOUS_PHONE_SENTINELS:
+        return True
+    if phone.startswith("playground-"):
+        return True
+    return False
+
+
 def _render_contexto_cliente(ctx: dict[str, Any]) -> str | None:
     """Serializa el contexto persistente a texto que Claude leerá como system block."""
     if not ctx:
@@ -500,7 +524,14 @@ async def _ejecutar_tool(
     nombre_oportunista = tool_input.get("customer_name") or (
         tool_input.get("nombre") if tool_name == "recordar_cliente" else None
     )
-    if nombre_oportunista and customer_phone:
+    if (
+        nombre_oportunista
+        and customer_phone
+        and not _is_anonymous_session(customer_phone)
+    ):
+        # Nunca persistimos el nombre contra placeholders compartidos
+        # (playground-sandbox, etc.). Si lo hiciéramos, el siguiente visitante
+        # anónimo recibiría "Hola <nombre ajeno>".
         try:
             await actualizar_nombre_cliente(
                 tenant.id, customer_phone, nombre_oportunista, is_test=is_test
@@ -1039,8 +1070,13 @@ async def generar_respuesta(
     # Contexto persistente del cliente (nombre + último pedido + próxima cita).
     # Va como SEGUNDO bloque del system para no invalidar el cache del primero
     # (que sí es estable por tenant). Si falla, seguimos sin contexto — no bloquea.
+    #
+    # Sólo para phones REALES (E.164). Los placeholders como
+    # 'playground-sandbox' se comparten entre múltiples visitantes anónimos
+    # del widget público: si leyéramos contexto allí, el visitante A recibiría
+    # el nombre o la cita del visitante B. Anonymous → contexto vacío.
     contexto_bloque: str | None = None
-    if customer_phone:
+    if customer_phone and not _is_anonymous_session(customer_phone):
         try:
             ctx = await obtener_contexto_cliente(tenant.id, customer_phone)
             contexto_bloque = _render_contexto_cliente(ctx)
