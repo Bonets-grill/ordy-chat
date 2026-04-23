@@ -174,10 +174,24 @@ async def transcribir_audio(
     buffer.name = f"audio.{ext}"
 
     client = AsyncOpenAI(api_key=api_key, timeout=45.0, max_retries=2)
+    # Prompt de contexto: Whisper usa esto como seed para orientar la
+    # transcripción. Útil en conversaciones de restaurante donde el ASR
+    # tiende a alucinar nombres inventados ("Phoenix", "Mario", etc.)
+    # cuando el audio es corto o con ruido. Max 224 tokens según OpenAI.
+    # temperature=0 para minimizar variabilidad.
+    whisper_prompt = (
+        "Conversación en un restaurante entre cliente y camarero. El cliente "
+        "hace pedidos, pide la carta, reserva mesa. Menciona hamburguesas, "
+        "entrantes, bebidas, postres. Idioma español neutro. Transcribe "
+        "solo lo que dice el cliente — ignora música, eco, o frases "
+        "genéricas de YouTube."
+    )
     resp: Any = await client.audio.transcriptions.create(
         model=WHISPER_MODEL,
         file=buffer,
         language=language,
+        prompt=whisper_prompt,
+        temperature=0,
     )
     texto = (getattr(resp, "text", "") or "").strip()
     if es_alucinacion_whisper(texto):
