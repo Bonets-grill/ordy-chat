@@ -25,6 +25,7 @@ type Copy = {
   close: string;
   typing: string;
   errorFallback: string;
+  errorNoSpeech: string;
   cartEmpty: string;
   cartTitle: string;
   cartTotal: string;
@@ -77,6 +78,7 @@ export const strings: Record<Lang, Copy> = {
     close: "Cerrar",
     typing: "Escribiendo…",
     errorFallback: "Algo ha fallado. Intenta de nuevo.",
+    errorNoSpeech: "No te hemos escuchado bien. Mantén pulsado el micro mientras hablas.",
     cartEmpty: "Tu pedido está vacío",
     cartTitle: "Tu pedido",
     cartTotal: "Total",
@@ -116,6 +118,7 @@ export const strings: Record<Lang, Copy> = {
     close: "Close",
     typing: "Typing…",
     errorFallback: "Something went wrong. Try again.",
+    errorNoSpeech: "We didn't catch that. Hold the mic while you speak.",
     cartEmpty: "Your order is empty",
     cartTitle: "Your order",
     cartTotal: "Total",
@@ -155,6 +158,7 @@ export const strings: Record<Lang, Copy> = {
     close: "Fermer",
     typing: "Écrit…",
     errorFallback: "Une erreur s'est produite. Réessayez.",
+    errorNoSpeech: "On ne vous a pas bien entendu. Maintenez le micro en parlant.",
     cartEmpty: "Votre commande est vide",
     cartTitle: "Votre commande",
     cartTotal: "Total",
@@ -194,6 +198,7 @@ export const strings: Record<Lang, Copy> = {
     close: "Schließen",
     typing: "Schreibt…",
     errorFallback: "Etwas ist schiefgelaufen. Versuche es erneut.",
+    errorNoSpeech: "Wir haben dich nicht verstanden. Halte das Mikro gedrückt, während du sprichst.",
     cartEmpty: "Deine Bestellung ist leer",
     cartTitle: "Deine Bestellung",
     cartTotal: "Summe",
@@ -233,6 +238,7 @@ export const strings: Record<Lang, Copy> = {
     close: "Chiudi",
     typing: "Sta scrivendo…",
     errorFallback: "Qualcosa è andato storto. Riprova.",
+    errorNoSpeech: "Non ti abbiamo sentito bene. Tieni premuto il microfono mentre parli.",
     cartEmpty: "Il tuo ordine è vuoto",
     cartTitle: "Il tuo ordine",
     cartTotal: "Totale",
@@ -272,6 +278,7 @@ export const strings: Record<Lang, Copy> = {
     close: "Fechar",
     typing: "A escrever…",
     errorFallback: "Algo correu mal. Tenta outra vez.",
+    errorNoSpeech: "Não te ouvimos bem. Mantém o micro premido enquanto falas.",
     cartEmpty: "O teu pedido está vazio",
     cartTitle: "O teu pedido",
     cartTotal: "Total",
