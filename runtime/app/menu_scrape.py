@@ -195,31 +195,67 @@ async def scrape_url_to_items(
 
 
 def _sanitizar_image_url(raw: Any, base_url: str) -> str | None:
-    """Valida y normaliza una URL de imagen extraída por el LLM.
+    """Valida, normaliza Y URL-encode una URL de imagen extraída del HTML.
 
-    Acepta sólo http/https absolutos. Si el LLM devolvió una ruta relativa
-    (típica en sitios pobres: "/uploads/x.jpg"), intenta reconstruirla con
-    el base_url. Si no es parseable como URL válida, devuelve None.
+    Acepta http/https absolutos, protocol-relative (//x) y relativos al host
+    (/uploads/x). Si no es URL válida, devuelve None.
+
+    Fix 2026-04-23 (Bonets): las URLs del CDN de codemida contienen emojis
+    (🍗, 🧀) y entidades HTML (&amp;) que el browser no puede cargar sin
+    codificar. Sin este encode las <img> fallaban silenciosamente con el
+    onError del editor, y Mario veía items "sin foto" aunque la DB las
+    guardaba. Ahora decodificamos entities (&amp; → &) y aplicamos
+    percent-encoding al path de la URL.
     """
     if not raw or not isinstance(raw, str):
         return None
     raw = raw.strip()
     if not raw:
         return None
-    if raw.startswith(("http://", "https://")):
-        return raw[:500]  # cap por si el LLM alucina URLs enormes
+
+    # 1. Decode HTML entities: &amp; → &, &quot; → ", etc.
+    from html import unescape
+
+    raw = unescape(raw)
+
+    # 2. Reconstruir a URL absoluta si viene relativa.
     if raw.startswith("//"):
-        # Protocol-relative. Heredamos el scheme del base_url.
         scheme = base_url.split("://", 1)[0] if "://" in base_url else "https"
-        return f"{scheme}:{raw}"[:500]
-    if raw.startswith("/"):
-        # Relativa al host. Reconstruimos.
+        absolute = f"{scheme}:{raw}"
+    elif raw.startswith("/"):
         try:
             from urllib.parse import urlparse
 
             parsed = urlparse(base_url)
-            if parsed.scheme and parsed.netloc:
-                return f"{parsed.scheme}://{parsed.netloc}{raw}"[:500]
+            if not (parsed.scheme and parsed.netloc):
+                return None
+            absolute = f"{parsed.scheme}://{parsed.netloc}{raw}"
         except Exception:
             return None
-    return None
+    elif raw.startswith(("http://", "https://")):
+        absolute = raw
+    else:
+        return None
+
+    # 3. URL-encode el path para que emojis/unicode pasen como %XX%YY. Los
+    #    caracteres ya URL-safe (letras, dígitos, ciertos símbolos) se
+    #    preservan; sólo codifica lo no-ASCII y caracteres reservados
+    #    problemáticos. Dejamos ':/?=&%#[]@!$()*+,;' intactos para no
+    #    romper URLs que ya vinieran parcialmente encodeadas.
+    try:
+        from urllib.parse import quote, urlsplit, urlunsplit
+
+        parts = urlsplit(absolute)
+        # `quote` por defecto codifica todo salvo letras/dígitos/-._~. Lo
+        # relajamos con safe='/' para preservar la jerarquía del path.
+        # %-ya-encodeados (%XX) se preservan porque % va en safe.
+        encoded_path = quote(parts.path, safe="/%")
+        encoded_query = quote(parts.query, safe="=&%")
+        result = urlunsplit(
+            (parts.scheme, parts.netloc, encoded_path, encoded_query, "")
+        )
+        return result[:500]
+    except Exception:
+        # Si el encode falla por input corrupto, preferimos None que una
+        # URL a medias.
+        return None

@@ -109,6 +109,40 @@ class TestSanitizarImageUrl:
         assert out is not None
         assert len(out) <= 500
 
+    def test_emoji_en_path_se_encodea(self) -> None:
+        # Fix Bonets 2026-04-23: CloudFront entrega URLs con emojis crudos
+        # (🍗 Alitas) que el browser no carga hasta encodearlos.
+        raw = "https://cdn.x/images/🍗 Alitas.webp"
+        out = _sanitizar_image_url(raw, "https://site.com")
+        assert out is not None
+        assert "🍗" not in out  # el emoji debe ir percent-encoded
+        assert "%F0%9F%8D%97" in out  # 🍗 en UTF-8 percent-encoded
+        assert out.endswith(".webp")
+
+    def test_entidad_html_amp_se_decodea(self) -> None:
+        # "&amp; Bacon" viene del HTML escaped; debe convertirse en "& Bacon"
+        # y luego encodearse como %26.
+        raw = "https://cdn.x/images/Aros &amp; Bacon.webp"
+        out = _sanitizar_image_url(raw, "https://site.com")
+        assert out is not None
+        assert "&amp;" not in out
+        assert "%26" in out  # & encodeado
+
+    def test_apostrofo_curly_se_preserva_o_encodea(self) -> None:
+        # "Bonet's" con apóstrofo curly no rompe el URL.
+        raw = "https://cdn.x/images/Bonet's Crispy.webp"
+        out = _sanitizar_image_url(raw, "https://site.com")
+        assert out is not None
+        assert out.startswith("https://cdn.x/")
+
+    def test_path_ya_encodeado_no_se_doble_encoda(self) -> None:
+        # Si el path ya tiene %20 (espacio encodeado), no debe convertirse
+        # en %2520 (doble encoding).
+        raw = "https://cdn.x/images/Torre%20Bonets.webp"
+        out = _sanitizar_image_url(raw, "https://site.com")
+        assert out == "https://cdn.x/images/Torre%20Bonets.webp"
+        assert len(out) <= 500
+
 
 @pytest.mark.asyncio
 async def test_scrape_url_to_items_devuelve_image_url() -> None:
