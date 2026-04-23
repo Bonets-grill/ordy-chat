@@ -41,6 +41,18 @@ type CartLine = { itemId: string; qty: number };
 const CART_STORAGE_PREFIX = "ordy-cart:";
 const GREETING_SHOWN_PREFIX = "ordy-greeting-shown:";
 const CHAT_DISMISSED_PREFIX = "ordy-chat-dismissed:";
+// Historial del chat dentro de la misma pestaña: sobrevive a reloads
+// forzados por el Service Worker (nuevo deploy → skipWaiting → reload) sin
+// persistir entre sesiones (al cerrar Safari el pedido de hoy no debe
+// aparecer mañana). Por tenant para no mezclar conversaciones.
+const CHAT_MESSAGES_PREFIX = "ordy-chat-messages:";
+const MAX_PERSISTED_MESSAGES = 40;
+// Voice unlock persistido: tras un reload del SW no queremos re-mostrar el
+// overlay gigante si el usuario ya había desbloqueado la voz. Los
+// navegadores siguen requiriendo un gesture para speechSynthesis, pero
+// cualquier siguiente tap (send, 🎧, mic) lo cubre — sin molestar con la
+// cortina negra otra vez.
+const VOICE_UNLOCKED_PREFIX = "ordy-voice-unlocked:";
 
 function micSupportedSync(): boolean {
   if (typeof window === "undefined") return false;
@@ -279,11 +291,72 @@ export function MenuExperience(props: Props) {
 
   const greetingKey = `${GREETING_SHOWN_PREFIX}${slug}`;
   const dismissedKey = `${CHAT_DISMISSED_PREFIX}${slug}`;
+  const messagesKey = `${CHAT_MESSAGES_PREFIX}${slug}`;
+  const voiceUnlockedKey = `${VOICE_UNLOCKED_PREFIX}${slug}`;
+
+  // Rehidratación del voice unlock: si el usuario ya tocó la cortina negra
+  // antes del reload forzado, no le volvemos a mostrar el overlay gigante.
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      if (window.sessionStorage.getItem(voiceUnlockedKey) === "1") {
+        setVoiceUnlocked(true);
+      }
+    } catch {
+      /* noop */
+    }
+  }, [voiceUnlockedKey]);
+
+  // Rehidratación de mensajes: cargar historial de la sesión al montar.
+  // Cubre el caso de un reload forzado por el Service Worker mid-pedido.
+  const rehydratedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (rehydratedRef.current) return;
+    rehydratedRef.current = true;
+    try {
+      const raw = window.sessionStorage.getItem(messagesKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) return;
+      const valid: ChatMsg[] = parsed.filter(
+        (m): m is ChatMsg =>
+          typeof m === "object" &&
+          m !== null &&
+          (m as { role?: unknown }).role !== undefined &&
+          ((m as ChatMsg).role === "user" || (m as ChatMsg).role === "assistant") &&
+          typeof (m as ChatMsg).content === "string",
+      );
+      if (valid.length > 0) {
+        setMessages(valid);
+        setChatOpen(true); // si había conversación, el chat seguía abierto
+      }
+    } catch {
+      /* storage corrupto → ignorar */
+    }
+  }, [messagesKey]);
+
+  // Persistencia de mensajes a sessionStorage. Se ejecuta tras rehidratar
+  // para no sobreescribir el historial con [] vacío en el primer render.
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!rehydratedRef.current) return;
+    try {
+      if (messages.length === 0) {
+        window.sessionStorage.removeItem(messagesKey);
+      } else {
+        const trimmed = messages.slice(-MAX_PERSISTED_MESSAGES);
+        window.sessionStorage.setItem(messagesKey, JSON.stringify(trimmed));
+      }
+    } catch {
+      /* quota exceeded u otros: seguimos silentes */
+    }
+  }, [messages, messagesKey]);
 
   // Auto-abrir el chat con saludo al montar. Siempre que el user NO haya
-  // cerrado explícitamente en esta sesión. Pequeño delay para que el idioma
-  // se haya detectado. TTS NO se reproduce aquí — espera al user gesture
-  // del overlay (unlockVoice).
+  // cerrado explícitamente en esta sesión y no haya ya mensajes rehidratados.
+  // Pequeño delay para que el idioma se haya detectado. TTS NO se reproduce
+  // aquí — espera al user gesture del overlay (unlockVoice).
   React.useEffect(() => {
     if (typeof window === "undefined") return;
     const userDismissed = window.sessionStorage.getItem(dismissedKey);
@@ -300,10 +373,18 @@ export function MenuExperience(props: Props) {
   }, [dismissedKey, lang, tenantName]);
 
   // Unlock: primer user gesture → desbloquea TTS + reproduce saludo.
+  // Persistimos la preferencia en sessionStorage: tras un reload del SW no
+  // volvemos a mostrar la cortina negra. El siguiente tap del usuario
+  // (send, 🎧, mic) servirá como gesture para que speechSynthesis arranque.
   function unlockVoice() {
     if (voiceUnlocked) return;
     setVoiceUnlocked(true);
     if (typeof window === "undefined") return;
+    try {
+      window.sessionStorage.setItem(voiceUnlockedKey, "1");
+    } catch {
+      /* storage lleno / safari privado: seguimos */
+    }
     if (!("speechSynthesis" in window)) return;
     const greetingText = normalizeForSpeech(strings[lang].greeting(tenantName), lang);
     if (!greetingText) return;
