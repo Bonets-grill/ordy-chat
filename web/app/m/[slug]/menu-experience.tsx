@@ -649,6 +649,26 @@ export function MenuExperience(props: Props) {
     return "";
   }
 
+  function _similarity(a: string, b: string): number {
+    // Jaccard sobre tokens normalizados. Robusto a pequeñas variaciones
+    // del ASR (palabras cortadas, acentos, puntuación) pero sensible a
+    // cambios de fondo. Con umbral 0.6 detecta eco real del TTS sin
+    // descartar respuestas cortas legítimas ("sí", "ok", "mesa 4").
+    const norm = (s: string) =>
+      s.toLowerCase()
+        .normalize("NFKD")
+        .replace(/[̀-ͯ]/g, "")
+        .replace(/[^a-z0-9áéíóúñ\s]/gi, " ")
+        .split(/\s+/)
+        .filter((w) => w.length > 2);
+    const sa = new Set(norm(a));
+    const sb = new Set(norm(b));
+    if (sa.size === 0 || sb.size === 0) return 0;
+    let inter = 0;
+    for (const t of sa) if (sb.has(t)) inter++;
+    return inter / (sa.size + sb.size - inter);
+  }
+
   async function transcribeAndSend(blob: Blob) {
     setTranscribing(true);
     setError(null);
@@ -669,9 +689,21 @@ export function MenuExperience(props: Props) {
       }
       const data = (await r.json()) as { text?: string };
       const transcript = (data.text ?? "").trim();
-      if (transcript) {
-        await sendMessage(transcript);
+      if (!transcript) return;
+      // Anti-eco: si la transcripción es prácticamente idéntica al último
+      // mensaje del asistente, es casi seguro que el mic capturó el TTS
+      // (echoCancellation falló o no se aplicó). Descartamos antes de
+      // enviarlo al bot. Evita loop "bot dice X → mic oye X → cliente
+      // supuestamente dice X → bot responde confuso".
+      const lastAssistant = [...messages].reverse().find(
+        (m) => m.role === "assistant",
+      )?.content;
+      if (lastAssistant && _similarity(transcript, lastAssistant) > 0.6) {
+        // eslint-disable-next-line no-console
+        console.warn("[voice] echo detectado, descartando transcripción:", transcript.slice(0, 60));
+        return;
       }
+      await sendMessage(transcript);
     } catch {
       setError(t.errorFallback);
     } finally {
@@ -687,7 +719,20 @@ export function MenuExperience(props: Props) {
     }
     try {
       stopSpeaking();
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Activar cancelación de eco, supresión de ruido y AGC. CRÍTICO
+      // para modo conversacional: en móvil el altavoz y el micro están
+      // MUY cerca; sin echoCancellation el mic capturaba el propio TTS
+      // del bot y Whisper lo transcribía como mensaje del cliente
+      // (incidente 2026-04-23 Bonets: user turn contenía literalmente
+      // la última respuesta del assistant mal transcrita). Estos
+      // constraints activan el procesador de audio nativo del OS.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
       mediaStreamRef.current = stream;
       const mime = pickMimeType();
       const mr = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
@@ -758,13 +803,20 @@ export function MenuExperience(props: Props) {
         source.connect(analyser);
         analyserRef.current = analyser;
         const buf = new Float32Array(analyser.fftSize);
-        const SILENCE_MS = 1200;
+        // Tuning 2026-04-23 tras ver en DB que el mic capturaba el TTS
+        // como input del cliente. Cambios:
+        // - SILENCE_MS 1200→1500: españoles hacen pausas naturales >1.2s.
+        // - BARGE_IN_RMS 0.04→0.12: umbral mucho más alto durante TTS
+        //   para que sólo habla cercana al mic dispare barge-in.
+        // - BARGE_IN_SUSTAIN_MS: el umbral debe superarse durante un
+        //   rango sostenido (no un pico). Un eco del altavoz suele
+        //   ser impulsivo; la habla humana mantiene energía >400ms.
+        const SILENCE_MS = 1500;
         const SPEECH_RMS = 0.015;
-        // Barge-in: cuando el TTS está hablando, subimos el umbral para
-        // ignorar eco del altavoz. La habla humana cruza este threshold,
-        // el eco TTS tras echo-cancellation del navegador no.
-        const BARGE_IN_RMS = 0.04;
+        const BARGE_IN_RMS = 0.12;
+        const BARGE_IN_SUSTAIN_MS = 400;
         const MAX_MS = 20000;
+        let bargeInAbove = 0;  // ms que lleva rms>umbral durante TTS
         const startedAt = performance.now();
         silenceStartRef.current = null;
 
@@ -779,17 +831,28 @@ export function MenuExperience(props: Props) {
           const ttsSpeaking = ttsSpeakingRef.current;
           const threshold = ttsSpeaking ? BARGE_IN_RMS : SPEECH_RMS;
           if (rms > threshold) {
-            hadSpeechRef.current = true;
-            silenceStartRef.current = null;
-            // Barge-in: si estamos detectando habla del cliente durante
-            // el TTS, cortamos el TTS YA y seguimos grabando al cliente.
             if (ttsSpeaking) {
-              try {
-                window.speechSynthesis?.cancel();
-              } catch {
-                /* noop */
+              // Barge-in sostenido: acumulamos ms por encima del umbral.
+              // Sólo si se sostiene >= BARGE_IN_SUSTAIN_MS cortamos el TTS.
+              // Los picos impulsivos del eco del altavoz NO cumplen esto.
+              bargeInAbove += 1000 / 60;  // asume tick a ~60fps
+              if (bargeInAbove >= BARGE_IN_SUSTAIN_MS) {
+                hadSpeechRef.current = true;
+                silenceStartRef.current = null;
+                try {
+                  window.speechSynthesis?.cancel();
+                } catch {
+                  /* noop */
+                }
+                ttsSpeakingRef.current = false;
+                bargeInAbove = 0;
               }
-              ttsSpeakingRef.current = false;
+            } else {
+              // TTS no activo: contamos cualquier pico por encima del
+              // umbral normal como habla real del cliente.
+              hadSpeechRef.current = true;
+              silenceStartRef.current = null;
+              bargeInAbove = 0;
             }
           } else if (hadSpeechRef.current) {
             if (silenceStartRef.current == null) silenceStartRef.current = now;
