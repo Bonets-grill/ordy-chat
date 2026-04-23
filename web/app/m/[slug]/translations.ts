@@ -51,6 +51,9 @@ type Copy = {
   closeGuardTitle: string;
   closeGuardBody: (total: string) => string;
   closeGuardContinue: string;
+  // Nueva cortina de bienvenida: chooser entre chat de texto y voz.
+  chooseChat: string;
+  chooseVoice: string;
 };
 
 // Mapeo BCP-47 para Web Speech API (SpeechRecognition + SpeechSynthesis).
@@ -100,6 +103,8 @@ export const strings: Record<Lang, Copy> = {
     closeGuardBody: (t) =>
       `No podemos cerrar el chat hasta que paguéis. Total actual: ${t}. Cuando queráis la cuenta, pedídmela aquí.`,
     closeGuardContinue: "Seguir aquí",
+    chooseChat: "Quiero chatear",
+    chooseVoice: "Hablar con el mesero",
   },
   en: {
     greeting: (n) => `Welcome to ${n}! Want a recommendation?`,
@@ -137,6 +142,8 @@ export const strings: Record<Lang, Copy> = {
     closeGuardBody: (t) =>
       `We can't close the chat until you pay. Current total: ${t}. When you're ready for the bill, ask me here.`,
     closeGuardContinue: "Keep chatting",
+    chooseChat: "I'll type",
+    chooseVoice: "Talk to the waiter",
   },
   fr: {
     greeting: (n) => `Bienvenue à ${n} ! Voulez-vous une recommandation ?`,
@@ -174,6 +181,8 @@ export const strings: Record<Lang, Copy> = {
     closeGuardBody: (t) =>
       `Nous ne pouvons pas fermer le chat avant le paiement. Total actuel : ${t}. Pour l'addition, demandez-la-moi ici.`,
     closeGuardContinue: "Rester ici",
+    chooseChat: "Je préfère écrire",
+    chooseVoice: "Parler au serveur",
   },
   de: {
     greeting: (n) => `Willkommen bei ${n}! Soll ich dir etwas empfehlen?`,
@@ -211,6 +220,8 @@ export const strings: Record<Lang, Copy> = {
     closeGuardBody: (t) =>
       `Wir können den Chat nicht schließen, bis bezahlt ist. Aktuelle Summe: ${t}. Für die Rechnung fragt mich hier.`,
     closeGuardContinue: "Hier bleiben",
+    chooseChat: "Ich schreibe lieber",
+    chooseVoice: "Mit dem Kellner sprechen",
   },
   it: {
     greeting: (n) => `Benvenuto a ${n}! Vuoi un consiglio?`,
@@ -248,6 +259,8 @@ export const strings: Record<Lang, Copy> = {
     closeGuardBody: (t) =>
       `Non possiamo chiudere la chat finché non pagate. Totale attuale: ${t}. Per il conto, chiedetemelo qui.`,
     closeGuardContinue: "Restiamo qui",
+    chooseChat: "Preferisco scrivere",
+    chooseVoice: "Parlare col cameriere",
   },
   pt: {
     greeting: (n) => `Bem-vindo ao ${n}! Quer uma recomendação?`,
@@ -285,5 +298,7 @@ export const strings: Record<Lang, Copy> = {
     closeGuardBody: (t) =>
       `Não podemos fechar o chat até que paguem. Total atual: ${t}. Para a conta, peçam-me aqui.`,
     closeGuardContinue: "Ficar aqui",
+    chooseChat: "Prefiro escrever",
+    chooseVoice: "Falar com o empregado",
   },
 };
