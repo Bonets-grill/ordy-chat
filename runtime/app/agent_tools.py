@@ -602,3 +602,99 @@ async def pedir_cuenta(
             "llegará enseguida. Menciona el total."
         ),
     }
+
+
+async def cancelar_cita(
+    tenant_id: UUID,
+    customer_phone: str,
+    appointment_id: str | None = None,
+    sandbox: bool = False,
+) -> dict[str, Any]:
+    """Cancela una cita/reserva del cliente. Si `appointment_id` viene,
+    cancela esa; si no, la próxima futura del customer_phone.
+
+    Efectos: UPDATE status='cancelada' + notifica al equipo por WhatsApp
+    al agent_configs.handoff_whatsapp_phone.
+    """
+    from app.crypto import descifrar
+    from app.providers import obtener_proveedor
+
+    pool = await inicializar_pool()
+    async with pool.acquire() as conn:
+        if appointment_id:
+            row = await conn.fetchrow(
+                """
+                UPDATE appointments SET status='cancelada', updated_at=now()
+                 WHERE id=$1 AND tenant_id=$2 AND customer_phone=$3
+                   AND status NOT IN ('cancelada','completado')
+                RETURNING id, starts_at, title, customer_name
+                """,
+                appointment_id, tenant_id, customer_phone,
+            )
+        else:
+            row = await conn.fetchrow(
+                """
+                UPDATE appointments SET status='cancelada', updated_at=now()
+                 WHERE id = (
+                   SELECT id FROM appointments
+                   WHERE tenant_id=$1 AND customer_phone=$2
+                     AND starts_at > now()
+                     AND status NOT IN ('cancelada','completado')
+                   ORDER BY starts_at ASC LIMIT 1
+                 )
+                RETURNING id, starts_at, title, customer_name
+                """,
+                tenant_id, customer_phone,
+            )
+        if row is None:
+            return {"ok": False, "error": "no_upcoming_reservation",
+                    "hint": "No encontré ninguna reserva futura del cliente que cancelar."}
+
+        tenant_row = await conn.fetchrow(
+            """
+            SELECT t.name AS tenant_name,
+                   ac.handoff_whatsapp_phone,
+                   pc.provider, pc.credentials_encrypted
+            FROM tenants t
+            LEFT JOIN agent_configs ac ON ac.tenant_id = t.id
+            LEFT JOIN provider_credentials pc ON pc.tenant_id = t.id
+            WHERE t.id = $1
+            """,
+            tenant_id,
+        )
+
+    # Notificar al equipo.
+    target_phone = (tenant_row["handoff_whatsapp_phone"] or "").strip() if tenant_row else ""
+    notified = False
+    if target_phone and tenant_row:
+        try:
+            import json
+            creds: dict[str, Any] = {}
+            if tenant_row["credentials_encrypted"]:
+                try:
+                    creds = json.loads(descifrar(tenant_row["credentials_encrypted"]))
+                except Exception:
+                    creds = {}
+            adapter = obtener_proveedor(tenant_row["provider"] or "whapi", creds, "")
+            sandbox_header = "🧪 *PRUEBA PLAYGROUND*\n\n" if sandbox else ""
+            fecha = row["starts_at"].strftime("%Y-%m-%d %H:%M")
+            body = (
+                f"{sandbox_header}"
+                f"❌ *Reserva cancelada* — {tenant_row['tenant_name']}\n\n"
+                f"Cliente: {row['customer_name'] or customer_phone}\n"
+                f"Cuándo era: {fecha}\n"
+                f"Título: {row['title'] or '—'}\n"
+                f"El cliente canceló desde el chat."
+            )
+            await adapter.enviar_mensaje(target_phone, body)
+            notified = True
+        except Exception:
+            logger.exception("WA cancelar_cita falló",
+                             extra={"event": "cancelar_cita_wa_fail", "tenant_id": str(tenant_id)})
+    return {
+        "ok": True,
+        "appointment_id": str(row["id"]),
+        "starts_at_iso": row["starts_at"].isoformat(),
+        "notified_team": notified,
+        "hint": "Confirma al cliente que su reserva quedó cancelada y que el equipo ha sido avisado.",
+    }
