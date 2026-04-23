@@ -55,6 +55,7 @@ export default async function CartaPage() {
     name: it.name,
     priceCents: it.priceCents,
     description: it.description,
+    imageUrl: it.imageUrl,
     available: it.available,
     sortOrder: it.sortOrder,
     source: it.source,

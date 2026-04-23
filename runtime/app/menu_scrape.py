@@ -26,20 +26,35 @@ from app.tenants import obtener_anthropic_api_key
 
 logger = logging.getLogger("ordychat.menu_scrape")
 
-# Límite del HTML que pasamos a Claude para no inflar tokens (~30KB ≈ 8K tokens).
-MAX_HTML_CHARS = 30_000
+# Límite del HTML que pasamos a Claude para no inflar tokens (~40KB ≈ 11K tokens).
+# Subido de 30K a 40K porque los marcadores [IMG:...] añaden volumen por
+# item (URLs de CDN largas) y no queremos recortar cartas medianas.
+MAX_HTML_CHARS = 40_000
 
 # Tag-stripping minimalista (no necesitamos BeautifulSoup para esto).
 _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")
+# Captura <img src="URL" ...> en cualquier orden de atributos. Grupo 1 = URL.
+_IMG_RE = re.compile(
+    r"""<img\b[^>]*?\bsrc\s*=\s*["']([^"']+)["'][^>]*>""",
+    flags=re.IGNORECASE | re.DOTALL,
+)
 
 
 def _html_to_text(html: str) -> str:
-    """Strip tags + colapsa whitespace. Suficiente para que Claude vea
-    el contenido sin ruido de scripts/styles/HTML."""
+    """Strip tags + colapsa whitespace, preservando las URLs de imagen
+    como marcadores [IMG:URL] en su posición original. Así Claude puede
+    asociar cada imagen con el item cercano al leer el texto.
+
+    Sin esto, los <img src=...> se perdían al strippar tags y el
+    scraper nunca devolvía image_url. Incidente 2026-04-23 Bonets:
+    el importador sacaba 76 items sin imágenes aunque el HTML las tenía."""
     # Quitar <script> y <style> con su contenido.
     html = re.sub(r"<script\b[^>]*>.*?</script>", " ", html, flags=re.DOTALL | re.IGNORECASE)
     html = re.sub(r"<style\b[^>]*>.*?</style>", " ", html, flags=re.DOTALL | re.IGNORECASE)
+    # Reemplaza cada <img src="URL" ...> por " [IMG:URL] " antes de borrar
+    # el resto de tags. El espacio garantiza separación de palabras.
+    html = _IMG_RE.sub(lambda m: f" [IMG:{m.group(1)}] ", html)
     text = _TAG_RE.sub(" ", html)
     text = _WS_RE.sub(" ", text).strip()
     return text
@@ -51,7 +66,7 @@ Formato EXACTO de respuesta (solo el JSON, sin markdown ni texto adicional):
 
 {
   "items": [
-    {"name": "<nombre exacto>", "category": "<categoría>", "price_cents": <int>, "description": "<descripción opcional>"}
+    {"name": "<nombre exacto>", "category": "<categoría>", "price_cents": <int>, "description": "<descripción opcional>", "image_url": "<URL absoluta opcional>"}
   ]
 }
 
@@ -60,6 +75,7 @@ Reglas:
 - Si no hay precio claro, OMITE el item entero (no inventes precio).
 - category: usa la categoría que veas en la web (Hamburguesas / Entrantes / Bebidas / etc.). Si no hay categoría, usa "Otros".
 - description: máx 100 chars, en español. Opcional.
+- image_url: si en el texto ves un marcador `[IMG:https://...]` cercano al item (típicamente JUSTO ANTES del nombre del item), úsalo como image_url. Debe ser URL absoluta http/https. Si no hay imagen asociada clara, omite el campo. Ignora logos del restaurante, banners de cabecera, iconos de redes sociales — solo imágenes de PLATOS/PRODUCTOS concretos. No reutilices la misma URL para varios items.
 - NO inventes items. Solo extrae los que veas literal en el contenido.
 - Si la web no parece tener carta, devuelve {"items": []}.
 """
@@ -120,6 +136,7 @@ async def scrape_url_to_items(
         raise ValueError("respuesta sin lista 'items'")
 
     cleaned: list[dict[str, Any]] = []
+    with_image = 0
     for it in items:
         if not isinstance(it, dict):
             continue
@@ -127,14 +144,55 @@ async def scrape_url_to_items(
         price_cents = it.get("price_cents")
         if not name or not isinstance(price_cents, int) or price_cents < 0:
             continue
+        image_url = _sanitizar_image_url(it.get("image_url"), url)
+        if image_url:
+            with_image += 1
         cleaned.append({
             "name": name[:200],
             "category": (str(it.get("category", "Otros")).strip() or "Otros")[:80],
             "price_cents": int(price_cents),
             "description": (str(it.get("description", "")).strip() or None),
+            "image_url": image_url,
         })
     logger.info(
         "menu scrape extracted",
-        extra={"event": "menu_scrape", "url": url[:100], "raw_items": len(items), "valid_items": len(cleaned)},
+        extra={
+            "event": "menu_scrape",
+            "url": url[:100],
+            "raw_items": len(items),
+            "valid_items": len(cleaned),
+            "items_with_image": with_image,
+        },
     )
     return cleaned
+
+
+def _sanitizar_image_url(raw: Any, base_url: str) -> str | None:
+    """Valida y normaliza una URL de imagen extraída por el LLM.
+
+    Acepta sólo http/https absolutos. Si el LLM devolvió una ruta relativa
+    (típica en sitios pobres: "/uploads/x.jpg"), intenta reconstruirla con
+    el base_url. Si no es parseable como URL válida, devuelve None.
+    """
+    if not raw or not isinstance(raw, str):
+        return None
+    raw = raw.strip()
+    if not raw:
+        return None
+    if raw.startswith(("http://", "https://")):
+        return raw[:500]  # cap por si el LLM alucina URLs enormes
+    if raw.startswith("//"):
+        # Protocol-relative. Heredamos el scheme del base_url.
+        scheme = base_url.split("://", 1)[0] if "://" in base_url else "https"
+        return f"{scheme}:{raw}"[:500]
+    if raw.startswith("/"):
+        # Relativa al host. Reconstruimos.
+        try:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(base_url)
+            if parsed.scheme and parsed.netloc:
+                return f"{parsed.scheme}://{parsed.netloc}{raw}"[:500]
+        except Exception:
+            return None
+    return None

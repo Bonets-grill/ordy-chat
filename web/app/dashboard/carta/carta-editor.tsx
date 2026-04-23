@@ -11,6 +11,7 @@ type MenuItem = {
   name: string;
   priceCents: number;
   description: string | null;
+  imageUrl: string | null;
   available: boolean;
   sortOrder: number;
   source: string;
@@ -386,7 +387,29 @@ export function CartaEditor({ initial }: { initial: MenuItem[] }) {
                 </h3>
                 <ul className="divide-y divide-neutral-100 rounded-lg border border-neutral-200 bg-white">
                   {list.map((it) => (
-                    <li key={it.id} className="flex items-baseline gap-3 px-4 py-3">
+                    <li key={it.id} className="flex items-start gap-3 px-4 py-3">
+                      {/* Thumbnail si el scraper capturó imagen del item.
+                          Cap a 56x56 para no romper el layout con fotos grandes. */}
+                      {it.imageUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={it.imageUrl}
+                          alt={it.name}
+                          loading="lazy"
+                          className={`h-14 w-14 shrink-0 rounded-md border border-neutral-200 bg-neutral-50 object-cover ${
+                            it.available ? "" : "opacity-40 grayscale"
+                          }`}
+                          onError={(e) => {
+                            // Si la URL está rota (CDN caído o redirect 404),
+                            // ocultamos el thumbnail y no rompemos la fila.
+                            e.currentTarget.style.display = "none";
+                          }}
+                        />
+                      ) : (
+                        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-md border border-dashed border-neutral-200 bg-neutral-50 text-[10px] text-neutral-400">
+                          sin foto
+                        </div>
+                      )}
                       <div className="min-w-0 flex-1">
                         <div className="flex items-baseline gap-2">
                           <span className={`font-medium ${it.available ? "text-neutral-900" : "text-neutral-400 line-through"}`}>

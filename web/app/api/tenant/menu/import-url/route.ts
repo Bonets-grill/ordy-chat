@@ -36,7 +36,15 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "runtime_not_configured" }, { status: 503 });
   }
 
-  let scraped: { items: Array<{ name: string; category: string; price_cents: number; description: string | null }> };
+  let scraped: {
+    items: Array<{
+      name: string;
+      category: string;
+      price_cents: number;
+      description: string | null;
+      image_url?: string | null;
+    }>;
+  };
   try {
     const r = await fetch(`${runtimeUrl}/internal/menu/scrape-url`, {
       method: "POST",
@@ -80,6 +88,7 @@ export async function POST(req: Request) {
       name: it.name,
       priceCents: it.price_cents,
       description: it.description ?? null,
+      imageUrl: it.image_url ?? null,
       sortOrder: sortByCategory[cat],
       source: "scrape" as const,
     };
