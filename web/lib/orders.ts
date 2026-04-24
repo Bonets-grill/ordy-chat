@@ -9,6 +9,7 @@
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { agentConfigs, orderItems, orders, shifts, tableSessions, tenants } from "@/lib/db/schema";
+import { type OrderPaymentMethod } from "@/lib/payment-methods";
 import { stripeClient } from "@/lib/stripe";
 import { computeTotals as computeTotalsImpl } from "@/lib/tax/compute";
 
@@ -353,8 +354,16 @@ export async function createPaymentLink(orderId: string, baseUrl: string): Promi
 /**
  * Marca la orden como pagada desde el webhook de Stripe.
  * Idempotente por stripeCheckoutSessionId.
+ *
+ * Mig 039: si el caller no pasa `paymentMethod`, asumimos 'card' (el único
+ * flujo que llega aquí es Stripe Checkout online → tarjeta). El cierre de
+ * turno filtra cash vs. resto para el cuadre de caja.
  */
-export async function markOrderPaidBySession(sessionId: string, paymentIntentId?: string) {
+export async function markOrderPaidBySession(
+  sessionId: string,
+  paymentIntentId?: string,
+  paymentMethod: OrderPaymentMethod = "card",
+) {
   const [order] = await db
     .select()
     .from(orders)
@@ -369,6 +378,51 @@ export async function markOrderPaidBySession(sessionId: string, paymentIntentId?
       status: "paid",
       paidAt: new Date(),
       stripePaymentIntentId: paymentIntentId ?? order.stripePaymentIntentId,
+      paymentMethod,
+      updatedAt: new Date(),
+    })
+    .where(eq(orders.id, order.id))
+    .returning();
+  return updated;
+}
+
+/**
+ * Marca una orden arbitraria como pagada (uso del dashboard/KDS manual, no
+ * Stripe). El caller provee el método — default 'cash' para que el flujo
+ * clásico "camarero cobra en caja" no requiera un tap extra.
+ * Valida ownership del tenant. Idempotente: si ya está paid, no toca.
+ */
+export async function markOrderPaidManual(
+  orderId: string,
+  tenantId: string,
+  paymentMethod: OrderPaymentMethod = "cash",
+) {
+  const [order] = await db
+    .select()
+    .from(orders)
+    .where(and(eq(orders.id, orderId), eq(orders.tenantId, tenantId)))
+    .limit(1);
+  if (!order) return null;
+  if (order.status === "paid") {
+    // Si ya está paid pero nos pasan un método diferente → actualizar el
+    // método (admin quiso corregir). NO tocar paidAt para preservar timeline.
+    if (paymentMethod !== order.paymentMethod) {
+      const [updated] = await db
+        .update(orders)
+        .set({ paymentMethod, updatedAt: new Date() })
+        .where(eq(orders.id, order.id))
+        .returning();
+      return updated;
+    }
+    return order;
+  }
+
+  const [updated] = await db
+    .update(orders)
+    .set({
+      status: "paid",
+      paidAt: new Date(),
+      paymentMethod,
       updatedAt: new Date(),
     })
     .where(eq(orders.id, order.id))

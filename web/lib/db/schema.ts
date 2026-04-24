@@ -327,6 +327,11 @@ export const orders = pgTable(
     // Migración 038: vinculación al turno POS en el que se creó el pedido.
     // NULL si no había turno abierto en el momento (pedido huérfano).
     shiftId: uuid("shift_id").references((): AnyPgColumn => shifts.id, { onDelete: "set null" }),
+    // Migración 039: método de pago por pedido. NULL = pedido pre-mig 039
+    // (se trata como 'cash' para retro-compat en el cuadre de caja).
+    // CHECK constraint a nivel DB limita a ('cash'|'card'|'transfer'|'other').
+    // Lista canónica en `lib/payment-methods.ts`.
+    paymentMethod: text("payment_method"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     paidAt: timestamp("paid_at", { withTimezone: true }),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

@@ -38,6 +38,11 @@ export default async function TurnoDetailPage({ params }: { params: Promise<{ id
       total: sql<number>`coalesce(sum(${orders.totalCents}), 0)::int`,
       paidTotal: sql<number>`coalesce(sum(${orders.totalCents}) FILTER (WHERE ${orders.paidAt} IS NOT NULL), 0)::int`,
       avgTicket: sql<number>`coalesce(avg(${orders.totalCents}) FILTER (WHERE ${orders.paidAt} IS NOT NULL), 0)::int`,
+      // Mig 039: desglose por método. cash+NULL entran al cuadre de caja.
+      cashPaid: sql<number>`coalesce(sum(${orders.totalCents}) FILTER (WHERE ${orders.paidAt} IS NOT NULL AND (${orders.paymentMethod} = 'cash' OR ${orders.paymentMethod} IS NULL)), 0)::int`,
+      cardPaid: sql<number>`coalesce(sum(${orders.totalCents}) FILTER (WHERE ${orders.paidAt} IS NOT NULL AND ${orders.paymentMethod} = 'card'), 0)::int`,
+      transferPaid: sql<number>`coalesce(sum(${orders.totalCents}) FILTER (WHERE ${orders.paidAt} IS NOT NULL AND ${orders.paymentMethod} = 'transfer'), 0)::int`,
+      otherPaid: sql<number>`coalesce(sum(${orders.totalCents}) FILTER (WHERE ${orders.paidAt} IS NOT NULL AND ${orders.paymentMethod} = 'other'), 0)::int`,
     })
     .from(orders)
     .where(and(eq(orders.shiftId, shift.id), eq(orders.isTest, false)));
@@ -66,8 +71,20 @@ export default async function TurnoDetailPage({ params }: { params: Promise<{ id
     .groupBy(sql`extract(hour from ${orders.createdAt})`)
     .orderBy(sql`extract(hour from ${orders.createdAt})`);
 
-  const s = summary ?? { count: 0, paidCount: 0, total: 0, paidTotal: 0, avgTicket: 0 };
-  const expected = shift.openingCashCents + s.paidTotal;
+  const s = summary ?? {
+    count: 0,
+    paidCount: 0,
+    total: 0,
+    paidTotal: 0,
+    avgTicket: 0,
+    cashPaid: 0,
+    cardPaid: 0,
+    transferPaid: 0,
+    otherPaid: 0,
+  };
+  // Mig 039: el cuadre usa SOLO cash+NULL. Tarjeta/transferencia no pasan
+  // por caja → sumarlos al esperado marcaba siempre falso faltante.
+  const expected = shift.openingCashCents + s.cashPaid;
   const diff = shift.countedCashCents === null ? null : shift.countedCashCents - expected;
   const maxHourTotal = hourly.reduce((m, h) => Math.max(m, h.total), 1);
 
@@ -105,7 +122,9 @@ export default async function TurnoDetailPage({ params }: { params: Promise<{ id
         <CardContent>
           <div className="grid gap-2 sm:grid-cols-4">
             <KV k="Caja inicial" v={euros(shift.openingCashCents)} />
-            <KV k="Cobros efectivo" v={euros(s.paidTotal)} />
+            {/* Mig 039: ahora solo cash+NULL. Antes sumaba TODOS los cobros
+                 (incluyendo tarjeta) → esperado inflado, falso "faltante". */}
+            <KV k="Cobros efectivo" v={euros(s.cashPaid)} />
             <KV k="Esperado" v={euros(expected)} />
             <KV
               k="Contado"
@@ -126,6 +145,26 @@ export default async function TurnoDetailPage({ params }: { params: Promise<{ id
           {shift.notes && (
             <p className="mt-3 text-sm text-neutral-600"><b>Notas:</b> {shift.notes}</p>
           )}
+        </CardContent>
+      </Card>
+
+      {/* Mig 039: desglose por método — tarjeta/transferencia/otro no entran al
+           cuadre de caja, pero el tenant quiere verlos para chequear con su
+           TPV/Bizum. Total = cash + card + transfer + other = paidTotal. */}
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle>Por método de pago</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-2 sm:grid-cols-4">
+            <KV k="Efectivo" v={euros(s.cashPaid)} />
+            <KV k="Tarjeta" v={euros(s.cardPaid)} />
+            <KV k="Transferencia" v={euros(s.transferPaid)} />
+            <KV k="Otro" v={euros(s.otherPaid)} />
+          </div>
+          <p className="mt-3 text-xs text-neutral-500">
+            Total cobrado del turno: <b>{euros(s.paidTotal)}</b>. Solo efectivo entra al cuadre de caja.
+          </p>
         </CardContent>
       </Card>
 
