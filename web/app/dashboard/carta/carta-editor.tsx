@@ -236,6 +236,54 @@ export function CartaEditor({ initial }: { initial: MenuItem[] }) {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
+  // Mig 037+: setter rápido de imageUrl. Prompt con la URL actual pre-rellena.
+  // Vacío = null (quita la foto). Cancel = no hace nada.
+  async function setImageUrl(it: MenuItem) {
+    const current = it.imageUrl ?? "";
+    const input = window.prompt(
+      `URL de la foto para "${it.name}"\n\nVacío = quitar foto. Pega una URL https://… de la foto.`,
+      current,
+    );
+    if (input === null) return; // cancelado
+    const trimmed = input.trim();
+    const next: string | null = trimmed === "" ? null : trimmed;
+    if (next !== null) {
+      try {
+        const u = new URL(next);
+        if (u.protocol !== "http:" && u.protocol !== "https:") {
+          setToast({ kind: "err", msg: "URL debe empezar por http:// o https://" });
+          return;
+        }
+      } catch {
+        setToast({ kind: "err", msg: "URL no válida" });
+        return;
+      }
+    }
+    setRowBusy(it.id, "busy");
+    try {
+      const res = await fetch(`/api/tenant/menu/${it.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageUrl: next }),
+        cache: "no-store",
+      });
+      if (res.ok) {
+        setItems((prev) => prev.map((i) => (i.id === it.id ? { ...i, imageUrl: next } : i)));
+        setRowBusy(it.id, null);
+        setToast({ kind: "ok", msg: next === null ? "Foto quitada" : "Foto actualizada" });
+        return;
+      }
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      const err = `foto falló: ${body.error ?? `HTTP ${res.status}`}`;
+      setRowBusy(it.id, err);
+      setToast({ kind: "err", msg: err });
+    } catch (e) {
+      const err = `foto falló: ${e instanceof Error ? e.message : "desconocido"}`;
+      setRowBusy(it.id, err);
+      setToast({ kind: "err", msg: err });
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Toast global fixed top — sobrevive 4s, feedback ultra-visible */}
@@ -391,24 +439,35 @@ export function CartaEditor({ initial }: { initial: MenuItem[] }) {
                       {/* Thumbnail si el scraper capturó imagen del item.
                           Cap a 56x56 para no romper el layout con fotos grandes. */}
                       {it.imageUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={it.imageUrl}
-                          alt={it.name}
-                          loading="lazy"
-                          className={`h-14 w-14 shrink-0 rounded-md border border-neutral-200 bg-neutral-50 object-cover ${
-                            it.available ? "" : "opacity-40 grayscale"
-                          }`}
-                          onError={(e) => {
-                            // Si la URL está rota (CDN caído o redirect 404),
-                            // ocultamos el thumbnail y no rompemos la fila.
-                            e.currentTarget.style.display = "none";
-                          }}
-                        />
+                        <button
+                          type="button"
+                          onClick={() => setImageUrl(it)}
+                          disabled={rowStatus[it.id] === "busy"}
+                          className="group relative h-14 w-14 shrink-0 overflow-hidden rounded-md border border-neutral-200 bg-neutral-50 disabled:opacity-50"
+                          title="Cambiar foto"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={it.imageUrl}
+                            alt={it.name}
+                            loading="lazy"
+                            className={`h-full w-full object-cover ${it.available ? "" : "opacity-40 grayscale"}`}
+                            onError={(e) => { e.currentTarget.style.display = "none"; }}
+                          />
+                          <span className="pointer-events-none absolute inset-0 hidden items-center justify-center bg-black/50 text-[10px] font-medium text-white group-hover:flex">
+                            Cambiar
+                          </span>
+                        </button>
                       ) : (
-                        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-md border border-dashed border-neutral-200 bg-neutral-50 text-[10px] text-neutral-400">
-                          sin foto
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setImageUrl(it)}
+                          disabled={rowStatus[it.id] === "busy"}
+                          className="flex h-14 w-14 shrink-0 items-center justify-center rounded-md border border-dashed border-neutral-300 bg-neutral-50 text-[10px] text-neutral-500 hover:border-emerald-400 hover:bg-emerald-50 hover:text-emerald-700 disabled:opacity-50"
+                          title="Añadir foto"
+                        >
+                          + foto
+                        </button>
                       )}
                       <div className="min-w-0 flex-1">
                         <div className="flex items-baseline gap-2">
