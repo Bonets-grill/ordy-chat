@@ -50,7 +50,16 @@ type ChatMsg = {
   cards?: ItemCard[];
 };
 
-type CartLine = { itemId: string; qty: number };
+// Mig 042: data structure preparada para modifiers. La UI del picker queda
+// out-of-scope de este PR (refactor del widget no permitido); el bot WA
+// gestiona el flujo conversacional y el dashboard /carta gestiona el setup.
+type CartLineModifier = {
+  groupId: string;
+  modifierId: string;
+  name: string;
+  priceDeltaCents: number;
+};
+type CartLine = { itemId: string; qty: number; modifiers?: CartLineModifier[] };
 
 const CART_STORAGE_PREFIX = "ordy-cart:";
 const GREETING_SHOWN_PREFIX = "ordy-greeting-shown:";

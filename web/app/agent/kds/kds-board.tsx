@@ -28,12 +28,21 @@ type OrderStatus =
   | "ready"
   | "served";
 
+type KdsItemModifier = {
+  groupId: string;
+  modifierId: string;
+  name: string;
+  priceDeltaCents: number;
+};
+
 type KdsItem = {
   id: string;
   name: string;
   quantity: number;
   station: string;
   notes: string | null;
+  // Mig 042: modifiers seleccionados al pedir. Vacío si no aplica.
+  modifiers?: KdsItemModifier[];
 };
 
 type PaymentMethod = "cash" | "card" | "transfer" | "other";
@@ -521,11 +530,18 @@ function ReviewCard({
       </div>
       <ul className="mt-3 space-y-1 text-sm">
         {order.items.map((it) => (
-          <li key={it.id} className="flex items-baseline justify-between gap-2">
-            <span className="min-w-0 truncate">
-              <span className="font-medium text-neutral-700">{it.quantity}×</span> {it.name}
-              {it.notes ? <span className="ml-1 text-xs italic text-neutral-500">({it.notes})</span> : null}
-            </span>
+          <li key={it.id} className="flex flex-col gap-0.5">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="min-w-0 truncate">
+                <span className="font-medium text-neutral-700">{it.quantity}×</span> {it.name}
+                {it.notes ? <span className="ml-1 text-xs italic text-neutral-500">({it.notes})</span> : null}
+              </span>
+            </div>
+            {it.modifiers && it.modifiers.length > 0 ? (
+              <span className="text-[11px] italic text-neutral-500">
+                / {it.modifiers.map((m) => m.name).join(", ")}
+              </span>
+            ) : null}
           </li>
         ))}
       </ul>
@@ -759,17 +775,24 @@ function OrderCard({
 
       <ul className="mt-3 space-y-1 text-sm">
         {order.items.map((it) => (
-          <li key={it.id} className="flex items-baseline justify-between gap-2">
-            <span className="min-w-0 truncate">
-              <span className="font-medium text-neutral-700">{it.quantity}×</span>{" "}
-              {it.name}
-              {it.notes ? (
-                <span className="ml-1 text-xs italic text-neutral-500">({it.notes})</span>
-              ) : null}
-            </span>
-            <span className="shrink-0 text-[10px] uppercase tracking-wider text-neutral-400">
-              {it.station === "bar" ? "Bar" : "Cocina"}
-            </span>
+          <li key={it.id} className="flex flex-col gap-0.5">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="min-w-0 truncate">
+                <span className="font-medium text-neutral-700">{it.quantity}×</span>{" "}
+                {it.name}
+                {it.notes ? (
+                  <span className="ml-1 text-xs italic text-neutral-500">({it.notes})</span>
+                ) : null}
+              </span>
+              <span className="shrink-0 text-[10px] uppercase tracking-wider text-neutral-400">
+                {it.station === "bar" ? "Bar" : "Cocina"}
+              </span>
+            </div>
+            {it.modifiers && it.modifiers.length > 0 ? (
+              <span className="text-[11px] italic text-neutral-500">
+                / {it.modifiers.map((m) => m.name).join(", ")}
+              </span>
+            ) : null}
           </li>
         ))}
       </ul>
