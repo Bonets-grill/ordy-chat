@@ -1,10 +1,12 @@
 import { count, desc, eq } from "drizzle-orm";
+import { MessageSquareText } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { AppShell } from "@/components/app-shell";
+import { AppShell, PageHeader } from "@/components/app-shell";
 import { PullToRefresh } from "@/components/pull-to-refresh";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
 import { WhatsappConnection } from "@/components/whatsapp-connection";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
@@ -50,28 +52,28 @@ export default async function DashboardPage() {
     <AppShell session={session} subscriptionStatus={bundle.tenant.subscriptionStatus} trialDaysLeft={bundle.trialDaysLeft}>
       <PullToRefresh>
       <div className="space-y-8">
-        <header>
-          <h1 className="text-3xl font-semibold text-neutral-900">Hola, {bundle.tenant.name}</h1>
-          <p className="mt-1 text-neutral-500">Aquí tienes un resumen de la actividad de tu agente.</p>
-        </header>
+        <PageHeader
+          title={`Hola, ${bundle.tenant.name}`}
+          subtitle="Resumen de la actividad de tu agente."
+        />
 
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <Card>
             <CardHeader>
               <CardDescription>Conversaciones</CardDescription>
-              <CardTitle className="text-3xl">{convCount?.n ?? 0}</CardTitle>
+              <CardTitle className="text-[28px] tabular-nums text-ink-900">{convCount?.n ?? 0}</CardTitle>
             </CardHeader>
           </Card>
           <Card>
             <CardHeader>
               <CardDescription>Mensajes totales</CardDescription>
-              <CardTitle className="text-3xl">{msgCount?.n ?? 0}</CardTitle>
+              <CardTitle className="text-[28px] tabular-nums text-ink-900">{msgCount?.n ?? 0}</CardTitle>
             </CardHeader>
           </Card>
           <Card>
             <CardHeader>
               <CardDescription>Estado del agente</CardDescription>
-              <CardTitle className="text-3xl">{bundle.config?.paused ? "Pausado" : "Activo"}</CardTitle>
+              <CardTitle className="text-[28px] text-ink-900">{bundle.config?.paused ? "Pausado" : "Activo"}</CardTitle>
             </CardHeader>
           </Card>
         </div>
@@ -85,19 +87,25 @@ export default async function DashboardPage() {
           </CardHeader>
           <CardContent>
             {recent.length === 0 ? (
-              <p className="text-sm text-neutral-500">
-                Aún no tienes conversaciones. Conecta tu WhatsApp en{" "}
-                <Link href="/agent" className="font-medium text-brand-600 hover:underline">Mi agente</Link>.
-              </p>
+              <EmptyState
+                icon={MessageSquareText}
+                title="Aún no hay conversaciones"
+                description="Conecta tu WhatsApp en Mi agente para empezar a recibir mensajes."
+                action={
+                  <Button asChild variant="brand" size="sm">
+                    <Link href="/agent">Conectar WhatsApp</Link>
+                  </Button>
+                }
+              />
             ) : (
-              <ul className="divide-y divide-neutral-100">
+              <ul className="divide-y divide-black/5">
                 {recent.map((c) => (
                   <li key={c.id} className="flex items-center justify-between py-3">
-                    <div>
-                      <div className="font-medium text-neutral-900">{c.customerName ?? c.phone}</div>
-                      <div className="text-xs text-neutral-500">{c.phone}</div>
+                    <div className="min-w-0">
+                      <div className="truncate font-medium text-ink-900">{c.customerName ?? c.phone}</div>
+                      <div className="text-[12px] text-ink-500 tabular-nums">{c.phone}</div>
                     </div>
-                    <div className="text-xs text-neutral-500">
+                    <div className="ml-4 shrink-0 text-[12px] text-ink-500 tabular-nums">
                       {new Date(c.lastMessageAt).toLocaleString("es-ES")}
                     </div>
                   </li>
@@ -107,7 +115,7 @@ export default async function DashboardPage() {
           </CardContent>
         </Card>
 
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-2">
           <Button asChild variant="brand">
             <Link href="/conversations">Ver todas las conversaciones</Link>
           </Button>

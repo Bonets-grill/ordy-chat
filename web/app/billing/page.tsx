@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { AppShell } from "@/components/app-shell";
+import { AppShell, PageHeader } from "@/components/app-shell";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { auth } from "@/lib/auth";
 import { requireTenant } from "@/lib/tenant";
@@ -21,10 +21,12 @@ export default async function BillingPage() {
 
   return (
     <AppShell session={session} subscriptionStatus={bundle.tenant.subscriptionStatus} trialDaysLeft={bundle.trialDaysLeft}>
-      <h1 className="text-3xl font-semibold text-neutral-900">Facturación</h1>
-      <p className="mt-1 text-neutral-500">Gestiona tu suscripción de €49.90/mes.</p>
+      <PageHeader
+        title="Facturación"
+        subtitle="Gestiona tu suscripción de €49.90/mes."
+      />
 
-      <Card className="mt-6">
+      <Card>
         <CardHeader>
           <CardTitle>{statusMap[bundle.tenant.subscriptionStatus] ?? bundle.tenant.subscriptionStatus}</CardTitle>
           <CardDescription>

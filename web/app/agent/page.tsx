@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { redirect } from "next/navigation";
-import { AppShell } from "@/components/app-shell";
+import { AppShell, PageHeader } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { auth } from "@/lib/auth";
@@ -37,15 +37,15 @@ export default async function AgentPage() {
 
   return (
     <AppShell session={session} subscriptionStatus={bundle.tenant.subscriptionStatus} trialDaysLeft={bundle.trialDaysLeft}>
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-semibold text-neutral-900">Mi agente</h1>
-          <p className="mt-1 text-neutral-500">Edita el prompt, tono y estado del agente.</p>
-        </div>
-        <Badge tone={bundle.config.paused ? "warn" : "success"}>
-          {bundle.config.paused ? "Pausado" : "Activo"}
-        </Badge>
-      </div>
+      <PageHeader
+        title="Mi agente"
+        subtitle="Edita el prompt, tono y estado del agente."
+        actions={
+          <Badge tone={bundle.config.paused ? "warn" : "success"}>
+            {bundle.config.paused ? "Pausado" : "Activo"}
+          </Badge>
+        }
+      />
 
       <Card className="mb-6">
         <CardHeader>
@@ -55,11 +55,11 @@ export default async function AgentPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <code className="block overflow-x-auto rounded-lg bg-neutral-900 p-4 text-sm text-emerald-400">
+          <code className="block overflow-x-auto rounded-lg bg-ink-900 p-4 font-mono text-[12.5px] text-emerald-300">
             {webhookUrl}
           </code>
-          <p className="mt-3 text-xs text-neutral-500">
-            Cualquier request sin el token <code className="rounded bg-neutral-100 px-1">?s=…</code> correcto se rechaza con 403.
+          <p className="mt-3 text-[12px] text-ink-500">
+            Cualquier request sin el token <code className="rounded bg-black/[0.06] px-1 font-mono">?s=…</code> correcto se rechaza con 403.
           </p>
         </CardContent>
       </Card>
