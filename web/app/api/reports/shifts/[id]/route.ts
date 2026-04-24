@@ -27,6 +27,8 @@ export async function GET(_req: Request, ctx: Ctx) {
     .limit(1);
   if (!shift) return NextResponse.json({ error: "not_found" }, { status: 404 });
 
+  // Mig 039: sumamos totales y desglose por método en una sola pasada.
+  // cash+NULL = caja; card/transfer/other = liquidan por fuera.
   const [summary] = await db
     .select({
       count: sql<number>`count(*)::int`,
@@ -34,6 +36,10 @@ export async function GET(_req: Request, ctx: Ctx) {
       total: sql<number>`coalesce(sum(${orders.totalCents}), 0)::int`,
       paidTotal: sql<number>`coalesce(sum(${orders.totalCents}) FILTER (WHERE ${orders.paidAt} IS NOT NULL), 0)::int`,
       avgTicket: sql<number>`coalesce(avg(${orders.totalCents}) FILTER (WHERE ${orders.paidAt} IS NOT NULL), 0)::int`,
+      cashPaid: sql<number>`coalesce(sum(${orders.totalCents}) FILTER (WHERE ${orders.paidAt} IS NOT NULL AND (${orders.paymentMethod} = 'cash' OR ${orders.paymentMethod} IS NULL)), 0)::int`,
+      cardPaid: sql<number>`coalesce(sum(${orders.totalCents}) FILTER (WHERE ${orders.paidAt} IS NOT NULL AND ${orders.paymentMethod} = 'card'), 0)::int`,
+      transferPaid: sql<number>`coalesce(sum(${orders.totalCents}) FILTER (WHERE ${orders.paidAt} IS NOT NULL AND ${orders.paymentMethod} = 'transfer'), 0)::int`,
+      otherPaid: sql<number>`coalesce(sum(${orders.totalCents}) FILTER (WHERE ${orders.paidAt} IS NOT NULL AND ${orders.paymentMethod} = 'other'), 0)::int`,
     })
     .from(orders)
     .where(and(eq(orders.shiftId, shift.id), eq(orders.isTest, false)));
@@ -64,23 +70,44 @@ export async function GET(_req: Request, ctx: Ctx) {
     .groupBy(sql`extract(hour from ${orders.createdAt})`)
     .orderBy(sql`extract(hour from ${orders.createdAt})`);
 
-  const expected =
-    shift.openingCashCents + (summary?.paidTotal ?? 0);
+  // Mig 039: el esperado en caja es opening + cash (no paidTotal). Antes
+  // usábamos paidTotal → falso positivo: un turno con 1000€ tarjeta y 0€
+  // efectivo pedía al admin cuadrar a 1000€ que nunca pasaron por caja.
+  const cashPaid = summary?.cashPaid ?? 0;
+  const expected = shift.openingCashCents + cashPaid;
   const counted = shift.countedCashCents;
   const diff = counted === null || counted === undefined ? null : counted - expected;
 
   // Silenciar menuItems si no se usa (mantenemos import para posibles enrichments futuros).
   void menuItems;
 
+  const byMethod = {
+    cashCents: cashPaid,
+    cardCents: summary?.cardPaid ?? 0,
+    transferCents: summary?.transferPaid ?? 0,
+    otherCents: summary?.otherPaid ?? 0,
+    totalCents: summary?.paidTotal ?? 0,
+  };
+
   return NextResponse.json({
     shift,
-    summary: summary ?? { count: 0, paidCount: 0, total: 0, paidTotal: 0, avgTicket: 0 },
+    summary: {
+      count: summary?.count ?? 0,
+      paidCount: summary?.paidCount ?? 0,
+      total: summary?.total ?? 0,
+      paidTotal: summary?.paidTotal ?? 0,
+      avgTicket: summary?.avgTicket ?? 0,
+      byMethod,
+    },
     cash: {
       openingCashCents: shift.openingCashCents,
-      paidCents: summary?.paidTotal ?? 0,
+      // `paidCents` mantiene el nombre pero ahora es SOLO cash+NULL (no total).
+      paidCents: cashPaid,
       expectedCashCents: expected,
       countedCashCents: counted,
       diffCents: diff,
+      // Mig 039: desglose completo para render en UI.
+      byMethod,
     },
     topItems,
     hourly,

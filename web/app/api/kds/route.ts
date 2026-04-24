@@ -80,6 +80,10 @@ export async function GET(req: Request) {
       currency: o.currency,
       notes: o.notes,
       isTest: o.isTest,
+      // Mig 039: el KDS pinta badge "Pagado" + select preseleccionado con el
+      // método actual si ya se cobró. Si paidAt es null el botón dice "Cobrar".
+      paymentMethod: o.paymentMethod,
+      paidAt: o.paidAt ? o.paidAt.toISOString() : null,
       createdAt: o.createdAt.toISOString(),
       items: itemsInScope
         .filter((it) => it.orderId === o.id)

@@ -36,6 +36,8 @@ type KdsItem = {
   notes: string | null;
 };
 
+type PaymentMethod = "cash" | "card" | "transfer" | "other";
+
 type KdsOrder = {
   id: string;
   tableNumber: string | null;
@@ -49,8 +51,19 @@ type KdsOrder = {
   currency: string;
   notes: string | null;
   isTest?: boolean;
+  // Mig 039: null = pedido no cobrado aún (o pre-mig). Cuando el admin
+  // pulsa "Cobrar" en el KDS con método seleccionado, se rellena.
+  paymentMethod?: PaymentMethod | null;
+  paidAt?: string | null;
   createdAt: string;
   items: KdsItem[];
+};
+
+const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
+  cash: "Efectivo",
+  card: "Tarjeta",
+  transfer: "Transferencia",
+  other: "Otro",
 };
 
 // Columnas tradicionales (post-aceptación). pending_kitchen_review tiene su
@@ -239,6 +252,37 @@ export function KdsBoard({ kioskToken }: { kioskToken?: string } = {}) {
     }
   }
 
+  // Mig 039: marcar pedido como pagado desde el KDS con método elegido.
+  // 1 click + 1 tap (el dropdown ya tenía cash seleccionado). La ruta
+  // PATCH /api/orders/[id] es retrocompatible: si markPaid=true y ya
+  // estaba paid, solo corrige el método (caso "lo marqué cash y era tarjeta").
+  async function markPaid(orderId: string, paymentMethod: PaymentMethod) {
+    if (advancing) return;
+    setAdvancing(orderId);
+    // Optimistic: pintar local el método + paid_at para feedback inmediato.
+    setOrders((prev) =>
+      prev.map((o) =>
+        o.id === orderId
+          ? { ...o, paymentMethod, paidAt: new Date().toISOString() }
+          : o,
+      ),
+    );
+    try {
+      const res = await fetch(`/api/orders/${orderId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders },
+        body: JSON.stringify({ markPaid: true, paymentMethod }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setError(`Cobrar falló: ${body.error ?? res.status}`);
+      }
+      await fetchOrders();
+    } finally {
+      setAdvancing(null);
+    }
+  }
+
   // Mig 030 bug-fix: "Pendientes de aceptar" filtra solo los que la cocina aún
   // no ha decidido. Antes mostraba TODOS los pending_kitchen_review incluyendo
   // los ya aceptados esperando confirmación del cliente — al pulsar Aceptar
@@ -332,6 +376,7 @@ export function KdsBoard({ kioskToken }: { kioskToken?: string } = {}) {
                 status={status}
                 orders={byStatus[status]}
                 onAdvance={advance}
+                onMarkPaid={markPaid}
                 advancingId={advancing}
               />
             ))}
@@ -506,11 +551,13 @@ function Column({
   status,
   orders,
   onAdvance,
+  onMarkPaid,
   advancingId,
 }: {
   status: OrderStatus;
   orders: KdsOrder[];
   onAdvance: (id: string) => void;
+  onMarkPaid: (id: string, method: PaymentMethod) => void;
   advancingId: string | null;
 }) {
   return (
@@ -532,6 +579,7 @@ function Column({
             order={o}
             disabled={advancingId === o.id}
             onAdvance={() => onAdvance(o.id)}
+            onMarkPaid={(method) => onMarkPaid(o.id, method)}
           />
         ))
       )}
@@ -543,10 +591,12 @@ function OrderCard({
   order,
   disabled,
   onAdvance,
+  onMarkPaid,
 }: {
   order: KdsOrder;
   disabled: boolean;
   onAdvance: () => void;
+  onMarkPaid: (method: PaymentMethod) => void;
 }) {
   const next = NEXT_STATUS[order.status];
   const tone = STATUS_TONE[order.status];
@@ -554,24 +604,28 @@ function OrderCard({
     0,
     Math.round((Date.now() - new Date(order.createdAt).getTime()) / 60000),
   );
-  // Formato humano: <60min = "Xm", <24h = "Xh", más = "Xd". 2724 min era
-  // ruido visual que enmascaraba el problema real (pedidos antiguos olvidados).
   const ageLabel =
     minutesAgo < 60
       ? `${minutesAgo} min`
       : minutesAgo < 1440
         ? `${Math.round(minutesAgo / 60)} h`
         : `${Math.round(minutesAgo / 1440)} d`;
-  const isStale = minutesAgo > 180; // >3h = pedido olvidado, se destaca en rojo
-  const hasNotes =
-    order.notes || order.items.some((it) => it.notes);
+  const isStale = minutesAgo > 180;
+  const hasNotes = order.notes || order.items.some((it) => it.notes);
 
+  // Mig 039: dropdown inline. Default 'cash' (flujo común camarero cobra).
+  // El admin cambia y pulsa "Cobrar" = 1 click + 1 tap como pidió Mario.
+  const [method, setMethod] = React.useState<PaymentMethod>(() =>
+    (order.paymentMethod as PaymentMethod | null | undefined) ?? "cash",
+  );
+  const isPaid = Boolean(order.paidAt);
+
+  // El card dejó de ser un <button> outer — ahora es <div> para poder
+  // anidar select + botón "Cobrar" sin HTML inválido. La zona "avanzar
+  // estado" (clickable del card) queda como un button explícito abajo.
   return (
-    <button
-      type="button"
-      onClick={onAdvance}
-      disabled={disabled || !next}
-      className={`block w-full rounded-xl border p-4 text-left transition hover:shadow-md disabled:opacity-50 ${tone.card}`}
+    <div
+      className={`rounded-xl border p-4 text-left transition ${tone.card}`}
     >
       <div className="flex items-baseline justify-between gap-2">
         <span className="font-semibold text-neutral-900">
@@ -613,12 +667,49 @@ function OrderCard({
         </div>
       ) : null}
 
-      {next ? (
-        <div className="mt-3 text-xs font-medium uppercase tracking-wider text-neutral-600">
+      {next && (
+        <button
+          type="button"
+          onClick={onAdvance}
+          disabled={disabled}
+          className="mt-3 block w-full rounded-md bg-white/70 px-2 py-1.5 text-xs font-medium uppercase tracking-wider text-neutral-700 ring-1 ring-neutral-200 hover:bg-white disabled:opacity-50"
+        >
           Pulsa para marcar {STATUS_LABEL[next].toLowerCase()}
-        </div>
-      ) : null}
-    </button>
+        </button>
+      )}
+
+      {/* Mig 039: zona de cobro inline. Se muestra SIEMPRE (cocina puede
+           cobrar un pedido en cualquier estado). Si ya está pagado, se
+           pinta un badge con el método y un select por si hay que corregir. */}
+      <div className="mt-3 flex items-center gap-2 rounded-md bg-white/80 px-2 py-1.5 ring-1 ring-neutral-200">
+        <label className="text-[10px] font-medium uppercase tracking-wider text-neutral-500">
+          {isPaid ? "Pagado" : "Cobrar"}
+        </label>
+        <select
+          value={method}
+          onChange={(e) => setMethod(e.target.value as PaymentMethod)}
+          disabled={disabled}
+          className="flex-1 rounded border border-neutral-200 bg-white px-1.5 py-1 text-xs"
+          aria-label="Método de pago"
+        >
+          {(Object.keys(PAYMENT_METHOD_LABELS) as PaymentMethod[]).map((m) => (
+            <option key={m} value={m}>
+              {PAYMENT_METHOD_LABELS[m]}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={() => onMarkPaid(method)}
+          disabled={disabled}
+          className={`rounded px-2 py-1 text-xs font-medium text-white transition disabled:opacity-50 ${
+            isPaid ? "bg-neutral-600 hover:bg-neutral-700" : "bg-emerald-600 hover:bg-emerald-700"
+          }`}
+        >
+          {isPaid ? "Corregir" : "Cobrar"}
+        </button>
+      </div>
+    </div>
   );
 }
 

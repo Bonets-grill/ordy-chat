@@ -5,7 +5,21 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 
-type Summary = { count: number; paidCount: number; total: number; paidTotal: number };
+type ByMethod = {
+  cashCents: number;
+  cardCents: number;
+  transferCents: number;
+  otherCents: number;
+};
+type Summary = {
+  count: number;
+  paidCount: number;
+  total: number;
+  paidTotal: number;
+  // Mig 039: desglose por método. Opcional por si el endpoint viejo no lo envía
+  // (no debería pasar en prod post-deploy pero no rompemos render si falta).
+  byMethod?: ByMethod;
+};
 type Shift = {
   id: string;
   openedAt: string;
@@ -125,7 +139,10 @@ export function ShiftPanel() {
 
   const s = data.shift;
   const sum = data.summary ?? { count: 0, paidCount: 0, total: 0, paidTotal: 0 };
-  const expected = s.openingCashCents + sum.paidTotal;
+  // Mig 039: esperado caja = opening + SOLO cash+NULL. Fallback a paidTotal
+  // para pre-deploy (endpoint no envía byMethod aún) — nunca peor que antes.
+  const cashPaid = sum.byMethod?.cashCents ?? sum.paidTotal;
+  const expected = s.openingCashCents + cashPaid;
   const openedDate = new Date(s.openedAt);
 
   return (
@@ -152,6 +169,24 @@ export function ShiftPanel() {
         <Metric label="Caja inicial" value={euros(s.openingCashCents)} />
         <Metric label="Esperado caja" value={euros(expected)} highlight />
       </div>
+
+      {/* Mig 039: desglose por método de pago del turno vivo. Solo se pinta
+           si el endpoint devolvió byMethod (omitido pre-deploy o en summary
+           vacío). No sumamos card/transfer al esperado de caja. */}
+      {sum.byMethod && (
+        <div className="rounded-lg border border-neutral-200 bg-white p-4">
+          <h3 className="text-sm font-semibold text-neutral-900">Por método de pago</h3>
+          <p className="mt-1 text-xs text-neutral-500">
+            Solo <b>efectivo</b> entra en el cuadre de caja. Tarjeta y transferencia liquidan por fuera.
+          </p>
+          <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Metric label="Efectivo" value={euros(sum.byMethod.cashCents)} />
+            <Metric label="Tarjeta" value={euros(sum.byMethod.cardCents)} />
+            <Metric label="Transferencia" value={euros(sum.byMethod.transferCents)} />
+            <Metric label="Otro" value={euros(sum.byMethod.otherCents)} />
+          </div>
+        </div>
+      )}
 
       <div className="rounded-lg border border-neutral-200 p-4">
         <h3 className="text-sm font-semibold text-neutral-900">Cerrar turno</h3>
