@@ -693,6 +693,19 @@ export const restaurantTables = pgTable("restaurant_tables", {
   seats: integer("seats").notNull().default(4),
   active: boolean("active").notNull().default(true),
   sortOrder: integer("sort_order").notNull().default(0),
+  // ── Plano visual (mig 043) ─────────────────────────────────────
+  // Coordenadas en el canvas 2000×1500 px del plano. 0,0 = sin posicionar.
+  posX: integer("pos_x").notNull().default(0),
+  posY: integer("pos_y").notNull().default(0),
+  // 'square' | 'round' | 'rect' (CHECK en DB).
+  shape: text("shape").notNull().default("square"),
+  // 0..359 (CHECK), UI usa pasos de 90.
+  rotation: integer("rotation").notNull().default(0),
+  // Etiqueta libre (Terraza, Salón, Barra). Coexiste con `zone` por retrocompat.
+  area: text("area"),
+  // Tamaño visual (px), 40..200 (CHECK).
+  width: integer("width").notNull().default(80),
+  height: integer("height").notNull().default(80),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

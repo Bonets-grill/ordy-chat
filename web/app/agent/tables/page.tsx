@@ -41,13 +41,21 @@ export default async function TablesPage() {
       trialDaysLeft={bundle.trialDaysLeft}
     >
       <div className="mx-auto max-w-5xl">
-        <header className="mb-6">
-          <h1 className="text-3xl font-semibold text-neutral-900">Mesas</h1>
-          <p className="mt-1 text-sm text-neutral-500">
-            Cada mesa tiene su propio código QR. Imprímelos y pégalos en el local:
-            cuando un cliente escanea el QR de su mesa, el bot sabe en qué mesa está
-            y puede tomar pedidos directamente.
-          </p>
+        <header className="mb-6 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="text-3xl font-semibold text-neutral-900">Mesas</h1>
+            <p className="mt-1 text-sm text-neutral-500">
+              Cada mesa tiene su propio código QR. Imprímelos y pégalos en el local:
+              cuando un cliente escanea el QR de su mesa, el bot sabe en qué mesa está
+              y puede tomar pedidos directamente.
+            </p>
+          </div>
+          <a
+            href="/agent/tables/plano"
+            className="rounded-md border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-medium text-violet-700 hover:bg-violet-100"
+          >
+            Abrir plano visual →
+          </a>
         </header>
         <TablesEditor initial={initial} tenantSlug={bundle.tenant.slug} />
       </div>
