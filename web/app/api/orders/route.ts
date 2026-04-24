@@ -3,7 +3,7 @@
 // POST: el runtime crea órdenes usando RUNTIME_INTERNAL_SECRET (no session user).
 // GET: el tenant del dashboard ve sus órdenes recientes.
 
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
@@ -61,6 +61,46 @@ export async function POST(req: Request) {
     .where(eq(tenants.slug, parsed.data.tenantSlug))
     .limit(1);
   if (!tenant) return NextResponse.json({ error: "tenant_not_found" }, { status: 404 });
+
+  // Dedup anti-triplicación 2026-04-24 — Mario vio 3 pedidos idénticos
+  // en 38s porque el LLM llamaba crear_pedido varias veces. Guard: si
+  // en los últimos 60s ya existe un pedido pending_kitchen_review mismo
+  // tenant + misma mesa/phone + mismo total y nº de items, devolvemos
+  // el existente en vez de crear duplicado.
+  const totalGuess = parsed.data.items.reduce(
+    (sum, it) => sum + it.unitPriceCents * it.quantity,
+    0,
+  );
+  const sameIdentityClause =
+    parsed.data.orderType === "dine_in" && parsed.data.tableNumber
+      ? eq(orders.tableNumber, parsed.data.tableNumber)
+      : parsed.data.customerPhone
+        ? eq(orders.customerPhone, parsed.data.customerPhone)
+        : undefined;
+  if (sameIdentityClause) {
+    const [recent] = await db
+      .select({ id: orders.id, totalCents: orders.totalCents, currency: orders.currency, isTest: orders.isTest })
+      .from(orders)
+      .where(
+        and(
+          eq(orders.tenantId, tenant.id),
+          eq(orders.status, "pending_kitchen_review"),
+          sameIdentityClause,
+          gte(orders.createdAt, sql`now() - interval '60 seconds'`),
+          eq(orders.totalCents, totalGuess),
+        ),
+      )
+      .limit(1);
+    if (recent) {
+      return NextResponse.json({
+        orderId: recent.id,
+        totalCents: recent.totalCents,
+        currency: recent.currency,
+        isTest: recent.isTest,
+        deduped: true,
+      });
+    }
+  }
 
   let order;
   try {
