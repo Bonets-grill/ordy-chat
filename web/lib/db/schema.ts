@@ -707,6 +707,10 @@ export const pausedConversations = pgTable(
     pausedAt: timestamp("paused_at", { withTimezone: true }).notNull().defaultNow(),
     pausedByAdminId: uuid("paused_by_admin_id").references(() => tenantAdmins.id, { onDelete: "set null" }),
     reason: text("reason"),
+    // Migración 036: si se setea, el bot reanuda solo al pasar este instant.
+    // NULL = pausa indefinida (caso manual antiguo). Auto-pausa por reply
+    // del admin usa default 2h = now() + 2h.
+    pauseUntil: timestamp("pause_until", { withTimezone: true }),
   },
   (t) => ({
     pk: primaryKey({ columns: [t.tenantId, t.customerPhone] }),
