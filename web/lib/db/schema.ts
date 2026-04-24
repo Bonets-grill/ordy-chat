@@ -368,6 +368,15 @@ export const tableSessions = pgTable("table_sessions", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Modifier seleccionado por el cliente al añadir un item al pedido. Snapshot
+// — sobrevive al borrado posterior del modifier.
+export type OrderItemModifier = {
+  groupId: string;
+  modifierId: string;
+  name: string;
+  priceDeltaCents: number;
+};
+
 export const orderItems = pgTable("order_items", {
   id: uuid("id").primaryKey().defaultRandom(),
   orderId: uuid("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
@@ -383,6 +392,10 @@ export const orderItems = pgTable("order_items", {
   notes: text("notes"),
   // Station = dónde se prepara (kitchen|bar). Filtro del KDS. Mig 016.
   station: text("station").notNull().default("kitchen"),
+  // Mig 042: snapshot de los modifiers seleccionados por el cliente al añadir
+  // este item al pedido. Cada elemento es OrderItemModifier. unit_price_cents
+  // YA incluye la suma de los priceDeltaCents — esto es solo display.
+  modifiersJson: jsonb("modifiers_json").$type<OrderItemModifier[]>().notNull().default([]),
 });
 
 export const receipts = pgTable(
@@ -691,6 +704,44 @@ export const menuItems = pgTable("menu_items", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// ── Modificadores de producto (migración 042) ──────────────────
+// Cada menu_item puede tener N grupos. Un grupo es "Tamaño" (single, required),
+// "Extras" (multi, opcional), "Quitar" (multi, opcional). Cada grupo contiene
+// N modifiers concretos con su delta de precio (>=0). Snapshot persistido en
+// order_items.modifiersJson al crear el pedido.
+export const menuItemModifierGroups = pgTable("menu_item_modifier_groups", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  menuItemId: uuid("menu_item_id").notNull().references((): AnyPgColumn => menuItems.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  // 'single' (radio, máx 1) | 'multi' (checkbox, varios).
+  selectionType: text("selection_type").notNull(),
+  required: boolean("required").notNull().default(false),
+  minSelect: integer("min_select").notNull().default(0),
+  // null = sin límite (multi). Para single la DB fuerza =1.
+  maxSelect: integer("max_select"),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const menuItemModifiers = pgTable("menu_item_modifiers", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  groupId: uuid("group_id").notNull().references(() => menuItemModifierGroups.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  // Solo positivos o cero (CHECK en DB). Descuentos no se modelan aquí.
+  priceDeltaCents: integer("price_delta_cents").notNull().default(0),
+  available: boolean("available").notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type MenuItemModifierGroup = typeof menuItemModifierGroups.$inferSelect;
+export type NewMenuItemModifierGroup = typeof menuItemModifierGroups.$inferInsert;
+export type MenuItemModifier = typeof menuItemModifiers.$inferSelect;
+export type NewMenuItemModifier = typeof menuItemModifiers.$inferInsert;
 
 // ── Restaurant tables (migración 035) ──────────────────────────
 // Plano de mesas del tenant. Cada fila representa una mesa con su QR

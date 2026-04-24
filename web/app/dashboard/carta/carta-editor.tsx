@@ -4,6 +4,7 @@
 // Cliente: importar desde URL + CRUD manual de items por categoría.
 
 import * as React from "react";
+import { ModifiersEditor } from "./modifiers-editor";
 
 type MenuItem = {
   id: string;
@@ -62,6 +63,8 @@ export function CartaEditor({ initial }: { initial: MenuItem[] }) {
   const [draftBusy, setDraftBusy] = React.useState(false);
   const [draftError, setDraftError] = React.useState<string | null>(null);
   const [editingId, setEditingId] = React.useState<string | null>(null);
+  // Mig 042: id del item con el panel de modificadores abierto.
+  const [modifiersOpenId, setModifiersOpenId] = React.useState<string | null>(null);
 
   // Agrupar por categoría manteniendo el orden de aparición.
   const grouped = React.useMemo(() => {
@@ -556,7 +559,8 @@ export function CartaEditor({ initial }: { initial: MenuItem[] }) {
                 </h3>
                 <ul className="divide-y divide-neutral-100 rounded-lg border border-neutral-200 bg-white">
                   {list.map((it) => (
-                    <li key={it.id} className="flex items-start gap-3 px-4 py-3">
+                    <li key={it.id} className="flex flex-col gap-2 px-4 py-3">
+                    <div className="flex items-start gap-3">
                       {/* Thumbnail si el scraper capturó imagen del item.
                           Cap a 56x56 para no romper el layout con fotos grandes. */}
                       {it.imageUrl ? (
@@ -664,6 +668,21 @@ export function CartaEditor({ initial }: { initial: MenuItem[] }) {
                           </button>
                           <button
                             type="button"
+                            onClick={() =>
+                              setModifiersOpenId((cur) => (cur === it.id ? null : it.id))
+                            }
+                            disabled={rowStatus[it.id] === "busy"}
+                            className={`rounded px-2 py-1 text-xs disabled:opacity-50 ${
+                              modifiersOpenId === it.id
+                                ? "bg-violet-100 text-violet-800"
+                                : "text-violet-700 hover:bg-violet-50"
+                            }`}
+                            title="Gestionar modificadores (extras, tamaños, sin-tal)"
+                          >
+                            🧩 Modificadores
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => deleteItem(it.id)}
                             disabled={rowStatus[it.id] === "busy"}
                             className="rounded px-2 py-1 text-xs text-rose-600 hover:bg-rose-50 disabled:opacity-50"
@@ -677,6 +696,15 @@ export function CartaEditor({ initial }: { initial: MenuItem[] }) {
                           </span>
                         )}
                       </div>
+                    </div>
+                    {modifiersOpenId === it.id && (
+                      <ModifiersEditor
+                        itemId={it.id}
+                        itemName={it.name}
+                        onClose={() => setModifiersOpenId(null)}
+                        onToast={(kind, msg) => setToast({ kind, msg })}
+                      />
+                    )}
                     </li>
                   ))}
                 </ul>

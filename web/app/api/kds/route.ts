@@ -93,6 +93,9 @@ export async function GET(req: Request) {
           quantity: it.quantity,
           station: it.station,
           notes: it.notes,
+          // Mig 042: snapshot de modifiers seleccionados. Vacío si el item
+          // no tiene modifiers o si es pre-mig 042.
+          modifiers: it.modifiersJson ?? [],
         })),
     }));
 

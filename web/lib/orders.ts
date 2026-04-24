@@ -34,11 +34,22 @@ export class OutOfStockError extends Error {
 export type OrderItemInput = {
   name: string;
   quantity: number;
-  /** Precio unitario SIN IVA, en céntimos. */
+  /** Precio unitario SIN modifiers, en céntimos. createOrder le suma los deltas. */
   unitPriceCents: number;
   /** Tipo de IVA. Si se omite, usa el default del tenant. */
   vatRate?: number;
   notes?: string;
+  /**
+   * Mig 042: modifiers seleccionados por el cliente. La suma de
+   * priceDeltaCents se añade a unitPriceCents antes de calcular tax y total.
+   * Persistido como snapshot en order_items.modifiersJson.
+   */
+  modifiers?: Array<{
+    groupId: string;
+    modifierId: string;
+    name: string;
+    priceDeltaCents: number;
+  }>;
 };
 
 export type CreateOrderInput = {
@@ -89,8 +100,27 @@ export async function createOrder(input: CreateOrderInput) {
   if (!tenant) throw new Error("tenant_not_found");
 
   const defaultRate = parseFloat(tenant.taxRateStandard ?? "10.00");
+
+  // Mig 042: el unitPrice efectivo incluye los deltas de los modifiers
+  // seleccionados. Lo calculamos una sola vez aquí y reutilizamos para tax,
+  // line_total y persistencia. Filtramos modifiers con priceDeltaCents<0 por
+  // defensa-en-profundidad (la DB ya lo bloquea con CHECK).
+  const itemsAdjusted = input.items.map((i) => {
+    const safeMods = (i.modifiers ?? []).filter((m) => m.priceDeltaCents >= 0);
+    const modsTotal = safeMods.reduce((acc, m) => acc + m.priceDeltaCents, 0);
+    return {
+      ...i,
+      modifiers: safeMods,
+      unitPriceCentsAdjusted: i.unitPriceCents + modsTotal,
+    };
+  });
+
   const totals = computeTotalsImpl(
-    input.items.map((i) => ({ quantity: i.quantity, unitPriceCents: i.unitPriceCents, taxRate: i.vatRate })),
+    itemsAdjusted.map((i) => ({
+      quantity: i.quantity,
+      unitPriceCents: i.unitPriceCentsAdjusted,
+      taxRate: i.vatRate,
+    })),
     { pricesIncludeTax: tenant.pricesIncludeTax ?? true, defaultRate },
   );
 
@@ -305,18 +335,19 @@ export async function createOrder(input: CreateOrderInput) {
         .where(eq(tableSessions.id, sessionId));
     }
 
-    // 4) INSERT order_items
-    if (input.items.length > 0) {
+    // 4) INSERT order_items con precios ajustados por modifiers (mig 042).
+    if (itemsAdjusted.length > 0) {
       await tx.insert(orderItems).values(
-        input.items.map((it) => {
-          const lineTotal = it.quantity * it.unitPriceCents;
+        itemsAdjusted.map((it) => {
+          // unit_price_cents incluye ya el delta de modifiers (mig 042).
+          const lineTotal = it.quantity * it.unitPriceCentsAdjusted;
           const rateStr = String((it.vatRate ?? defaultRate).toFixed(2));
           return {
             orderId: orderRow.id,
             tenantId: input.tenantId,
             name: it.name,
             quantity: it.quantity,
-            unitPriceCents: it.unitPriceCents,
+            unitPriceCents: it.unitPriceCentsAdjusted,
             // Doble escritura durante transición. Cuando droppemos vat_rate (migración 010+),
             // quedará solo taxRate.
             vatRate: rateStr,
@@ -324,6 +355,9 @@ export async function createOrder(input: CreateOrderInput) {
             taxLabel: tenant.taxLabel ?? "IVA",
             lineTotalCents: lineTotal,
             notes: it.notes,
+            // Mig 042: snapshot de modifiers para que el KDS / recibo / dashboard
+            // los muestren sin joinar y sobrevivan al borrado posterior.
+            modifiersJson: it.modifiers,
           };
         }),
       );
