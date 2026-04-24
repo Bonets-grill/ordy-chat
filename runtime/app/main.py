@@ -886,7 +886,12 @@ async def webhook_post(
 # Procesamiento asíncrono de un mensaje individual.
 # ────────────────────────────────────────────────────────────
 
-async def _auto_pausar_bot(tenant_id: UUID, customer_phone: str, minutos: int) -> None:
+async def _auto_pausar_bot(
+    tenant_id: UUID,
+    customer_phone: str,
+    minutos: int,
+    reason: str = "auto_admin_reply",
+) -> None:
     """Auto-pausa el bot cuando el admin respondió manualmente. Se llama
     desde el webhook cuando detectamos msg.es_propio=true. UPSERT para
     extender el pause_until si ya había una pausa activa (admin sigue
@@ -898,14 +903,14 @@ async def _auto_pausar_bot(tenant_id: UUID, customer_phone: str, minutos: int) -
             await c.execute(
                 """
                 INSERT INTO paused_conversations (tenant_id, customer_phone, pause_until, reason)
-                VALUES ($1, $2, now() + ($3 || ' minutes')::interval, 'auto_admin_reply')
+                VALUES ($1, $2, now() + ($3 || ' minutes')::interval, $4)
                 ON CONFLICT (tenant_id, customer_phone)
                 DO UPDATE SET
                     pause_until = now() + ($3 || ' minutes')::interval,
                     paused_at = now(),
-                    reason = COALESCE(paused_conversations.reason, 'auto_admin_reply')
+                    reason = COALESCE(paused_conversations.reason, $4)
                 """,
-                tenant_id, customer_phone, str(minutos),
+                tenant_id, customer_phone, str(minutos), reason,
             )
         logger.info(
             "bot auto-pausado tras reply admin",
@@ -1031,11 +1036,83 @@ async def _procesar_mensaje(tenant: TenantContext, provider: str, msg: MensajeEn
                             "image recibida",
                             extra={**log_extra, "event": "image_in", "size": len(raw_bytes), "mime": mime},
                         )
+            if msg.tipo_no_texto in ("document", "video") and not media_blocks:
+                # Problema 1 nivel 1: adjuntos no-imagen (PDF/DOCX/XLSX/video)
+                # → handoff directo al humano. El bot NO intenta leerlo; manda
+                # ACK breve al cliente, notifica al admin por WA y pausa la
+                # conversación 24h para que no responda a mensajes siguientes
+                # del mismo cliente hasta que el admin retome.
+                from app.agent_tools import crear_handoff
+
+                caption_doc = (msg.caption or "").strip()
+                tipo_label = "documento" if msg.tipo_no_texto == "document" else "vídeo"
+                motivo = (
+                    f"Cliente envió {tipo_label} adjunto. Necesita atención humana."
+                )
+                if caption_doc:
+                    motivo += f" Nota del cliente: {caption_doc[:200]}"
+
+                try:
+                    await crear_handoff(
+                        tenant_id=tenant.id,
+                        customer_phone=msg.telefono,
+                        reason=motivo,
+                        priority="normal",
+                    )
+                except Exception:
+                    logger.exception(
+                        "crear_handoff por documento falló",
+                        extra={**log_extra, "event": "document_handoff_error"},
+                    )
+
+                try:
+                    await _auto_pausar_bot(
+                        tenant.id, msg.telefono, 60 * 24, reason="document_handoff"
+                    )
+                except Exception:
+                    logger.exception(
+                        "pausa 24h por documento falló",
+                        extra={**log_extra, "event": "document_pause_error"},
+                    )
+
+                ack = (
+                    f"Recibí tu {tipo_label} 📎. Te atiende una persona del equipo "
+                    "en breve."
+                )
+                estado = await esperar_con_warmup(tenant.id, msg.telefono)
+                if not estado.get("blocked"):
+                    await adapter.enviar_mensaje(msg.telefono, ack)
+
+                try:
+                    await guardar_intercambio(
+                        tenant.id, msg.telefono,
+                        f"[{tipo_label} adjunto]" + (f" {caption_doc}" if caption_doc else ""),
+                        ack,
+                        mensaje_id=msg.mensaje_id, tokens_in=0, tokens_out=0,
+                    )
+                except Exception:
+                    logger.exception(
+                        "guardar intercambio document_handoff falló",
+                        extra={**log_extra, "event": "document_save_error"},
+                    )
+
+                logger.info(
+                    "document handoff directo",
+                    extra={
+                        **log_extra,
+                        "event": "document_handoff",
+                        "tipo": msg.tipo_no_texto,
+                        "has_caption": bool(caption_doc),
+                    },
+                )
+                return
+
             if not media_blocks and not msg.texto:
                 # No pudimos procesar la media Y no hay texto rescatable (la rama
                 # audio/voice rellena msg.texto con la transcripción Whisper; ese
-                # caso NO debe caer aquí). Llegamos aquí solo para video/document/
-                # sticker o imagen que no se pudo descargar.
+                # caso NO debe caer aquí). Llegamos aquí solo para sticker o
+                # imagen que no se pudo descargar (document/video ya se manejan
+                # arriba con handoff directo).
                 respuesta = (
                     f"Recibí tu {msg.tipo_no_texto}, pero por ahora solo sé leer texto "
                     "e imágenes. ¿Podrías escribirme lo que necesitas?"
