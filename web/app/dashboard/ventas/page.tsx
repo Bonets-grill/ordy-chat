@@ -9,6 +9,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { orders, shifts } from "@/lib/db/schema";
 import { requireTenant } from "@/lib/tenant";
+import { VentasTabs } from "./_tabs";
 
 export const dynamic = "force-dynamic";
 
@@ -107,6 +108,10 @@ export default async function VentasPage() {
           <p className="mt-1 text-neutral-500">Reporte POS por día y por turno.</p>
         </div>
         <Link href="/dashboard/turno" className="text-sm text-brand-600 hover:text-brand-700">→ Gestionar turno</Link>
+      </div>
+
+      <div className="mt-6">
+        <VentasTabs active="/dashboard/ventas" />
       </div>
 
       <div className="mt-6 grid gap-3 sm:grid-cols-3">
