@@ -38,6 +38,14 @@ type KdsItem = {
 
 type PaymentMethod = "cash" | "card" | "transfer" | "other";
 
+// Mig 045: lectores Stripe Terminal disponibles para el tenant.
+type TpvReader = {
+  id: string;
+  readerId: string;
+  label: string | null;
+  status: "online" | "offline";
+};
+
 type KdsOrder = {
   id: string;
   tableNumber: string | null;
@@ -116,6 +124,11 @@ export function KdsBoard({ kioskToken }: { kioskToken?: string } = {}) {
   // elección del admin en localStorage para que no tenga que tocarlo cada
   // sesión.
   const [includeTest, setIncludeTest] = React.useState<boolean>(true);
+  // Mig 045: lectores Stripe Terminal del tenant. Si vacío, el flujo "Cobrar
+  // en TPV" no se ofrece y caemos al cobro manual de mig 039.
+  const [readers, setReaders] = React.useState<TpvReader[]>([]);
+  // Polling de un cobro TPV en curso por orden. Map<orderId, paymentId>.
+  const [tpvInFlight, setTpvInFlight] = React.useState<Record<string, string>>({});
 
   React.useEffect(() => {
     if (typeof window === "undefined") return;
@@ -190,6 +203,88 @@ export function KdsBoard({ kioskToken }: { kioskToken?: string } = {}) {
     const id = setInterval(fetchReservations, 30000);
     return () => clearInterval(id);
   }, [fetchReservations]);
+
+  // Mig 045: cargar lectores TPV una vez al montar. Si el tenant no tiene
+  // Stripe Connect, devuelve { readers: [], connected: false } y la UI cae
+  // a cobro manual sin más. Solo aplica con sesión real (no kiosk).
+  React.useEffect(() => {
+    if (kioskToken) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/stripe/terminal/readers", { cache: "no-store" });
+        if (!res.ok) return;
+        const body = (await res.json()) as { readers: TpvReader[] };
+        if (!cancelled) setReaders(body.readers ?? []);
+      } catch {
+        /* sin readers, KDS sigue funcionando con cobro manual */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [kioskToken]);
+
+  // Mig 045: dispara cobro al lector físico y arranca polling del status.
+  async function chargeOnReader(orderId: string, readerUuid: string) {
+    if (advancing) return;
+    setAdvancing(orderId);
+    setError(null);
+    try {
+      const res = await fetch("/api/stripe/terminal/charge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders },
+        body: JSON.stringify({ orderId, readerId: readerUuid }),
+      });
+      const body = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        paymentId?: string;
+        error?: string;
+        message?: string;
+      };
+      if (!res.ok || !body.paymentId) {
+        setError(`Cobrar en TPV falló: ${body.message ?? body.error ?? res.status}`);
+        return;
+      }
+      // Arrancar polling — cada 2s consulta status hasta succeed/fail.
+      setTpvInFlight((prev) => ({ ...prev, [orderId]: body.paymentId! }));
+    } finally {
+      setAdvancing(null);
+    }
+  }
+
+  // Polling de cobros TPV en curso. Cada 2s consulta status. Cuando llega a
+  // succeeded/failed/canceled limpia el in-flight y refresca orders.
+  React.useEffect(() => {
+    const ids = Object.entries(tpvInFlight);
+    if (ids.length === 0) return;
+    const interval = setInterval(async () => {
+      for (const [orderId, paymentId] of ids) {
+        try {
+          const res = await fetch(`/api/stripe/terminal/payments/${paymentId}/status`, {
+            cache: "no-store",
+            headers: authHeaders,
+          });
+          if (!res.ok) continue;
+          const body = (await res.json()) as { status: string };
+          if (body.status === "succeeded" || body.status === "failed" || body.status === "canceled") {
+            setTpvInFlight((prev) => {
+              const next = { ...prev };
+              delete next[orderId];
+              return next;
+            });
+            if (body.status !== "succeeded") {
+              setError(`Cobro TPV ${body.status} para pedido ${orderId.slice(0, 8)}`);
+            }
+            await fetchOrders();
+          }
+        } catch {
+          /* network blip — siguiente tick reintenta */
+        }
+      }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [tpvInFlight, fetchOrders, authHeaders]);
 
   async function advance(orderId: string) {
     if (advancing) return;
@@ -377,6 +472,9 @@ export function KdsBoard({ kioskToken }: { kioskToken?: string } = {}) {
                 orders={byStatus[status]}
                 onAdvance={advance}
                 onMarkPaid={markPaid}
+                onChargeTpv={chargeOnReader}
+                readers={readers}
+                tpvInFlight={tpvInFlight}
                 advancingId={advancing}
               />
             ))}
@@ -552,12 +650,18 @@ function Column({
   orders,
   onAdvance,
   onMarkPaid,
+  onChargeTpv,
+  readers,
+  tpvInFlight,
   advancingId,
 }: {
   status: OrderStatus;
   orders: KdsOrder[];
   onAdvance: (id: string) => void;
   onMarkPaid: (id: string, method: PaymentMethod) => void;
+  onChargeTpv: (orderId: string, readerUuid: string) => void;
+  readers: TpvReader[];
+  tpvInFlight: Record<string, string>;
   advancingId: string | null;
 }) {
   return (
@@ -580,6 +684,9 @@ function Column({
             disabled={advancingId === o.id}
             onAdvance={() => onAdvance(o.id)}
             onMarkPaid={(method) => onMarkPaid(o.id, method)}
+            onChargeTpv={(readerUuid) => onChargeTpv(o.id, readerUuid)}
+            readers={readers}
+            tpvBusy={Boolean(tpvInFlight[o.id])}
           />
         ))
       )}
@@ -592,11 +699,17 @@ function OrderCard({
   disabled,
   onAdvance,
   onMarkPaid,
+  onChargeTpv,
+  readers,
+  tpvBusy,
 }: {
   order: KdsOrder;
   disabled: boolean;
   onAdvance: () => void;
   onMarkPaid: (method: PaymentMethod) => void;
+  onChargeTpv: (readerUuid: string) => void;
+  readers: TpvReader[];
+  tpvBusy: boolean;
 }) {
   const next = NEXT_STATUS[order.status];
   const tone = STATUS_TONE[order.status];
@@ -688,7 +801,7 @@ function OrderCard({
         <select
           value={method}
           onChange={(e) => setMethod(e.target.value as PaymentMethod)}
-          disabled={disabled}
+          disabled={disabled || tpvBusy}
           className="flex-1 rounded border border-neutral-200 bg-white px-1.5 py-1 text-xs"
           aria-label="Método de pago"
         >
@@ -701,14 +814,62 @@ function OrderCard({
         <button
           type="button"
           onClick={() => onMarkPaid(method)}
-          disabled={disabled}
+          disabled={disabled || tpvBusy}
           className={`rounded px-2 py-1 text-xs font-medium text-white transition disabled:opacity-50 ${
             isPaid ? "bg-neutral-600 hover:bg-neutral-700" : "bg-emerald-600 hover:bg-emerald-700"
           }`}
         >
-          {isPaid ? "Corregir" : "Cobrar"}
+          {isPaid ? "Corregir" : "Cobrar manual"}
         </button>
       </div>
+
+      {/* Mig 045: cobro en TPV físico. Solo si:
+           - hay readers emparejados al tenant
+           - método elegido es 'card'
+           - la orden no está pagada todavía */}
+      {!isPaid && method === "card" && readers.length > 0 && (
+        <div className="mt-2 flex items-center gap-2 rounded-md bg-indigo-50 px-2 py-1.5 ring-1 ring-indigo-200">
+          {tpvBusy ? (
+            <span className="flex-1 text-xs font-medium text-indigo-800">
+              Procesando en TPV… acerca la tarjeta al lector.
+            </span>
+          ) : (
+            <>
+              <label className="text-[10px] font-medium uppercase tracking-wider text-indigo-700">
+                TPV
+              </label>
+              {readers.length === 1 ? (
+                <button
+                  type="button"
+                  onClick={() => onChargeTpv(readers[0]!.id)}
+                  disabled={disabled}
+                  className="flex-1 rounded bg-indigo-600 px-2 py-1 text-xs font-medium text-white transition hover:bg-indigo-700 disabled:opacity-50"
+                  title={`Cobrar en ${readers[0]!.label ?? readers[0]!.readerId}`}
+                >
+                  Cobrar en TPV
+                </button>
+              ) : (
+                <select
+                  onChange={(e) => {
+                    if (e.target.value) onChargeTpv(e.target.value);
+                  }}
+                  disabled={disabled}
+                  defaultValue=""
+                  className="flex-1 rounded border border-indigo-300 bg-white px-1.5 py-1 text-xs"
+                  aria-label="Elegir lector"
+                >
+                  <option value="" disabled>Cobrar en TPV…</option>
+                  {readers.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.label ?? r.readerId} {r.status === "online" ? "🟢" : "⚫"}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
