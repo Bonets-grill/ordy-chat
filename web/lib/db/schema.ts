@@ -324,6 +324,9 @@ export const orders = pgTable(
     // takeaway sin mesa. Para dine_in, crear_pedido resuelve o crea la
     // sesión y linkea el pedido.
     sessionId: uuid("session_id").references((): AnyPgColumn => tableSessions.id, { onDelete: "set null" }),
+    // Migración 038: vinculación al turno POS en el que se creó el pedido.
+    // NULL si no había turno abierto en el momento (pedido huérfano).
+    shiftId: uuid("shift_id").references((): AnyPgColumn => shifts.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     paidAt: timestamp("paid_at", { withTimezone: true }),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -804,3 +807,23 @@ export type LearnedRulePending = typeof learnedRulesPending.$inferSelect;
 export type MenuItem = typeof menuItems.$inferSelect;
 export type NewMenuItem = typeof menuItems.$inferInsert;
 export type NewLearnedRulePending = typeof learnedRulesPending.$inferInsert;
+
+// ── POS Shifts (migración 038) ─────────────────────────────
+// Un turno (shift) agrupa pedidos entre apertura y cierre de caja.
+// Constraint único en DB: sólo un turno abierto por tenant (closed_at IS NULL).
+export const shifts = pgTable("shifts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  openedAt: timestamp("opened_at", { withTimezone: true }).notNull().defaultNow(),
+  openedBy: text("opened_by"),
+  closedAt: timestamp("closed_at", { withTimezone: true }),
+  closedBy: text("closed_by"),
+  openingCashCents: integer("opening_cash_cents").notNull().default(0),
+  countedCashCents: integer("counted_cash_cents"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type Shift = typeof shifts.$inferSelect;
+export type NewShift = typeof shifts.$inferInsert;
