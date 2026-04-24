@@ -160,6 +160,10 @@ export const agentConfigs = pgTable("agent_configs", {
   socialInstagramUrl: text("social_instagram_url"),
   socialFacebookUrl: text("social_facebook_url"),
   socialTiktokUrl: text("social_tiktok_url"),
+  // Migración 040: teléfonos WA que reciben los reportes POS automáticos
+  // (turno auto-abierto, cierre manual, resumen diario). Array vacío →
+  // fallback a handoffWhatsappPhone.
+  posReportPhones: text("pos_report_phones").array().notNull().default(_sqlTag`ARRAY[]::text[]`),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -826,6 +830,12 @@ export const shifts = pgTable("shifts", {
   openingCashCents: integer("opening_cash_cents").notNull().default(0),
   countedCashCents: integer("counted_cash_cents"),
   notes: text("notes"),
+  // Migración 040: true cuando createOrder abrió el turno automáticamente
+  // al entrar el primer pedido del día sin que el tenant lo hubiera abierto.
+  autoOpened: boolean("auto_opened").notNull().default(false),
+  // Migración 040: true cuando el cron diario 23:55 Madrid lo cerró porque
+  // quedó abierto al final del día. counted_cash queda NULL.
+  autoClosed: boolean("auto_closed").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

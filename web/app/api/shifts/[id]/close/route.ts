@@ -4,12 +4,14 @@
 // Mig 039: payment_method IS NULL → retro-compat (pedidos pre-mig). Card/
 // transfer/other NO entran al cuadre — esos no pasan por caja. El total
 // general del turno sigue siendo la suma de TODO lo pagado.
+// Mig 040: tras cerrar, dispara WA al dueño/encargado con el cuadre (fire-and-forget).
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { orders, shifts } from "@/lib/db/schema";
+import { orderItems, orders, shifts } from "@/lib/db/schema";
+import { queuePosReport } from "@/lib/pos-reports";
 import { requireTenant } from "@/lib/tenant";
 
 export const runtime = "nodejs";
@@ -58,10 +60,12 @@ export async function POST(req: Request, ctx: Ctx) {
       transferPaid: sql<number>`coalesce(sum(${orders.totalCents}) FILTER (WHERE ${orders.paidAt} IS NOT NULL AND ${orders.paymentMethod} = 'transfer'), 0)::int`,
       otherPaid: sql<number>`coalesce(sum(${orders.totalCents}) FILTER (WHERE ${orders.paidAt} IS NOT NULL AND ${orders.paymentMethod} = 'other'), 0)::int`,
       totalPaid: sql<number>`coalesce(sum(${orders.totalCents}) FILTER (WHERE ${orders.paidAt} IS NOT NULL), 0)::int`,
+      paidCount: sql<number>`count(*) FILTER (WHERE ${orders.paidAt} IS NOT NULL)::int`,
     })
     .from(orders)
     .where(and(eq(orders.shiftId, shift.id), eq(orders.isTest, false)));
   const paidCents = paidSum?.cashPaid ?? 0;
+  const paidCount = paidSum?.paidCount ?? 0;
   const expectedCashCents = shift.openingCashCents + paidCents;
   const diffCents = parsed.data.countedCashCents - expectedCashCents;
 
@@ -80,6 +84,39 @@ export async function POST(req: Request, ctx: Ctx) {
     })
     .where(eq(shifts.id, shift.id))
     .returning();
+
+  // Mig 040: dispara WA con el cuadre. Fire-and-forget, respuesta no espera.
+  try {
+    const top3 = await db
+      .select({
+        name: orderItems.name,
+        quantity: sql<number>`sum(${orderItems.quantity})::int`,
+      })
+      .from(orderItems)
+      .innerJoin(orders, eq(orders.id, orderItems.orderId))
+      .where(and(eq(orders.shiftId, shift.id), eq(orders.isTest, false)))
+      .groupBy(orderItems.name)
+      .orderBy(sql`sum(${orderItems.quantity}) DESC`)
+      .limit(3);
+
+    queuePosReport(bundle.tenant.id, "shift_closed", {
+      openedAt: shift.openedAt,
+      closedAt: updated?.closedAt ?? new Date(),
+      orderCount: paidCount,
+      totalCents: paidSum?.totalPaid ?? paidCents,
+      openingCashCents: shift.openingCashCents,
+      cashCents: paidSum?.cashPaid ?? 0,
+      cardCents: paidSum?.cardPaid ?? 0,
+      otherCents: (paidSum?.transferPaid ?? 0) + (paidSum?.otherPaid ?? 0),
+      expectedCashCents,
+      countedCashCents: parsed.data.countedCashCents,
+      diffCents,
+      topItems: top3,
+    });
+  } catch (err) {
+    // No bloqueamos la respuesta si algo revienta al agregar datos WA.
+    console.error("[shifts/close] WA report build failed:", err);
+  }
 
   return NextResponse.json({
     ok: true,
