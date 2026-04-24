@@ -871,11 +871,13 @@ async def webhook_post(
 
     for msg in mensajes:
         if msg.es_propio:
-            # Mensaje saliente del admin (él respondió manualmente al
-            # cliente). Auto-pausar el bot 2h para que no responda
-            # encima de lo que escribió el admin. Fix Mario 2026-04-24:
-            # "cuando tomo control el agente sigue escribiendo".
-            background_tasks.add_task(_auto_pausar_bot, tenant.id, msg.telefono, 120)
+            # Mensaje saliente del admin (él respondió manualmente al cliente).
+            # Auto-pausar el bot 5 min en modo "sliding": si el cliente vuelve
+            # a escribir mientras la pausa está activa, el reloj se reinicia
+            # otros 5 min en el handler de mensaje entrante. El bot solo
+            # vuelve a responder tras 5 min de silencio total. Fix Mario
+            # 2026-04-25.
+            background_tasks.add_task(_auto_pausar_bot, tenant.id, msg.telefono, 5)
             continue
         background_tasks.add_task(_procesar_mensaje, tenant, provider, msg)
 
@@ -1170,12 +1172,35 @@ async def _procesar_mensaje(tenant: TenantContext, provider: str, msg: MensajeEn
         # LLM ni anti-ban se ejecutan.
         async with pool.acquire() as _c:
             # Respeta pause_until: si pausa indefinida (NULL) o futura, bot calla.
+            # Devolvemos `reason` para decidir si toca extender el reloj sliding.
             pausada = await _c.fetchrow(
-                "SELECT 1 FROM paused_conversations WHERE tenant_id = $1 "
+                "SELECT reason FROM paused_conversations WHERE tenant_id = $1 "
                 "AND customer_phone = $2 AND (pause_until IS NULL OR pause_until > now())",
                 tenant.id, msg.telefono,
             )
         if pausada:
+            # Mig sliding-pause (Mario 2026-04-25): mientras la pausa esté
+            # activa por una razón "interactiva" (admin tomó control desde
+            # WA o desde el panel), CADA mensaje entrante reinicia el reloj
+            # otros 5 min — el bot solo vuelve a responder tras 5 min de
+            # silencio total. Otras razones (document_handoff 24h,
+            # non_customer 24h) no se renuevan: tienen su lógica propia.
+            sliding_reasons = ("auto_admin_reply", "manual_dashboard")
+            if pausada["reason"] in sliding_reasons:
+                try:
+                    async with pool.acquire() as _c2:
+                        await _c2.execute(
+                            "UPDATE paused_conversations "
+                            "SET pause_until = greatest(pause_until, now() + interval '5 minutes'), "
+                            "    paused_at = now() "
+                            "WHERE tenant_id = $1 AND customer_phone = $2",
+                            tenant.id, msg.telefono,
+                        )
+                except Exception:
+                    logger.exception(
+                        "no se pudo extender pausa sliding",
+                        extra={**log_extra, "event": "paused_sliding_extend_error"},
+                    )
             try:
                 await guardar_intercambio(
                     tenant.id, msg.telefono, msg.texto, "",
@@ -1188,7 +1213,7 @@ async def _procesar_mensaje(tenant: TenantContext, provider: str, msg: MensajeEn
                 )
             logger.info(
                 "conversación pausada — bot silenciado",
-                extra={**log_extra, "event": "conv_paused_skip"},
+                extra={**log_extra, "event": "conv_paused_skip", "reason": pausada["reason"]},
             )
             return
 

@@ -59,11 +59,14 @@ export async function POST(
     return NextResponse.json({ error: "invalid action" }, { status: 400 });
   }
 
-  // Minutos válidos: 1..10080 (7 días). Default 1440 (24h).
-  const minutosRaw = Number(body.minutes ?? 1440);
+  // Mig sliding-pause (Mario 2026-04-25): default 5 min sliding — el runtime
+  // renueva la pausa cada vez que el cliente o el admin escriben mientras la
+  // pausa esté activa con reason='manual_dashboard'. Cap 7 días por si el
+  // admin quiere forzar una pausa larga (proveedor, queja prolongada).
+  const minutosRaw = Number(body.minutes ?? 5);
   const minutos = Number.isFinite(minutosRaw) && minutosRaw > 0
     ? Math.min(Math.floor(minutosRaw), 60 * 24 * 7)
-    : 1440;
+    : 5;
 
   // UPSERT: si ya hay pausa, extiende el pause_until.
   await db

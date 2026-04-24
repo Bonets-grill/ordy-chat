@@ -37,7 +37,7 @@ export function PauseBotButton({ conversationId, initialPaused, initialPauseUnti
       const r = await fetch(`/api/conversations/${conversationId}/pause`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "pause", minutes: 1440 }),
+        body: JSON.stringify({ action: "pause", minutes: 5 }),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j.ok) {
@@ -77,23 +77,31 @@ export function PauseBotButton({ conversationId, initialPaused, initialPauseUnti
   if (paused) {
     const restante = pauseUntil ? formatRestante(new Date(pauseUntil)) : "pausa indefinida";
     return (
-      <div className="flex items-center gap-2">
-        <span className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800">
-          🔕 Bot pausado · {restante}
+      <div className="flex flex-col items-end gap-1">
+        <div className="flex items-center gap-2">
+          <span className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800">
+            🔕 Bot pausado · vuelve en {restante}
+          </span>
+          <Button size="sm" variant="secondary" onClick={reanudar} disabled={loading}>
+            {loading ? "Reanudando…" : "▶️ Reactivar bot"}
+          </Button>
+        </div>
+        <span className="text-[11px] text-neutral-500">
+          Cada mensaje resetea el reloj. Vuelve solo tras 5 min de silencio.
         </span>
-        <Button size="sm" variant="secondary" onClick={reanudar} disabled={loading}>
-          {loading ? "Reanudando…" : "▶️ Reanudar bot"}
-        </Button>
         {error && <span className="text-xs text-red-600">{error}</span>}
       </div>
     );
   }
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex flex-col items-end gap-1">
       <Button size="sm" variant="secondary" onClick={pausar} disabled={loading}>
-        {loading ? "Pausando…" : "🔕 Pausar bot 24h"}
+        {loading ? "Pausando…" : "🔕 Pausar bot"}
       </Button>
+      <span className="text-[11px] text-neutral-500">
+        Vuelve solo tras 5 min sin mensajes
+      </span>
       {error && <span className="text-xs text-red-600">{error}</span>}
     </div>
   );
