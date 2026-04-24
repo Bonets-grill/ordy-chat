@@ -8,11 +8,28 @@
 
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { agentConfigs, orderItems, orders, shifts, tableSessions, tenants } from "@/lib/db/schema";
+import { agentConfigs, menuItems, orderItems, orders, shifts, tableSessions, tenants } from "@/lib/db/schema";
 import { type OrderPaymentMethod } from "@/lib/payment-methods";
 import { queuePosReport } from "@/lib/pos-reports";
 import { stripeClient } from "@/lib/stripe";
 import { computeTotals as computeTotalsImpl } from "@/lib/tax/compute";
+
+/**
+ * Mig 044: error que lanza createOrder cuando algún item del pedido no tiene
+ * stock suficiente. El runtime traduce esto a un mensaje al cliente del estilo
+ * "Ya no nos quedan X". El caller puede leer .items para saber qué faltó.
+ */
+export class OutOfStockError extends Error {
+  readonly code = "out_of_stock" as const;
+  readonly items: Array<{ name: string; requested: number; available: number }>;
+  constructor(items: Array<{ name: string; requested: number; available: number }>) {
+    super(
+      `out_of_stock: ${items.map((i) => `${i.name} (pedidos ${i.requested}, quedan ${i.available})`).join(", ")}`,
+    );
+    this.name = "OutOfStockError";
+    this.items = items;
+  }
+}
 
 export type OrderItemInput = {
   name: string;
@@ -132,67 +149,188 @@ export async function createOrder(input: CreateOrderInput) {
     }
   }
 
-  const [order] = await db
-    .insert(orders)
-    .values({
-      tenantId: input.tenantId,
-      orderType,
-      // Mig 027: pedidos nuevos arrancan en pending_kitchen_review hasta que la cocina
-      // los acepta con ETA. Antes el default era 'pending' y se saltaba ese gate.
-      status: "pending_kitchen_review",
-      kitchenDecision: "pending",
-      customerPhone: input.customerPhone,
-      customerName: input.customerName,
-      tableNumber: input.tableNumber,
-      notes: input.notes,
-      subtotalCents: totals.subtotalCents,
-      // Durante la ventana de transición escribimos ambos iguales. vat_cents queda DEPRECATED.
-      vatCents: totals.taxCents,
-      taxCents: totals.taxCents,
-      totalCents: totals.totalCents,
-      currency: "EUR",
-      // Mig 029: marca playground. Solo el runtime con x-internal-secret puede setear true.
-      isTest: input.isTest ?? false,
-      // Mig 032: link a sesión de mesa (NULL para takeaway).
-      sessionId,
-      // Mig 038: link al turno POS abierto (NULL si no hay turno o es test).
-      shiftId,
-    })
-    .returning();
+  // Mig 044: agregamos cantidad por nombre para el caso de líneas duplicadas
+  // del mismo plato (poco común pero posible). El decremento usa el total.
+  const itemQtyByName = new Map<string, number>();
+  for (const it of input.items) {
+    const key = it.name;
+    itemQtyByName.set(key, (itemQtyByName.get(key) ?? 0) + it.quantity);
+  }
+  const itemNames = [...itemQtyByName.keys()];
 
-  // Mig 032: recalcular total de la sesión con la suma denormalizada.
-  if (sessionId) {
-    await db
-      .update(tableSessions)
-      .set({
-        totalCents: sql`${tableSessions.totalCents} + ${totals.totalCents}`,
-        updatedAt: new Date(),
+  // Buffer de alertas de stock bajo a disparar tras el commit. Lo llenamos
+  // dentro de la transacción y lo procesamos fuera (fire-and-forget).
+  type LowStockAlert = { name: string; stockQty: number; threshold: number };
+  const lowStockAlerts: LowStockAlert[] = [];
+
+  // Transacción: stock check + decremento + INSERT order + INSERT order_items
+  // van juntos. Si cualquier paso falla, ROLLBACK y NO se crea el pedido.
+  // Mig 044.
+  const { order } = await db.transaction(async (tx) => {
+    // 1) Stock check + decremento atómico por item gestionado.
+    //    UPDATE ... WHERE stock_qty >= qty RETURNING — si vuelve 0 filas para
+    //    un item con stock_qty NOT NULL → out_of_stock (carrera o stock bajo).
+    //    Para items con stock_qty IS NULL no tocamos nada (ilimitado).
+    if (itemNames.length > 0) {
+      const managed = await tx
+        .select({
+          id: menuItems.id,
+          name: menuItems.name,
+          stockQty: menuItems.stockQty,
+          lowStockThreshold: menuItems.lowStockThreshold,
+          lastLowStockAlertAt: menuItems.lastLowStockAlertAt,
+        })
+        .from(menuItems)
+        .where(
+          and(
+            eq(menuItems.tenantId, input.tenantId),
+            inArray(menuItems.name, itemNames),
+          ),
+        );
+
+      // Pre-check determinístico: cualquier managed con stock_qty < requested
+      // → rechaza ya con el conjunto completo de items afectados.
+      const insufficient: Array<{ name: string; requested: number; available: number }> = [];
+      for (const m of managed) {
+        if (m.stockQty == null) continue;
+        const requested = itemQtyByName.get(m.name) ?? 0;
+        if (requested > m.stockQty) {
+          insufficient.push({ name: m.name, requested, available: m.stockQty });
+        }
+      }
+      if (insufficient.length > 0) {
+        throw new OutOfStockError(insufficient);
+      }
+
+      // Decremento + auto-disable cuando llega a 0. Una UPDATE por item para
+      // poder leer el resultado y decidir alerta. Cooldown de 1h en la alerta
+      // se evalúa con lastLowStockAlertAt.
+      for (const m of managed) {
+        if (m.stockQty == null) continue;
+        const requested = itemQtyByName.get(m.name) ?? 0;
+        if (requested === 0) continue;
+
+        // Atomic check-and-decrement: la cláusula WHERE stock_qty >= requested
+        // protege frente a races (otro pedido entró en paralelo). Si vuelve 0
+        // filas ya no hay stock → out_of_stock.
+        const updated = await tx
+          .update(menuItems)
+          .set({
+            stockQty: sql`${menuItems.stockQty} - ${requested}`,
+            // Cuando llegamos a 0 marcamos available=false. > 0 no toca el flag
+            // (el dueño puede haber forzado available=false manual).
+            available: sql`CASE WHEN ${menuItems.stockQty} - ${requested} <= 0 THEN false ELSE ${menuItems.available} END`,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(menuItems.id, m.id),
+              eq(menuItems.tenantId, input.tenantId),
+              sql`${menuItems.stockQty} >= ${requested}`,
+            ),
+          )
+          .returning({
+            stockQty: menuItems.stockQty,
+            lowStockThreshold: menuItems.lowStockThreshold,
+            lastLowStockAlertAt: menuItems.lastLowStockAlertAt,
+          });
+
+        if (updated.length === 0) {
+          // Race perdida: otro pedido se llevó las últimas unidades entre el
+          // pre-check y el UPDATE. Tratamos como out_of_stock.
+          throw new OutOfStockError([
+            { name: m.name, requested, available: m.stockQty },
+          ]);
+        }
+
+        const newStock = updated[0].stockQty ?? 0;
+        const threshold = updated[0].lowStockThreshold;
+        const lastAlert = updated[0].lastLowStockAlertAt;
+
+        // Alerta WA si el threshold está configurado y stock cae <= threshold,
+        // con cooldown de 1h sobre el last alert. Marcamos last_low_stock_alert_at
+        // dentro de la misma tx para evitar carreras del propio cron de alertas.
+        if (threshold != null && newStock <= threshold) {
+          const cooldownMs = 60 * 60 * 1000; // 1h
+          const now = Date.now();
+          const lastMs = lastAlert ? new Date(lastAlert).getTime() : 0;
+          if (now - lastMs >= cooldownMs) {
+            await tx
+              .update(menuItems)
+              .set({ lastLowStockAlertAt: new Date(now) })
+              .where(eq(menuItems.id, m.id));
+            lowStockAlerts.push({ name: m.name, stockQty: newStock, threshold });
+          }
+        }
+      }
+    }
+
+    // 2) INSERT order
+    const [orderRow] = await tx
+      .insert(orders)
+      .values({
+        tenantId: input.tenantId,
+        orderType,
+        // Mig 027: pedidos nuevos arrancan en pending_kitchen_review hasta que la cocina
+        // los acepta con ETA. Antes el default era 'pending' y se saltaba ese gate.
+        status: "pending_kitchen_review",
+        kitchenDecision: "pending",
+        customerPhone: input.customerPhone,
+        customerName: input.customerName,
+        tableNumber: input.tableNumber,
+        notes: input.notes,
+        subtotalCents: totals.subtotalCents,
+        // Durante la ventana de transición escribimos ambos iguales. vat_cents queda DEPRECATED.
+        vatCents: totals.taxCents,
+        taxCents: totals.taxCents,
+        totalCents: totals.totalCents,
+        currency: "EUR",
+        // Mig 029: marca playground. Solo el runtime con x-internal-secret puede setear true.
+        isTest: input.isTest ?? false,
+        // Mig 032: link a sesión de mesa (NULL para takeaway).
+        sessionId,
+        // Mig 038: link al turno POS abierto (NULL si no hay turno o es test).
+        shiftId,
       })
-      .where(eq(tableSessions.id, sessionId));
-  }
+      .returning();
 
-  if (input.items.length > 0) {
-    await db.insert(orderItems).values(
-      input.items.map((it) => {
-        const lineTotal = it.quantity * it.unitPriceCents;
-        const rateStr = String((it.vatRate ?? defaultRate).toFixed(2));
-        return {
-          orderId: order.id,
-          tenantId: input.tenantId,
-          name: it.name,
-          quantity: it.quantity,
-          unitPriceCents: it.unitPriceCents,
-          // Doble escritura durante transición. Cuando droppemos vat_rate (migración 010+),
-          // quedará solo taxRate.
-          vatRate: rateStr,
-          taxRate: rateStr,
-          taxLabel: tenant.taxLabel ?? "IVA",
-          lineTotalCents: lineTotal,
-          notes: it.notes,
-        };
-      }),
-    );
-  }
+    // 3) Recalcular total de la sesión con la suma denormalizada (mig 032).
+    if (sessionId) {
+      await tx
+        .update(tableSessions)
+        .set({
+          totalCents: sql`${tableSessions.totalCents} + ${totals.totalCents}`,
+          updatedAt: new Date(),
+        })
+        .where(eq(tableSessions.id, sessionId));
+    }
+
+    // 4) INSERT order_items
+    if (input.items.length > 0) {
+      await tx.insert(orderItems).values(
+        input.items.map((it) => {
+          const lineTotal = it.quantity * it.unitPriceCents;
+          const rateStr = String((it.vatRate ?? defaultRate).toFixed(2));
+          return {
+            orderId: orderRow.id,
+            tenantId: input.tenantId,
+            name: it.name,
+            quantity: it.quantity,
+            unitPriceCents: it.unitPriceCents,
+            // Doble escritura durante transición. Cuando droppemos vat_rate (migración 010+),
+            // quedará solo taxRate.
+            vatRate: rateStr,
+            taxRate: rateStr,
+            taxLabel: tenant.taxLabel ?? "IVA",
+            lineTotalCents: lineTotal,
+            notes: it.notes,
+          };
+        }),
+      );
+    }
+
+    return { order: orderRow };
+  });
 
   // Mig 040: si acabamos de auto-abrir el turno, avisamos al dueño por WA.
   // Fire-and-forget — si el WA falla o no hay destinatario, el pedido
@@ -203,6 +341,18 @@ export async function createOrder(input: CreateOrderInput) {
       openedAt: new Date(),
       panelUrl: `${panelBase.replace(/\/$/, "")}/dashboard/turno`,
     });
+  }
+
+  // Mig 044: alertas de stock bajo. No bloqueante. Una alerta WA por item.
+  // Pedidos test (playground) NO disparan alertas — ensucian al admin.
+  if (!(input.isTest ?? false)) {
+    for (const a of lowStockAlerts) {
+      queuePosReport(input.tenantId, "low_stock", {
+        name: a.name,
+        stockQty: a.stockQty,
+        threshold: a.threshold,
+      });
+    }
   }
 
   return order;

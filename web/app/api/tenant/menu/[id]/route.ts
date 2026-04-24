@@ -18,6 +18,11 @@ const patchSchema = z.object({
   imageUrl: z.string().url().max(500).nullable().optional(),
   available: z.boolean().optional(),
   sortOrder: z.number().int().min(0).max(10_000).optional(),
+  // Mig 044 — control de stock numérico opcional.
+  // null = quitar gestión (vuelve a comportamiento "ilimitado" + available manual).
+  // 0..100_000 = unidades restantes / threshold de aviso.
+  stockQty: z.number().int().min(0).max(100_000).nullable().optional(),
+  lowStockThreshold: z.number().int().min(0).max(100_000).nullable().optional(),
 });
 
 type Ctx = { params: Promise<{ id: string }> };

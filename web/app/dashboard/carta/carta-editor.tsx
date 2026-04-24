@@ -15,6 +15,9 @@ type MenuItem = {
   available: boolean;
   sortOrder: number;
   source: string;
+  // Mig 044 — control de stock numérico opcional.
+  stockQty: number | null;
+  lowStockThreshold: number | null;
 };
 
 type Draft = {
@@ -24,6 +27,9 @@ type Draft = {
   priceCents: number;
   description: string;
   available: boolean;
+  // Mig 044 — strings para que "" represente "sin gestión" en el form.
+  stockQty: string;
+  lowStockThreshold: string;
 };
 
 const EMPTY_DRAFT: Draft = {
@@ -32,6 +38,8 @@ const EMPTY_DRAFT: Draft = {
   priceCents: 0,
   description: "",
   available: true,
+  stockQty: "",
+  lowStockThreshold: "",
 };
 
 function formatPrice(cents: number): string {
@@ -102,14 +110,38 @@ export function CartaEditor({ initial }: { initial: MenuItem[] }) {
     setDraftBusy(true);
     setDraftError(null);
     try {
-      const payload = {
+      // Mig 044 — parseo opcional de stock_qty/threshold. "" = NULL (sin gestión).
+      const parseNullableInt = (raw: string): number | null | "invalid" => {
+        const t = raw.trim();
+        if (t === "") return null;
+        const n = Number(t);
+        if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) return "invalid";
+        return n;
+      };
+      const stockParsed = parseNullableInt(draft.stockQty);
+      const thresholdParsed = parseNullableInt(draft.lowStockThreshold);
+      if (stockParsed === "invalid") {
+        setDraftError("Stock debe ser un número entero ≥ 0 o vacío");
+        return;
+      }
+      if (thresholdParsed === "invalid") {
+        setDraftError("Threshold debe ser un número entero ≥ 0 o vacío");
+        return;
+      }
+      const payload: Record<string, unknown> = {
         category: draft.category.trim() || "Otros",
         name: draft.name.trim(),
         priceCents: draft.priceCents,
         description: draft.description.trim() || null,
         available: draft.available,
       };
-      if (!payload.name) {
+      // Solo enviamos los campos de stock cuando estamos editando — POST manual
+      // arranca con stock NULL/NULL por defecto y el dueño edita después.
+      if (editingId) {
+        payload.stockQty = stockParsed;
+        payload.lowStockThreshold = thresholdParsed;
+      }
+      if (!(payload.name as string)) {
         setDraftError("Nombre requerido");
         return;
       }
@@ -232,8 +264,56 @@ export function CartaEditor({ initial }: { initial: MenuItem[] }) {
       priceCents: it.priceCents,
       description: it.description ?? "",
       available: it.available,
+      // Mig 044 — null/undefined → "" para que el form muestre vacío.
+      stockQty: it.stockQty == null ? "" : String(it.stockQty),
+      lowStockThreshold: it.lowStockThreshold == null ? "" : String(it.lowStockThreshold),
     });
     window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  // Mig 044 — reposición rápida de stock vía endpoint dedicado. Prompt al
+  // dueño para la cantidad a sumar; default 10 (caso típico cocina).
+  async function restockItem(it: MenuItem) {
+    const raw = window.prompt(
+      `Reponer stock de "${it.name}".\n\nUnidades a SUMAR al stock actual${it.stockQty == null ? " (NULL → arranca gestión)" : ` (${it.stockQty} actuales)`}:`,
+      "10",
+    );
+    if (raw === null) return;
+    const qty = Number(raw.trim());
+    if (!Number.isFinite(qty) || !Number.isInteger(qty) || qty < 1) {
+      setToast({ kind: "err", msg: "Cantidad debe ser entero ≥ 1" });
+      return;
+    }
+    setRowBusy(it.id, "busy");
+    try {
+      const res = await fetch(`/api/tenant/menu/${it.id}/restock`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ qty }),
+        cache: "no-store",
+      });
+      if (res.ok) {
+        const body = (await res.json()) as { item: { stockQty: number | null; available: boolean } };
+        setItems((prev) =>
+          prev.map((i) =>
+            i.id === it.id
+              ? { ...i, stockQty: body.item.stockQty ?? null, available: body.item.available }
+              : i,
+          ),
+        );
+        setRowBusy(it.id, null);
+        setToast({ kind: "ok", msg: `Stock repuesto +${qty}` });
+        return;
+      }
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      const err = `reponer falló: ${body.error ?? `HTTP ${res.status}`}`;
+      setRowBusy(it.id, err);
+      setToast({ kind: "err", msg: err });
+    } catch (e) {
+      const err = `reponer falló: ${e instanceof Error ? e.message : "desconocido"}`;
+      setRowBusy(it.id, err);
+      setToast({ kind: "err", msg: err });
+    }
   }
 
   // Mig 037+: setter rápido de imageUrl. Prompt con la URL actual pre-rellena.
@@ -389,6 +469,47 @@ export function CartaEditor({ initial }: { initial: MenuItem[] }) {
               className="mt-1 w-full resize-none rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400"
             />
           </div>
+          {/* Mig 044 — control de stock numérico (solo aparece útil al editar). */}
+          {editingId && (
+            <>
+              <div>
+                <label className="text-xs font-medium uppercase tracking-wider text-neutral-600">
+                  Stock actual (vacío = ilimitado)
+                </label>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  step={1}
+                  value={draft.stockQty}
+                  onChange={(e) => setDraft({ ...draft, stockQty: e.target.value })}
+                  placeholder="Vacío = sin gestión"
+                  className="mt-1 w-full rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400"
+                />
+                <p className="mt-1 text-[11px] text-neutral-500">
+                  Cada pedido descuenta unidades. Al llegar a 0 se marca agotado automáticamente.
+                </p>
+              </div>
+              <div>
+                <label className="text-xs font-medium uppercase tracking-wider text-neutral-600">
+                  Avisar cuando baje de (vacío = nunca)
+                </label>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  step={1}
+                  value={draft.lowStockThreshold}
+                  onChange={(e) => setDraft({ ...draft, lowStockThreshold: e.target.value })}
+                  placeholder="Vacío = sin alerta"
+                  className="mt-1 w-full rounded-md border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-neutral-400"
+                />
+                <p className="mt-1 text-[11px] text-neutral-500">
+                  Recibirás un WhatsApp cuando el stock llegue o baje de este umbral.
+                </p>
+              </div>
+            </>
+          )}
         </div>
         <div className="mt-4 flex gap-2">
           <button
@@ -470,7 +591,7 @@ export function CartaEditor({ initial }: { initial: MenuItem[] }) {
                         </button>
                       )}
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-baseline gap-2">
+                        <div className="flex flex-wrap items-baseline gap-2">
                           <span className={`font-medium ${it.available ? "text-neutral-900" : "text-neutral-400 line-through"}`}>
                             {it.name}
                           </span>
@@ -480,6 +601,29 @@ export function CartaEditor({ initial }: { initial: MenuItem[] }) {
                               {it.source}
                             </span>
                           )}
+                          {/* Mig 044 — badge de stock. NULL = sin badge. */}
+                          {it.stockQty != null && (() => {
+                            const t = it.lowStockThreshold;
+                            if (it.stockQty === 0) {
+                              return (
+                                <span className="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-rose-700">
+                                  Agotado
+                                </span>
+                              );
+                            }
+                            if (t != null && it.stockQty <= t) {
+                              return (
+                                <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
+                                  ⚠️ Stock: {it.stockQty}
+                                </span>
+                              );
+                            }
+                            return (
+                              <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] text-neutral-600">
+                                Stock: {it.stockQty}
+                              </span>
+                            );
+                          })()}
                         </div>
                         {it.description && (
                           <p className="mt-1 text-xs text-neutral-500">{it.description}</p>
@@ -499,6 +643,16 @@ export function CartaEditor({ initial }: { initial: MenuItem[] }) {
                               : it.available
                                 ? "Activo"
                                 : "Inactivo"}
+                          </button>
+                          {/* Mig 044 — botón reponer. Solo visible cuando ya existe gestión de stock o el dueño quiera empezar. */}
+                          <button
+                            type="button"
+                            onClick={() => restockItem(it)}
+                            disabled={rowStatus[it.id] === "busy"}
+                            className="rounded px-2 py-1 text-xs text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+                            title="Sumar unidades al stock"
+                          >
+                            + Reponer
                           </button>
                           <button
                             type="button"

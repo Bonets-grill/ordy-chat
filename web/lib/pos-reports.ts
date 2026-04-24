@@ -5,6 +5,9 @@
 //   - shift_closed       → cierre manual desde /api/shifts/[id]/close
 //   - daily_summary      → cron 23:55 Madrid cerrando turnos abiertos + resumen
 //
+// Mig 044:
+//   - low_stock          → un plato con stock_qty <= low_stock_threshold
+//
 // Destinatarios: agent_configs.pos_report_phones (array). Si vacío, cae a
 // agent_configs.handoff_whatsapp_phone. Si también vacío, log warn y return.
 //
@@ -61,12 +64,23 @@ export type DailySummaryPayload = {
   topItems: Array<{ name: string; quantity: number }>;
 };
 
-export type PosReportKind = "shift_auto_opened" | "shift_closed" | "daily_summary";
+/** Mig 044: alerta cuando un item baja de su low_stock_threshold. */
+export type LowStockPayload = {
+  /** Nombre del plato (string libre, igual que en menu_items). */
+  name: string;
+  /** Stock restante tras el decremento. */
+  stockQty: number;
+  /** Umbral configurado por el tenant. */
+  threshold: number;
+};
+
+export type PosReportKind = "shift_auto_opened" | "shift_closed" | "daily_summary" | "low_stock";
 
 export type PosReportPayload =
   | { kind: "shift_auto_opened"; data: ShiftAutoOpenedPayload }
   | { kind: "shift_closed"; data: ShiftClosedPayload }
-  | { kind: "daily_summary"; data: DailySummaryPayload };
+  | { kind: "daily_summary"; data: DailySummaryPayload }
+  | { kind: "low_stock"; data: LowStockPayload };
 
 // ── Formatting helpers ────────────────────────────────────────
 
@@ -167,6 +181,17 @@ export function buildDailySummaryMessage(p: DailySummaryPayload): string {
   ].join("\n");
 }
 
+/** Mig 044 — mensaje de alerta de stock bajo. */
+export function buildLowStockMessage(p: LowStockPayload): string {
+  return [
+    "⚠️ Ordy Chat · Stock bajo",
+    "",
+    `El plato "${p.name}" tiene solo ${p.stockQty} unidades restantes.`,
+    `Threshold configurado: ${p.threshold}.`,
+    "Repón antes de que se agote o cambia el stock en la carta.",
+  ].join("\n");
+}
+
 export function buildMessage(payload: PosReportPayload): string {
   switch (payload.kind) {
     case "shift_auto_opened":
@@ -175,6 +200,8 @@ export function buildMessage(payload: PosReportPayload): string {
       return buildShiftClosedMessage(payload.data);
     case "daily_summary":
       return buildDailySummaryMessage(payload.data);
+    case "low_stock":
+      return buildLowStockMessage(payload.data);
   }
 }
 
@@ -258,8 +285,13 @@ export async function sendPosReport(
 ): Promise<void>;
 export async function sendPosReport(
   tenantId: string,
+  kind: "low_stock",
+  data: LowStockPayload,
+): Promise<void>;
+export async function sendPosReport(
+  tenantId: string,
   kind: PosReportKind,
-  data: ShiftAutoOpenedPayload | ShiftClosedPayload | DailySummaryPayload,
+  data: ShiftAutoOpenedPayload | ShiftClosedPayload | DailySummaryPayload | LowStockPayload,
 ): Promise<void> {
   try {
     const [cfg] = await db
@@ -348,8 +380,13 @@ export function queuePosReport(
 ): void;
 export function queuePosReport(
   tenantId: string,
+  kind: "low_stock",
+  data: LowStockPayload,
+): void;
+export function queuePosReport(
+  tenantId: string,
   kind: PosReportKind,
-  data: ShiftAutoOpenedPayload | ShiftClosedPayload | DailySummaryPayload,
+  data: ShiftAutoOpenedPayload | ShiftClosedPayload | DailySummaryPayload | LowStockPayload,
 ): void {
   // No await — vive fuera del lifecycle del request. Envolvemos en
   // Promise.resolve().then para que cualquier throw síncrono no rompa al caller.
