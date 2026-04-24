@@ -120,8 +120,16 @@ export default async function VentasPage() {
       </div>
 
       <Card className="mt-6">
-        <CardHeader>
+        <CardHeader className="flex-row items-center justify-between">
           <CardTitle>Por día (últimos 30)</CardTitle>
+          <a
+            href="/api/reports/daily/export?days=30"
+            download
+            className="text-xs text-brand-600 hover:text-brand-700"
+            title="Descargar CSV para contable/asesor"
+          >
+            📥 Exportar CSV
+          </a>
         </CardHeader>
         <CardContent>
           {byDay.length === 0 ? (
@@ -152,8 +160,16 @@ export default async function VentasPage() {
       </Card>
 
       <Card className="mt-6">
-        <CardHeader>
+        <CardHeader className="flex-row items-center justify-between">
           <CardTitle>Por turno</CardTitle>
+          <a
+            href="/api/reports/shifts/export?limit=100"
+            download
+            className="text-xs text-brand-600 hover:text-brand-700"
+            title="Descargar CSV de turnos para contable/asesor"
+          >
+            📥 Exportar CSV
+          </a>
         </CardHeader>
         <CardContent>
           {shiftRows.length === 0 ? (
