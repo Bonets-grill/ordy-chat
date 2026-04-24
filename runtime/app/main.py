@@ -871,6 +871,11 @@ async def webhook_post(
 
     for msg in mensajes:
         if msg.es_propio:
+            # Mensaje saliente del admin (él respondió manualmente al
+            # cliente). Auto-pausar el bot 2h para que no responda
+            # encima de lo que escribió el admin. Fix Mario 2026-04-24:
+            # "cuando tomo control el agente sigue escribiendo".
+            background_tasks.add_task(_auto_pausar_bot, tenant.id, msg.telefono, 120)
             continue
         background_tasks.add_task(_procesar_mensaje, tenant, provider, msg)
 
@@ -880,6 +885,43 @@ async def webhook_post(
 # ────────────────────────────────────────────────────────────
 # Procesamiento asíncrono de un mensaje individual.
 # ────────────────────────────────────────────────────────────
+
+async def _auto_pausar_bot(tenant_id: UUID, customer_phone: str, minutos: int) -> None:
+    """Auto-pausa el bot cuando el admin respondió manualmente. Se llama
+    desde el webhook cuando detectamos msg.es_propio=true. UPSERT para
+    extender el pause_until si ya había una pausa activa (admin sigue
+    escribiendo → pausa se renueva)."""
+    try:
+        from app.memory import inicializar_pool
+        pool = await inicializar_pool()
+        async with pool.acquire() as c:
+            await c.execute(
+                """
+                INSERT INTO paused_conversations (tenant_id, customer_phone, pause_until, reason)
+                VALUES ($1, $2, now() + ($3 || ' minutes')::interval, 'auto_admin_reply')
+                ON CONFLICT (tenant_id, customer_phone)
+                DO UPDATE SET
+                    pause_until = now() + ($3 || ' minutes')::interval,
+                    paused_at = now(),
+                    reason = COALESCE(paused_conversations.reason, 'auto_admin_reply')
+                """,
+                tenant_id, customer_phone, str(minutos),
+            )
+        logger.info(
+            "bot auto-pausado tras reply admin",
+            extra={
+                "event": "bot_auto_paused",
+                "tenant_id": str(tenant_id),
+                "phone": customer_phone,
+                "minutes": minutos,
+            },
+        )
+    except Exception:
+        logger.exception(
+            "fallo auto-pausa bot",
+            extra={"event": "bot_auto_pause_error", "phone": customer_phone},
+        )
+
 
 async def _procesar_mensaje(tenant: TenantContext, provider: str, msg: MensajeEntrante) -> None:
     from time import perf_counter
@@ -1050,8 +1092,10 @@ async def _procesar_mensaje(tenant: TenantContext, provider: str, msg: MensajeEn
         # aparezca en el historial (y el admin pueda leerlo), pero ni
         # LLM ni anti-ban se ejecutan.
         async with pool.acquire() as _c:
+            # Respeta pause_until: si pausa indefinida (NULL) o futura, bot calla.
             pausada = await _c.fetchrow(
-                "SELECT 1 FROM paused_conversations WHERE tenant_id = $1 AND customer_phone = $2",
+                "SELECT 1 FROM paused_conversations WHERE tenant_id = $1 "
+                "AND customer_phone = $2 AND (pause_until IS NULL OR pause_until > now())",
                 tenant.id, msg.telefono,
             )
         if pausada:

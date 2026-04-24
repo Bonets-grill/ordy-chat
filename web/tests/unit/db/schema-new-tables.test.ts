@@ -87,6 +87,7 @@ describe("Schema Drizzle — tablas nuevas (migraciones 018–023)", () => {
       pausedAt: new Date(),
       pausedByAdminId: null,
       reason: null,
+      pauseUntil: null,
     };
     const insert: NewPausedConversation = {
       tenantId: row.tenantId,
