@@ -685,6 +685,20 @@ export const restaurantTables = pgTable("restaurant_tables", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// ── Non-customer contacts (migración 037) ──────────────────
+// Whitelist de proveedores / comerciales. Cuando uno de estos números
+// escribe al bot, el runtime NO responde y dispara handoff directo.
+export const nonCustomerContacts = pgTable("non_customer_contacts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  phone: text("phone").notNull(),
+  label: text("label").notNull(),
+  kind: text("kind").notNull().default("proveedor"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // ── Menu overrides (migración 019) ──────────────────────────
 export const menuOverrides = pgTable("menu_overrides", {
   id: uuid("id").primaryKey().defaultRandom(),

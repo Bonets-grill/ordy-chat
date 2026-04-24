@@ -1115,6 +1115,45 @@ async def _procesar_mensaje(tenant: TenantContext, provider: str, msg: MensajeEn
             )
             return
 
+        # ── Non-customer check (mig 037) ──────────────────────────────
+        # Si este número está en la whitelist de proveedores/comerciales
+        # del tenant, el bot NO responde: dispara handoff + guarda el msg
+        # con nota "no_customer" para que el admin lo atienda manualmente.
+        async with pool.acquire() as _c:
+            nc_match = await _c.fetchrow(
+                "SELECT label, kind FROM non_customer_contacts "
+                "WHERE tenant_id = $1 AND phone = $2",
+                tenant.id, msg.telefono,
+            )
+        if nc_match:
+            try:
+                await guardar_intercambio(
+                    tenant.id, msg.telefono, msg.texto, "",
+                    mensaje_id=msg.mensaje_id, tokens_in=0, tokens_out=0,
+                )
+            except Exception:
+                pass
+            logger.info(
+                "contacto no-cliente detectado — bot no responde",
+                extra={
+                    **log_extra,
+                    "event": "non_customer_skip",
+                    "label": nc_match["label"],
+                    "kind": nc_match["kind"],
+                },
+            )
+            # Auto-pausa 24h para que no se conteste en futuros mensajes
+            # del mismo proveedor hasta que el admin lo desbloquee.
+            background_tasks_unused = None  # placeholder
+            try:
+                await _auto_pausar_bot(tenant.id, msg.telefono, 60 * 24)
+            except Exception:
+                logger.exception(
+                    "fallo pausando bot por no-customer",
+                    extra={**log_extra, "event": "non_customer_pause_error"},
+                )
+            return
+
         respuesta, tin, tout = await generar_respuesta(
             tenant,
             texto_efectivo,
