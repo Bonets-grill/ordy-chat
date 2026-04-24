@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, or, isNull, gt } from "drizzle-orm";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
@@ -7,9 +7,10 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { conversations, messages } from "@/lib/db/schema";
+import { conversations, messages, pausedConversations } from "@/lib/db/schema";
 import { requireTenant } from "@/lib/tenant";
 import { LiveRefresh } from "./live-refresh";
+import { PauseBotButton } from "./pause-bot-button";
 
 // force-dynamic: sin esto Next cachea el render y LiveRefresh no ve nuevos
 // mensajes aunque haga router.refresh(). Con force-dynamic el re-render
@@ -38,6 +39,27 @@ export default async function ConversationDetailPage({ params }: { params: Promi
     .where(eq(messages.conversationId, conv.id))
     .orderBy(asc(messages.createdAt));
 
+  // Estado de pausa del bot para este teléfono. Activa si:
+  //   - existe fila Y (pause_until IS NULL  ← pausa indefinida legacy)
+  //   - o (pause_until > now())              ← pausa con expiración
+  // Si la fila existe pero pause_until ya pasó, el runtime la ignora y aquí
+  // la consideramos "no pausada" para que el botón vuelva a ofrecer pausar.
+  const [pauseRow] = await db
+    .select({
+      pauseUntil: pausedConversations.pauseUntil,
+    })
+    .from(pausedConversations)
+    .where(
+      and(
+        eq(pausedConversations.tenantId, bundle.tenant.id),
+        eq(pausedConversations.customerPhone, conv.phone),
+        or(isNull(pausedConversations.pauseUntil), gt(pausedConversations.pauseUntil, new Date())),
+      ),
+    )
+    .limit(1);
+  const paused = !!pauseRow;
+  const pauseUntilIso = pauseRow?.pauseUntil ? pauseRow.pauseUntil.toISOString() : null;
+
   return (
     <AppShell session={session} subscriptionStatus={bundle.tenant.subscriptionStatus} trialDaysLeft={bundle.trialDaysLeft}>
       <div className="mb-6 flex items-center justify-between">
@@ -47,6 +69,11 @@ export default async function ConversationDetailPage({ params }: { params: Promi
           <p className="mt-1 text-neutral-500">{conv.phone} · {msgs.length} mensajes</p>
         </div>
         <div className="flex items-center gap-2">
+          <PauseBotButton
+            conversationId={conv.id}
+            initialPaused={paused}
+            initialPauseUntil={pauseUntilIso}
+          />
           <LiveRefresh />
           <Badge tone="muted">Inicio: {new Date(conv.createdAt).toLocaleDateString("es-ES")}</Badge>
         </div>
