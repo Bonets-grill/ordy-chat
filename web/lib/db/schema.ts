@@ -675,6 +675,13 @@ export const menuItems = pgTable("menu_items", {
   sortOrder: integer("sort_order").notNull().default(0),
   // 'manual' | 'scrape' | 'pdf' | 'import' — quién creó el item.
   source: text("source").notNull().default("manual"),
+  // Mig 044 — control numérico de stock (opcional).
+  // stockQty: NULL = ilimitado/sin gestión (compat). N = unidades restantes.
+  // lowStockThreshold: NULL = sin alerta. N = avisar cuando stockQty <= N.
+  // lastLowStockAlertAt: cooldown 1h para no spammear al admin.
+  stockQty: integer("stock_qty"),
+  lowStockThreshold: integer("low_stock_threshold"),
+  lastLowStockAlertAt: timestamp("last_low_stock_alert_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

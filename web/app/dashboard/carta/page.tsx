@@ -59,6 +59,9 @@ export default async function CartaPage() {
     available: it.available,
     sortOrder: it.sortOrder,
     source: it.source,
+    // Mig 044 — control de stock numérico opcional.
+    stockQty: it.stockQty,
+    lowStockThreshold: it.lowStockThreshold,
   }));
 
   return (
