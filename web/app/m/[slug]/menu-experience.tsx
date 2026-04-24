@@ -18,6 +18,7 @@ import { Headphones, HeadphoneOff, MessageSquareText, Mic, MicOff, Minus, Plus, 
 import * as React from "react";
 import { DEFAULT_LANG, detectLang, LANG_BCP47, type Lang, strings } from "./translations";
 import { normalizeForSpeech } from "./speech-normalize";
+import { ModifierPicker, type ModifierSelection } from "./modifier-picker";
 
 type ItemLite = {
   id: string;
@@ -120,7 +121,26 @@ export function MenuExperience(props: Props) {
           setCart(
             parsed
               .filter((l) => l && typeof l.itemId === "string" && typeof l.qty === "number")
-              .map((l) => ({ itemId: l.itemId, qty: Math.max(0, Math.min(99, l.qty | 0)) })),
+              .map((l) => {
+                // Mig 042: rehidrata modifiers si vienen del storage. Filtra
+                // priceDeltaCents negativos por defensa-en-profundidad.
+                const mods = Array.isArray(l.modifiers)
+                  ? (l.modifiers as unknown[])
+                      .filter((m): m is CartLineModifier =>
+                        !!m &&
+                        typeof (m as CartLineModifier).groupId === "string" &&
+                        typeof (m as CartLineModifier).modifierId === "string" &&
+                        typeof (m as CartLineModifier).name === "string" &&
+                        typeof (m as CartLineModifier).priceDeltaCents === "number" &&
+                        (m as CartLineModifier).priceDeltaCents >= 0,
+                      )
+                  : undefined;
+                return {
+                  itemId: l.itemId as string,
+                  qty: Math.max(0, Math.min(99, l.qty | 0)),
+                  ...(mods && mods.length > 0 ? { modifiers: mods } : {}),
+                } as CartLine;
+              }),
           );
         }
       }
@@ -146,7 +166,10 @@ export function MenuExperience(props: Props) {
   const cartLines = cart.filter((l) => l.qty > 0 && itemById.has(l.itemId));
   const totalCents = cartLines.reduce((sum, l) => {
     const item = itemById.get(l.itemId);
-    return sum + (item ? item.priceCents * l.qty : 0);
+    if (!item) return sum;
+    // Mig 042: precio efectivo por unidad = base + suma de priceDeltas.
+    const modsDelta = (l.modifiers ?? []).reduce((a, m) => a + Math.max(0, m.priceDeltaCents), 0);
+    return sum + (item.priceCents + modsDelta) * l.qty;
   }, 0);
   const totalLabel = `${(totalCents / 100).toFixed(2).replace(".", ",")} €`;
   const cartQtyTotal = cartLines.reduce((s, l) => s + l.qty, 0);
@@ -175,6 +198,47 @@ export function MenuExperience(props: Props) {
     setCart([]);
   }
 
+  // ── Picker de modifiers (mig 042 — cierre deuda técnica PR #113).
+  //    Cada tap "+" abre el picker; si el item no tiene grupos configurados,
+  //    el componente auto-confirma sin UI y se comporta como el flujo legacy.
+  const [pickerItem, setPickerItem] = React.useState<ItemLite | null>(null);
+  const requestAddToCart = React.useCallback(
+    (itemId: string) => {
+      const it = itemById.get(itemId);
+      if (!it) return;
+      setPickerItem(it);
+    },
+    [itemById],
+  );
+  // Ref para que el listener del DOM injection (cuyo closure se forma una sola
+  // vez) llame siempre a la versión actual de requestAddToCart sin necesidad
+  // de re-inyectar el botón. Sin este ref el Effect dependería de
+  // requestAddToCart y reinyectaría → se duplicarían botones.
+  const requestAddToCartRef = React.useRef(requestAddToCart);
+  React.useEffect(() => {
+    requestAddToCartRef.current = requestAddToCart;
+  }, [requestAddToCart]);
+  const addToCartWithModifiers = React.useCallback(
+    (itemId: string, modifiers: ModifierSelection[]) => {
+      setCart((prev) => {
+        // Si NO hay modifiers, mantenemos el comportamiento legacy: incrementa
+        // qty de la primera línea sin modifiers. Si hay modifiers, creamos
+        // SIEMPRE línea nueva — dos pizzas con extras distintos no se mergean.
+        if (modifiers.length === 0) {
+          const idx = prev.findIndex((l) => l.itemId === itemId && (!l.modifiers || l.modifiers.length === 0));
+          if (idx >= 0) {
+            return prev.map((l, i) =>
+              i === idx ? { ...l, qty: Math.min(99, l.qty + 1) } : l,
+            );
+          }
+          return [...prev, { itemId, qty: 1 }];
+        }
+        return [...prev, { itemId, qty: 1, modifiers }];
+      });
+    },
+    [],
+  );
+
   // ── Inyección de botones "+" junto a cada item en el DOM renderizado
   //    por el server component. Cada <li> de la carta tiene data-item-id.
   React.useEffect(() => {
@@ -194,7 +258,8 @@ export function MenuExperience(props: Props) {
         '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
       btn.addEventListener("click", (e) => {
         e.preventDefault();
-        addToCart(id);
+        // Mig 042: abre el picker. Si el item no tiene grupos, se auto-confirma.
+        requestAddToCartRef.current(id);
       });
       node.appendChild(btn);
     });
@@ -993,8 +1058,15 @@ export function MenuExperience(props: Props) {
     for (const l of cartLines) {
       const item = itemById.get(l.itemId);
       if (!item) continue;
-      const price = `${((item.priceCents * l.qty) / 100).toFixed(2).replace(".", ",")} €`;
+      // Mig 042: precio efectivo incluye deltas de modifiers.
+      const modsDelta = (l.modifiers ?? []).reduce((a, m) => a + Math.max(0, m.priceDeltaCents), 0);
+      const unit = item.priceCents + modsDelta;
+      const price = `${((unit * l.qty) / 100).toFixed(2).replace(".", ",")} €`;
       lines.push(`- ${l.qty}× ${item.name} — ${price}`);
+      if (l.modifiers && l.modifiers.length > 0) {
+        const labels = l.modifiers.map((m) => m.name).join(", ");
+        lines.push(`   · ${labels}`);
+      }
     }
     lines.push("", `${t.orderMessageTotal}: ${totalLabel}`);
     return lines.join("\n");
@@ -1390,6 +1462,37 @@ export function MenuExperience(props: Props) {
           </button>
         </div>
       ) : null}
+
+      {/* Mig 042: picker visual de modificadores. Auto-confirma sin UI si el
+          item no tiene grupos configurados (mayoría de la carta hoy). */}
+      <ModifierPicker
+        open={pickerItem !== null}
+        item={pickerItem}
+        slug={slug}
+        brandColor={brandColor}
+        labels={{
+          required: t.modifierRequired,
+          optional: t.modifierOptional,
+          minSelectHint: t.modifierMinSelect,
+          maxSelectHint: t.modifierMaxSelect,
+          confirm: t.modifierConfirm,
+          confirmWithTotal: t.modifierConfirmWithTotal,
+          cancel: t.close,
+          loading: t.modifierLoading,
+          errorRetry: t.modifierError,
+        }}
+        onClose={() => setPickerItem(null)}
+        onConfirm={(selection, finalPriceCents) => {
+          if (pickerItem) {
+            addToCartWithModifiers(pickerItem.id, selection);
+            // finalPriceCents queda implícito: cada modifier ya viene con su
+            // priceDelta y el cálculo del total del carrito vive en
+            // computeCartTotal (ver useMemo más abajo en este componente).
+            void finalPriceCents;
+          }
+          setPickerItem(null);
+        }}
+      />
     </>
   );
 }

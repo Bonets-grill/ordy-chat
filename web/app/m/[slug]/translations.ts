@@ -55,6 +55,15 @@ type Copy = {
   // Nueva cortina de bienvenida: chooser entre chat de texto y voz.
   chooseChat: string;
   chooseVoice: string;
+  // Mig 042 — picker de modificadores de producto.
+  modifierRequired: string;
+  modifierOptional: string;
+  modifierMinSelect: (min: string) => string;
+  modifierMaxSelect: (max: string) => string;
+  modifierConfirm: string;
+  modifierConfirmWithTotal: (total: string) => string;
+  modifierLoading: string;
+  modifierError: string;
 };
 
 // Mapeo BCP-47 para Web Speech API (SpeechRecognition + SpeechSynthesis).
@@ -107,6 +116,14 @@ export const strings: Record<Lang, Copy> = {
     closeGuardContinue: "Seguir aquí",
     chooseChat: "Quiero chatear",
     chooseVoice: "Hablar con el mesero",
+    modifierRequired: "Obligatorio",
+    modifierOptional: "Opcional",
+    modifierMinSelect: (m) => `Selecciona al menos ${m}`,
+    modifierMaxSelect: (m) => `Máx ${m}`,
+    modifierConfirm: "Confirmar",
+    modifierConfirmWithTotal: (t) => `Confirmar · ${t}`,
+    modifierLoading: "Cargando opciones…",
+    modifierError: "No pudimos cargar las opciones. Inténtalo otra vez.",
   },
   en: {
     greeting: (n) => `Welcome to ${n}! Want a recommendation?`,
@@ -147,6 +164,14 @@ export const strings: Record<Lang, Copy> = {
     closeGuardContinue: "Keep chatting",
     chooseChat: "I'll type",
     chooseVoice: "Talk to the waiter",
+    modifierRequired: "Required",
+    modifierOptional: "Optional",
+    modifierMinSelect: (m) => `Pick at least ${m}`,
+    modifierMaxSelect: (m) => `Max ${m}`,
+    modifierConfirm: "Confirm",
+    modifierConfirmWithTotal: (t) => `Confirm · ${t}`,
+    modifierLoading: "Loading options…",
+    modifierError: "Couldn't load options. Please try again.",
   },
   fr: {
     greeting: (n) => `Bienvenue à ${n} ! Voulez-vous une recommandation ?`,
@@ -187,6 +212,14 @@ export const strings: Record<Lang, Copy> = {
     closeGuardContinue: "Rester ici",
     chooseChat: "Je préfère écrire",
     chooseVoice: "Parler au serveur",
+    modifierRequired: "Obligatoire",
+    modifierOptional: "Facultatif",
+    modifierMinSelect: (m) => `Choisis au moins ${m}`,
+    modifierMaxSelect: (m) => `Max ${m}`,
+    modifierConfirm: "Confirmer",
+    modifierConfirmWithTotal: (t) => `Confirmer · ${t}`,
+    modifierLoading: "Chargement…",
+    modifierError: "Impossible de charger les options. Réessayez.",
   },
   de: {
     greeting: (n) => `Willkommen bei ${n}! Soll ich dir etwas empfehlen?`,
@@ -227,6 +260,14 @@ export const strings: Record<Lang, Copy> = {
     closeGuardContinue: "Hier bleiben",
     chooseChat: "Ich schreibe lieber",
     chooseVoice: "Mit dem Kellner sprechen",
+    modifierRequired: "Pflicht",
+    modifierOptional: "Optional",
+    modifierMinSelect: (m) => `Mindestens ${m} wählen`,
+    modifierMaxSelect: (m) => `Max ${m}`,
+    modifierConfirm: "Bestätigen",
+    modifierConfirmWithTotal: (t) => `Bestätigen · ${t}`,
+    modifierLoading: "Optionen werden geladen…",
+    modifierError: "Optionen konnten nicht geladen werden. Bitte erneut versuchen.",
   },
   it: {
     greeting: (n) => `Benvenuto a ${n}! Vuoi un consiglio?`,
@@ -267,6 +308,14 @@ export const strings: Record<Lang, Copy> = {
     closeGuardContinue: "Restiamo qui",
     chooseChat: "Preferisco scrivere",
     chooseVoice: "Parlare col cameriere",
+    modifierRequired: "Obbligatorio",
+    modifierOptional: "Facoltativo",
+    modifierMinSelect: (m) => `Scegli almeno ${m}`,
+    modifierMaxSelect: (m) => `Max ${m}`,
+    modifierConfirm: "Conferma",
+    modifierConfirmWithTotal: (t) => `Conferma · ${t}`,
+    modifierLoading: "Caricamento…",
+    modifierError: "Impossibile caricare le opzioni. Riprova.",
   },
   pt: {
     greeting: (n) => `Bem-vindo ao ${n}! Quer uma recomendação?`,
@@ -307,5 +356,13 @@ export const strings: Record<Lang, Copy> = {
     closeGuardContinue: "Ficar aqui",
     chooseChat: "Prefiro escrever",
     chooseVoice: "Falar com o empregado",
+    modifierRequired: "Obrigatório",
+    modifierOptional: "Opcional",
+    modifierMinSelect: (m) => `Escolhe pelo menos ${m}`,
+    modifierMaxSelect: (m) => `Máx ${m}`,
+    modifierConfirm: "Confirmar",
+    modifierConfirmWithTotal: (t) => `Confirmar · ${t}`,
+    modifierLoading: "A carregar…",
+    modifierError: "Não foi possível carregar as opções. Tenta de novo.",
   },
 };

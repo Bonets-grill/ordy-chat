@@ -75,8 +75,37 @@ async def crear_pedido(
                 "unitPriceCents": int(it["unit_price_cents"]),
                 **({"vatRate": float(it["vat_rate"])} if "vat_rate" in it else {}),
                 **({"notes": it["notes"]} if it.get("notes") else {}),
+                # Mig 042 (cierre deuda PR #113): el LLM puede pasar
+                # modifiers=[{name, priceDelta}] en EUROS. Convertimos a la
+                # forma que espera el web: {groupId, modifierId, name,
+                # priceDeltaCents}. Como el bot no tiene los IDs de DB,
+                # generamos placeholders estables ("bot:<idx>") para
+                # satisfacer el schema; el motor de pricing solo usa name +
+                # priceDeltaCents para el snapshot. Filtra deltas <0 por
+                # defensa-en-profundidad (la web ya rechaza con Zod).
+                **(
+                    {
+                        "modifiers": [
+                            {
+                                "groupId": (m.get("groupId") or f"bot:{idx}-g"),
+                                "modifierId": (m.get("modifierId") or f"bot:{idx}-{j}"),
+                                "name": str(m["name"]),
+                                "priceDeltaCents": max(
+                                    0,
+                                    int(round(float(m.get("priceDelta") or 0) * 100))
+                                    if "priceDelta" in m
+                                    else int(m.get("priceDeltaCents") or 0),
+                                ),
+                            }
+                            for j, m in enumerate(it["modifiers"])
+                            if isinstance(m, dict) and m.get("name")
+                        ]
+                    }
+                    if isinstance(it.get("modifiers"), list) and it["modifiers"]
+                    else {}
+                ),
             }
-            for it in items
+            for idx, it in enumerate(items)
         ],
     }
     if customer_phone:

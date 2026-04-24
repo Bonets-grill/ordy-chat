@@ -32,6 +32,19 @@ const createSchema = z.object({
       unitPriceCents: z.number().int().min(0),
       vatRate: z.number().min(0).max(100).optional(),
       notes: z.string().optional(),
+      // Mig 042 — bot WA / widget público pasan los modifiers seleccionados.
+      // priceDeltaCents debe ser >=0 (rechaza descuentos por defensa).
+      modifiers: z
+        .array(
+          z.object({
+            groupId: z.string().min(1),
+            modifierId: z.string().min(1),
+            name: z.string().min(1),
+            priceDeltaCents: z.number().int().min(0).max(100_000),
+          }),
+        )
+        .max(50)
+        .optional(),
     }),
   ).min(1),
 }).refine(

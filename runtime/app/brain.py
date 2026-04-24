@@ -239,6 +239,41 @@ TOOLS: list[dict[str, Any]] = [
                                 "description": "Tasa de impuesto aplicable a esta línea (ej 10 hostelería IVA peninsular, 7 IGIC Canarias, 21 alcohol). Omite para usar la tasa estándar del tenant.",
                             },
                             "notes": {"type": "string", "description": "Aclaraciones: sin sal, bien hecho, etc."},
+                            # Mig 042 (cierre deuda PR #113): cuando el cliente eligió
+                            # opciones de un plato (tamaño, extras, sin-tal), pásalas
+                            # estructuradas en este array. El `priceDelta` es el coste
+                            # adicional EN EUROS (NO céntimos: el sistema lo convierte).
+                            # Ejemplo: si el cliente pide "burger grande con extra queso",
+                            # modifiers=[{name:"Tamaño grande", priceDelta:3.00},
+                            #            {name:"Extra queso", priceDelta:1.50}].
+                            # El total se ajusta automáticamente — TÚ no sumes los
+                            # extras al unit_price_cents.
+                            "modifiers": {
+                                "type": "array",
+                                "description": (
+                                    "Opciones del plato elegidas por el cliente "
+                                    "(tamaños, extras, sin-tal). Pásalas SIEMPRE "
+                                    "que el cliente las haya confirmado — el "
+                                    "sistema ajusta el total. Si no hay opciones "
+                                    "para este plato, omite el campo o pásalo "
+                                    "como []."
+                                ),
+                                "items": {
+                                    "type": "object",
+                                    "required": ["name"],
+                                    "properties": {
+                                        "name": {
+                                            "type": "string",
+                                            "description": "Etiqueta tal como se la dijo al cliente (ej 'Tamaño grande', 'Extra queso', 'Sin cebolla').",
+                                        },
+                                        "priceDelta": {
+                                            "type": "number",
+                                            "minimum": 0,
+                                            "description": "Coste adicional EN EUROS (no céntimos), >=0. Si la opción no cuesta extra, pasa 0 u omítelo.",
+                                        },
+                                    },
+                                },
+                            },
                         },
                     },
                 },
