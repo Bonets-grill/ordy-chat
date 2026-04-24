@@ -1,7 +1,9 @@
 // POST /api/shifts/[id]/close
-// Cierra el turno. Calcula el esperado en caja (opening + cobros en efectivo del turno).
-// Por ahora asumimos que TODO pedido pagado suma a "esperado efectivo"; si el tenant
-// empieza a registrar método de pago, lo filtramos por method='cash' en una iteración.
+// Cierra el turno. Calcula el esperado en caja:
+//   expected = opening + SUM(total_cents) WHERE payment_method='cash' OR payment_method IS NULL
+// Mig 039: payment_method IS NULL → retro-compat (pedidos pre-mig). Card/
+// transfer/other NO entran al cuadre — esos no pasan por caja. El total
+// general del turno sigue siendo la suma de TODO lo pagado.
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
@@ -46,12 +48,20 @@ export async function POST(req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "not_found_or_already_closed" }, { status: 404 });
   }
 
-  // Total cobrado en el turno (no incluye tests).
+  // Mig 039: breakdown por método. `paidCents` = cash + NULL (entran en
+  // caja). `paidTotalCents` = TODO lo pagado (incluye card/transfer/other)
+  // para el resumen general. El cuadre solo usa cash+NULL.
   const [paidSum] = await db
-    .select({ total: sql<number>`coalesce(sum(${orders.totalCents}) FILTER (WHERE ${orders.paidAt} IS NOT NULL), 0)::int` })
+    .select({
+      cashPaid: sql<number>`coalesce(sum(${orders.totalCents}) FILTER (WHERE ${orders.paidAt} IS NOT NULL AND (${orders.paymentMethod} = 'cash' OR ${orders.paymentMethod} IS NULL)), 0)::int`,
+      cardPaid: sql<number>`coalesce(sum(${orders.totalCents}) FILTER (WHERE ${orders.paidAt} IS NOT NULL AND ${orders.paymentMethod} = 'card'), 0)::int`,
+      transferPaid: sql<number>`coalesce(sum(${orders.totalCents}) FILTER (WHERE ${orders.paidAt} IS NOT NULL AND ${orders.paymentMethod} = 'transfer'), 0)::int`,
+      otherPaid: sql<number>`coalesce(sum(${orders.totalCents}) FILTER (WHERE ${orders.paidAt} IS NOT NULL AND ${orders.paymentMethod} = 'other'), 0)::int`,
+      totalPaid: sql<number>`coalesce(sum(${orders.totalCents}) FILTER (WHERE ${orders.paidAt} IS NOT NULL), 0)::int`,
+    })
     .from(orders)
     .where(and(eq(orders.shiftId, shift.id), eq(orders.isTest, false)));
-  const paidCents = paidSum?.total ?? 0;
+  const paidCents = paidSum?.cashPaid ?? 0;
   const expectedCashCents = shift.openingCashCents + paidCents;
   const diffCents = parsed.data.countedCashCents - expectedCashCents;
 
@@ -76,10 +86,20 @@ export async function POST(req: Request, ctx: Ctx) {
     shift: updated,
     report: {
       openingCashCents: shift.openingCashCents,
+      // `paidCents` queda como alias de cash+NULL para retro-compat con
+      // clientes que ya leen este campo (dashboard viejo, reportes).
       paidCents,
       expectedCashCents,
       countedCashCents: parsed.data.countedCashCents,
       diffCents,
+      // Mig 039: desglose por método — el total del turno es la suma de todo.
+      byMethod: {
+        cashCents: paidSum?.cashPaid ?? 0,
+        cardCents: paidSum?.cardPaid ?? 0,
+        transferCents: paidSum?.transferPaid ?? 0,
+        otherCents: paidSum?.otherPaid ?? 0,
+        totalCents: paidSum?.totalPaid ?? 0,
+      },
     },
   });
 }
