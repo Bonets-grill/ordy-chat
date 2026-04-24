@@ -1,4 +1,4 @@
-import { BellRing, Bot, BookOpen, CalendarCheck, CalendarX, ChefHat, CreditCard, FileText, FlaskConical, LayoutDashboard, Menu, MessageSquareText, QrCode, Settings, Truck } from "lucide-react";
+import { BellRing, Bot, BookOpen, CalendarCheck, CalendarX, ChefHat, CreditCard, FileText, FlaskConical, LayoutDashboard, Menu, MessageSquareText, QrCode, Settings, Smartphone, Truck } from "lucide-react";
 import Link from "next/link";
 import type { Session } from "next-auth";
 import { Badge } from "./ui/badge";
@@ -20,6 +20,7 @@ const NAV: NavItem[] = [
   { href: "/agent/suppliers", label: "Proveedores", icon: Truck },
   { href: "/agent/fiscal", label: "Datos fiscales", icon: FileText },
   { href: "/agent/reportes-pos", label: "Reportes POS", icon: BellRing },
+  { href: "/dashboard/tpv", label: "TPV (Stripe Terminal)", icon: Smartphone },
   { href: "/billing", label: "Facturación", icon: CreditCard },
 ];
 

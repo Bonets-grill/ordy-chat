@@ -470,3 +470,38 @@ export async function markOrderPaidManual(
     .returning();
   return updated;
 }
+
+/**
+ * Marca una orden como pagada vía Stripe Terminal (mig 045).
+ * El webhook payment_intent.succeeded la invoca con el PaymentIntent.id.
+ *
+ * - Si la orden tiene tenant_id distinto al que metadata dice, abortamos.
+ * - Si ya está paid, idempotente (no toca paidAt).
+ * - paymentMethod siempre 'card' (Stripe Terminal solo procesa card_present).
+ */
+export async function markOrderPaidByPaymentIntent(
+  paymentIntentId: string,
+  tenantId: string,
+  orderId: string,
+) {
+  const [order] = await db
+    .select()
+    .from(orders)
+    .where(and(eq(orders.id, orderId), eq(orders.tenantId, tenantId)))
+    .limit(1);
+  if (!order) return null;
+  if (order.status === "paid") return order;
+
+  const [updated] = await db
+    .update(orders)
+    .set({
+      status: "paid",
+      paidAt: new Date(),
+      paymentMethod: "card",
+      stripePaymentIntentId: paymentIntentId,
+      updatedAt: new Date(),
+    })
+    .where(eq(orders.id, order.id))
+    .returning();
+  return updated;
+}

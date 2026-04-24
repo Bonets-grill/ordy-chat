@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import {
   auditLog,
   orders,
+  posPayments,
   resellerCommissions,
   resellerPayouts,
   resellers,
@@ -12,7 +13,7 @@ import {
   tableSessions,
   tenants,
 } from "@/lib/db/schema";
-import { markOrderPaidBySession } from "@/lib/orders";
+import { markOrderPaidByPaymentIntent, markOrderPaidBySession } from "@/lib/orders";
 import { generateAndSendReceipt } from "@/lib/receipts";
 import { stripeClient, stripeWebhookSecret } from "@/lib/stripe";
 
@@ -170,6 +171,19 @@ export async function POST(req: Request) {
       }
       case "account.updated": {
         await handleAccountUpdated(event.data.object as Stripe.Account);
+        break;
+      }
+      // ── Stripe Terminal (mig 045): cobro en TPV físico ─────
+      case "payment_intent.succeeded": {
+        await handlePaymentIntentSucceeded(event.data.object as Stripe.PaymentIntent);
+        break;
+      }
+      case "payment_intent.payment_failed":
+      case "payment_intent.canceled": {
+        await handlePaymentIntentFailed(
+          event.data.object as Stripe.PaymentIntent,
+          event.type === "payment_intent.canceled" ? "canceled" : "failed",
+        );
         break;
       }
       case "account.application.deauthorized": {
@@ -359,6 +373,75 @@ async function handleAccountDeauthorized(accountId: string) {
     action: "reseller.stripe_connect.deauthorized",
     entity: "reseller",
     metadata: { stripe_account_id: accountId },
+  });
+}
+
+// ─── Mig 045: Stripe Terminal payment_intent handlers ─────────────────
+
+async function handlePaymentIntentSucceeded(pi: Stripe.PaymentIntent) {
+  // Solo procesamos PaymentIntents creados desde el flujo Ordy Terminal.
+  // Stripe nos manda TODOS los payment_intent eventos del webhook global —
+  // los de subscripciones (€49.90/mes) tienen otro source y NO tocan orders.
+  if (pi.metadata?.source !== "ordy_terminal") return;
+
+  const tenantId = pi.metadata?.tenant_id;
+  const orderId = pi.metadata?.order_id;
+  if (!tenantId || !orderId) {
+    console.warn(`[terminal] PI ${pi.id} sin tenant_id/order_id en metadata`);
+    return;
+  }
+
+  // Idempotente: UPDATE pos_payments status='succeeded' donde PI matches.
+  await db
+    .update(posPayments)
+    .set({ status: "succeeded", updatedAt: new Date() })
+    .where(eq(posPayments.paymentIntentId, pi.id));
+
+  // Marcar orden pagada (paymentMethod='card', stripePaymentIntentId).
+  const updated = await markOrderPaidByPaymentIntent(pi.id, tenantId, orderId);
+
+  if (updated) {
+    await db.insert(auditLog).values({
+      action: "terminal.payment.succeeded",
+      entity: "order",
+      entityId: updated.id,
+      metadata: {
+        payment_intent_id: pi.id,
+        amount_cents: pi.amount,
+        tenant_id: tenantId,
+      },
+    });
+    // Receipt opcional. Stripe Terminal no captura email del comensal —
+    // si la orden tiene customerName/phone podríamos vincularlo, pero el
+    // recibo email queda como mejora futura. NO bloqueamos webhook.
+    try {
+      await generateAndSendReceipt(updated.id, null);
+    } catch (err) {
+      console.error("[terminal][receipt] generate failed:", err);
+    }
+  }
+}
+
+async function handlePaymentIntentFailed(
+  pi: Stripe.PaymentIntent,
+  reason: "failed" | "canceled",
+) {
+  if (pi.metadata?.source !== "ordy_terminal") return;
+
+  await db
+    .update(posPayments)
+    .set({ status: reason, updatedAt: new Date() })
+    .where(eq(posPayments.paymentIntentId, pi.id));
+
+  await db.insert(auditLog).values({
+    action: `terminal.payment.${reason}`,
+    entity: "payment_intent",
+    entityId: pi.id,
+    metadata: {
+      tenant_id: pi.metadata?.tenant_id ?? null,
+      order_id: pi.metadata?.order_id ?? null,
+      last_payment_error: pi.last_payment_error?.message ?? null,
+    },
   });
 }
 

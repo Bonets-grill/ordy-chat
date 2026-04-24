@@ -96,6 +96,12 @@ export const tenants = pgTable("tenants", {
   taxLabel: text("tax_label").notNull().default("IVA"),
   // Reseller program (migración 012) — NULL = venta directa Ordy, no atribuido a reseller.
   resellerId: uuid("reseller_id").references((): AnyPgColumn => resellers.id, { onDelete: "set null" }),
+  // Migración 045: Stripe Connect Standard del tenant + location de Stripe
+  // Terminal. NULL = el tenant todavía no tiene Connect montado y no puede
+  // cobrar en TPV físico. El super admin pega el `acct_xxx` y `tml_xxx`
+  // hasta que se monte el flujo OAuth de onboarding.
+  stripeAccountId: text("stripe_account_id"),
+  stripeTerminalLocationId: text("stripe_terminal_location_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -854,4 +860,47 @@ export const shifts = pgTable("shifts", {
 });
 
 export type Shift = typeof shifts.$inferSelect;
+
+// ── Stripe Terminal (migración 045) ────────────────────────
+// Lectores físicos emparejados a cada tenant. Multi-lector por tenant
+// (caja principal + caja secundaria, etc.). El tenant es la cuenta Stripe
+// Connect Standard — todas las llamadas pasan `Stripe-Account` header con
+// `tenants.stripe_account_id`.
+export const stripeTerminalReaders = pgTable("stripe_terminal_readers", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  // ID del reader en Stripe (formato `tmr_xxx`).
+  readerId: text("reader_id").notNull(),
+  label: text("label"),
+  serialNumber: text("serial_number"),
+  // online | offline. Sincronizado con Stripe en /readers GET o webhooks.
+  status: text("status").notNull().default("offline"),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Ledger de cobros TPV. Una fila por PaymentIntent. UNIQUE en payment_intent_id
+// (idempotencia ante webhooks duplicados). FK a orders → si se borra una orden
+// el cobro asociado también, pero en producción el flujo es solo añadir.
+export const posPayments = pgTable("pos_payments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  orderId: uuid("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
+  // ID del Stripe reader donde se procesó el cobro. Texto plano (no FK)
+  // porque el reader puede haberse desemparejado y aun así queremos historial.
+  readerId: text("reader_id"),
+  paymentIntentId: text("payment_intent_id").notNull().unique(),
+  // pending | succeeded | failed | canceled
+  status: text("status").notNull().default("pending"),
+  amountCents: integer("amount_cents").notNull(),
+  currency: text("currency").notNull().default("EUR"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type StripeTerminalReader = typeof stripeTerminalReaders.$inferSelect;
+export type NewStripeTerminalReader = typeof stripeTerminalReaders.$inferInsert;
+export type PosPayment = typeof posPayments.$inferSelect;
+export type NewPosPayment = typeof posPayments.$inferInsert;
 export type NewShift = typeof shifts.$inferInsert;
