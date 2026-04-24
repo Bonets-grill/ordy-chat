@@ -1,14 +1,10 @@
 import { asc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { csvEscape } from "@/lib/csv";
 import { db } from "@/lib/db";
 import { conversations, messages } from "@/lib/db/schema";
 import { requireTenant } from "@/lib/tenant";
-
-function csvEscape(value: string): string {
-  if (/[",\n\r]/.test(value)) return `"${value.replace(/"/g, '""')}"`;
-  return value;
-}
 
 export async function GET() {
   const session = await auth();

@@ -94,18 +94,28 @@ export default async function TurnoDetailPage({ params }: { params: Promise<{ id
       subscriptionStatus={bundle.tenant.subscriptionStatus}
       trialDaysLeft={bundle.trialDaysLeft}
     >
-      <div className="mb-6">
-        <Link href="/dashboard/ventas" className="text-sm text-neutral-500 hover:text-neutral-900">← Ventas</Link>
-        <h1 className="mt-2 text-3xl font-semibold text-neutral-900">
-          Turno {new Date(shift.openedAt).toLocaleString("es-ES", { dateStyle: "medium", timeStyle: "short" })}
-        </h1>
-        <p className="mt-1 text-sm text-neutral-500">
-          {shift.closedAt
-            ? `Cerrado ${new Date(shift.closedAt).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}`
-            : "En curso"}
-          {shift.openedBy && ` · abierto por ${shift.openedBy}`}
-          {shift.closedBy && ` · cerrado por ${shift.closedBy}`}
-        </p>
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <Link href="/dashboard/ventas" className="text-sm text-neutral-500 hover:text-neutral-900">← Ventas</Link>
+          <h1 className="mt-2 text-3xl font-semibold text-neutral-900">
+            Turno {new Date(shift.openedAt).toLocaleString("es-ES", { dateStyle: "medium", timeStyle: "short" })}
+          </h1>
+          <p className="mt-1 text-sm text-neutral-500">
+            {shift.closedAt
+              ? `Cerrado ${new Date(shift.closedAt).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}`
+              : "En curso"}
+            {shift.openedBy && ` · abierto por ${shift.openedBy}`}
+            {shift.closedBy && ` · cerrado por ${shift.closedBy}`}
+          </p>
+        </div>
+        <a
+          href={`/api/reports/shifts/${shift.id}/export?format=csv`}
+          download
+          className="shrink-0 rounded-md border border-neutral-200 px-3 py-1.5 text-sm text-neutral-700 hover:border-brand-400 hover:text-brand-700"
+          title="Descargar CSV con todos los pedidos del turno"
+        >
+          📥 Exportar turno CSV
+        </a>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-4">
