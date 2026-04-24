@@ -93,6 +93,13 @@ export function AdminShell({
       className="min-h-screen"
       style={{ background: "#f5f4ed", color: "#141413" }}
     >
+      {/* Top stripe violet — marca visual "estás en super admin" */}
+      <div
+        aria-hidden
+        className="h-[3px] w-full"
+        style={{ background: "linear-gradient(to right, #8b5cf6, #7c3aed 40%, #6d28d9)" }}
+      />
+
       {/* Header */}
       <header
         className="border-b"
@@ -108,10 +115,15 @@ export function AdminShell({
             </span>
             <span
               className="text-[15px] font-medium tracking-tight"
-              style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}
+              style={{ fontFamily: "Charter, 'Iowan Old Style', Palatino, Georgia, 'Times New Roman', serif" }}
             >
               Ordy Chat <span style={{ color: "#87867f" }}>·</span>{" "}
-              <span style={{ color: "#5e5d59" }}>Super Admin</span>
+              <span
+                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 align-middle text-[11px] font-medium"
+                style={{ background: "#ede9fe", color: "#6d28d9" }}
+              >
+                Super Admin
+              </span>
             </span>
           </Link>
           <div className="flex items-center gap-3 text-sm">
@@ -173,7 +185,7 @@ export function AdminShell({
                     >
                       <span
                         className="inline-flex"
-                        style={{ color: isActive ? "#c96442" : "#87867f" }}
+                        style={{ color: isActive ? "#7c3aed" : "#87867f" }}
                       >
                         <Icon className="h-4 w-4" />
                       </span>
@@ -190,7 +202,7 @@ export function AdminShell({
             style={{ background: "#faf9f5", boxShadow: "inset 0 0 0 1px #f0eee6" }}
           >
             <div className="flex items-center gap-2 text-[11px] font-medium" style={{ color: "#5e5d59" }}>
-              <span className="inline-flex" style={{ color: "#c96442" }}>
+              <span className="inline-flex" style={{ color: "#7c3aed" }}>
                 <Boxes className="h-3.5 w-3.5" />
               </span>
               Modo super admin
@@ -206,10 +218,10 @@ export function AdminShell({
         </aside>
 
         <main className="min-w-0">
-          {/* Brand stripe terracotta — sutil acento editorial */}
+          {/* Brand stripe violet — distintivo super-admin (no se confunde con tenant terracotta) */}
           <div
             className="mb-6 h-1 w-12 rounded-full"
-            style={{ background: "#c96442" }}
+            style={{ background: "#7c3aed" }}
             aria-hidden
           />
           {children}
