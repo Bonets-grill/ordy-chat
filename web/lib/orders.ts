@@ -6,9 +6,9 @@
 // Checkout Session dedicated a esa orden y devuelve la URL al bot para que la
 // reenvíe al comensal.
 
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { agentConfigs, orderItems, orders, tableSessions, tenants } from "@/lib/db/schema";
+import { agentConfigs, orderItems, orders, shifts, tableSessions, tenants } from "@/lib/db/schema";
 import { stripeClient } from "@/lib/stripe";
 import { computeTotals as computeTotalsImpl } from "@/lib/tax/compute";
 
@@ -89,6 +89,18 @@ export async function createOrder(input: CreateOrderInput) {
     });
   }
 
+  // Mig 038 (POS): auto-vincular al turno abierto del tenant (si hay).
+  // Pedidos de test NO se vinculan — no deben ensuciar los reportes POS.
+  let shiftId: string | null = null;
+  if (!(input.isTest ?? false)) {
+    const [openShift] = await db
+      .select({ id: shifts.id })
+      .from(shifts)
+      .where(and(eq(shifts.tenantId, input.tenantId), isNull(shifts.closedAt)))
+      .limit(1);
+    shiftId = openShift?.id ?? null;
+  }
+
   const [order] = await db
     .insert(orders)
     .values({
@@ -112,6 +124,8 @@ export async function createOrder(input: CreateOrderInput) {
       isTest: input.isTest ?? false,
       // Mig 032: link a sesión de mesa (NULL para takeaway).
       sessionId,
+      // Mig 038: link al turno POS abierto (NULL si no hay turno o es test).
+      shiftId,
     })
     .returning();
 
