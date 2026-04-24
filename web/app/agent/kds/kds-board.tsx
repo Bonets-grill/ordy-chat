@@ -96,9 +96,33 @@ export function KdsBoard({ kioskToken }: { kioskToken?: string } = {}) {
   const [loaded, setLoaded] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [advancing, setAdvancing] = React.useState<string | null>(null);
-  // Mig 029: toggle "🧪 Incluir pruebas". Off por defecto — el KDS real ignora
-  // pedidos/reservas de playground (is_test=true) hasta que el admin activa esto.
-  const [includeTest, setIncludeTest] = React.useState<boolean>(false);
+  // Toggle "🧪 Incluir pruebas".
+  // 2026-04-24: default ahora ON — Mario pidió ver los pedidos del playground
+  // en KDS para validar que el agente funciona ("quiero que lleguen para
+  // revisar que el agente esta funcionando bien"). El toggle persiste la
+  // elección del admin en localStorage para que no tenga que tocarlo cada
+  // sesión.
+  const [includeTest, setIncludeTest] = React.useState<boolean>(true);
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const saved = window.localStorage.getItem("kds-include-test");
+      if (saved === "0") setIncludeTest(false);
+      else if (saved === "1") setIncludeTest(true);
+    } catch {
+      /* noop */
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem("kds-include-test", includeTest ? "1" : "0");
+    } catch {
+      /* noop */
+    }
+  }, [includeTest]);
 
   // Mig 030: cuando montamos esto desde /kiosk/<token> mandamos el token en
   // headers para que las rutas /api/kds/* autentiquen sin cookie de Auth.js.
