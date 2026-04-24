@@ -55,13 +55,26 @@ vi.mock("@/lib/db", () => {
     returning: vi.fn(async () => []),
   };
 
+  // Stock check de mig 044: tx.select sobre menuItems devuelve []
+  // (sin items gestionados → comportamiento ilimitado, sin decremento).
+  const txStockSelectChain = {
+    from: vi.fn().mockReturnThis(),
+    where: vi.fn(async () => []),
+  };
+
+  const tx = {
+    select: vi.fn(() => txStockSelectChain),
+    insert: vi.fn(() => insertChain),
+    update: vi.fn(() => updateChain),
+  };
+
   return {
     db: {
       select: vi.fn(() => selectChain),
       insert: vi.fn(() => insertChain),
       update: vi.fn(() => updateChain),
       delete: vi.fn(() => ({ where: vi.fn().mockReturnThis(), returning: vi.fn(async () => []) })),
-      transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn({})),
+      transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(tx)),
     },
   };
 });
@@ -90,6 +103,16 @@ vi.mock("@/lib/db/schema", () => ({
     tableNumber: { name: "table_number" },
     status: { name: "status" },
     totalCents: { name: "total_cents" },
+  },
+  // Mig 044: stock control. Mock con todos los campos que createOrder lee.
+  menuItems: {
+    id: { name: "id" },
+    name: { name: "name" },
+    tenantId: { name: "tenant_id" },
+    stockQty: { name: "stock_qty" },
+    lowStockThreshold: { name: "low_stock_threshold" },
+    lastLowStockAlertAt: { name: "last_low_stock_alert_at" },
+    available: { name: "available" },
   },
 }));
 
