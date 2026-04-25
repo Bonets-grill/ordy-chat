@@ -105,9 +105,12 @@ export function AppShell({
     .toUpperCase();
 
   return (
-    <div className="min-h-screen bg-surface-subtle text-ink-900">
-      {/* Header */}
-      <header className="sticky top-0 z-30 border-b border-black/5 bg-surface/95 backdrop-blur">
+    // Layout app-like: viewport completo, sin scroll global. Sidebar y main
+    // tienen cada uno su propio overflow-y-auto, así el sidebar no salta cuando
+    // se hace scroll en el contenido (y viceversa).
+    <div className="flex h-screen flex-col overflow-hidden bg-surface-subtle text-ink-900">
+      {/* Header — fijo arriba por flex-none, sin sticky. */}
+      <header className="flex-none border-b border-black/5 bg-surface/95 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-7xl items-center justify-between gap-4 px-6">
           <Link href="/dashboard" className="flex items-center gap-2.5 text-[15px] font-medium tracking-tight">
             <span
@@ -151,10 +154,12 @@ export function AppShell({
         </div>
       </header>
 
-      {/* Body */}
-      <div className="mx-auto grid max-w-7xl grid-cols-1 gap-8 px-6 py-8 lg:grid-cols-[232px_1fr]">
-        {/* Sidebar — sólo en desktop. En móvil, las páginas usan su propio nav superior. */}
-        <aside className="hidden lg:flex flex-col gap-6 self-start sticky top-20">
+      {/* Body — flex-1 min-h-0 es CLAVE para que los hijos puedan tener su
+          propio scroll. Sin min-h-0 los flex children heredan min-height:auto
+          y desbordan al padre, rompiendo el overflow del viewport. */}
+      <div className="mx-auto grid w-full min-h-0 max-w-7xl flex-1 grid-cols-1 gap-8 px-6 lg:grid-cols-[232px_1fr]">
+        {/* Sidebar — scroll independiente. Sólo en desktop. */}
+        <aside className="hidden lg:flex min-h-0 flex-col gap-6 overflow-y-auto py-8 pr-2">
           {(Object.keys(groups) as Array<NavItem["group"]>).map((g) => (
             <nav key={g} aria-label={GROUP_LABEL[g]}>
               <div className="mb-1.5 px-3 text-[10.5px] font-medium uppercase tracking-wider2 text-ink-500">
@@ -202,7 +207,9 @@ export function AppShell({
           </div>
         </aside>
 
-        <main className="min-w-0">{children}</main>
+        {/* Main — scroll independiente del sidebar. min-w-0 evita que contenido
+            ancho (tablas, code blocks) reviente el grid. */}
+        <main className="min-h-0 min-w-0 overflow-y-auto py-8">{children}</main>
       </div>
     </div>
   );
