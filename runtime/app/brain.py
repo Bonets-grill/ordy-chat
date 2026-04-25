@@ -890,7 +890,7 @@ async def _build_menu_block(tenant_id: "UUID") -> str | None:  # noqa: F821
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT category, name, price_cents, description
+            SELECT category, name, price_cents, description, is_recommended
             FROM menu_items
             WHERE tenant_id = $1 AND available = true
             ORDER BY category, sort_order, name
@@ -902,12 +902,21 @@ async def _build_menu_block(tenant_id: "UUID") -> str | None:  # noqa: F821
     # Agrupar por categoría manteniendo orden de aparición.
     por_categoria: dict[str, list[dict]] = {}
     orden_cat: list[str] = []
+    any_recommended = False
     for r in rows:
         cat = r["category"] or "Otros"
         if cat not in por_categoria:
             por_categoria[cat] = []
             orden_cat.append(cat)
-        por_categoria[cat].append({"name": r["name"], "price_cents": r["price_cents"], "desc": r["description"]})
+        is_rec = bool(r["is_recommended"])
+        if is_rec:
+            any_recommended = True
+        por_categoria[cat].append({
+            "name": r["name"],
+            "price_cents": r["price_cents"],
+            "desc": r["description"],
+            "is_recommended": is_rec,
+        })
 
     lineas = ["<carta>"]
     lineas.append(
@@ -916,11 +925,19 @@ async def _build_menu_block(tenant_id: "UUID") -> str | None:  # noqa: F821
         "menciona un item con typo (Dakota → Dacoka, etc.), interpretalo como "
         "el más parecido de esta lista."
     )
+    if any_recommended:
+        lineas.append(
+            "Los items marcados con ⭐ RECOMENDADO son los que el dueño del "
+            "negocio quiere que priorices cuando el cliente pida una sugerencia "
+            "o cuando te toque ofrecer algo proactivamente (ver <upsell> si está "
+            "presente). NUNCA recomiendes items que no lleven ⭐."
+        )
     for cat in orden_cat:
         lineas.append(f"\n### {cat}")
         for it in por_categoria[cat]:
             precio = f"{it['price_cents'] / 100:.2f} €".replace(".", ",")
-            base = f"- {it['name']} — {precio}"
+            tag = "⭐ RECOMENDADO — " if it["is_recommended"] else ""
+            base = f"- {tag}{it['name']} — {precio}"
             if it["desc"]:
                 # Trunca descripción para no inflar tokens (max 300 chars —
                 # el mesero necesita conocer ingredientes, alérgenos y tamaño).
@@ -930,6 +947,79 @@ async def _build_menu_block(tenant_id: "UUID") -> str | None:  # noqa: F821
                 base += f" ({d})"
             lineas.append(base)
     lineas.append("</carta>")
+    return "\n".join(lineas)
+
+
+async def _build_upsell_block(tenant_id: "UUID") -> str | None:  # noqa: F821
+    """Mig 046: bloque <upsell> con las reglas de recomendación proactiva.
+
+    Lee agent_configs.upsell_config (3 flags) y, si alguno está activo Y hay
+    items recomendados en menu_items, inyecta las instrucciones correspondientes.
+    Sin recomendados no se inyecta nada (el bot no inventa).
+    """
+    from app.memory import inicializar_pool
+    pool = await inicializar_pool()
+    async with pool.acquire() as conn:
+        cfg_row = await conn.fetchrow(
+            "SELECT upsell_config FROM agent_configs WHERE tenant_id = $1",
+            tenant_id,
+        )
+        rec_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM menu_items WHERE tenant_id = $1 AND is_recommended = true AND available = true",
+            tenant_id,
+        )
+    if not cfg_row or not cfg_row["upsell_config"]:
+        return None
+    cfg = cfg_row["upsell_config"]
+    if isinstance(cfg, str):
+        import json
+        try:
+            cfg = json.loads(cfg)
+        except Exception:
+            return None
+    if not isinstance(cfg, dict):
+        return None
+    flags = {
+        "starter": bool(cfg.get("suggestStarterWithMain")),
+        "dessert": bool(cfg.get("suggestDessertAtClose")),
+        "pairing": bool(cfg.get("suggestPairing")),
+    }
+    if not any(flags.values()) or not rec_count:
+        return None
+    lineas = ["<upsell>"]
+    lineas.append(
+        "El dueño del negocio te ha autorizado a sugerir ACTIVAMENTE los items "
+        "marcados con ⭐ RECOMENDADO en <carta>, pero solo en estos momentos y "
+        "SIEMPRE de forma natural, no insistente. Una sola sugerencia por turno, "
+        "máximo. Si el cliente dice no, no insistas."
+    )
+    if flags["starter"]:
+        lineas.append(
+            "- CUANDO el cliente pide SOLO un plato principal sin entrantes: "
+            "ofrece UN entrante ⭐ recomendado. Ejemplo: '¿Te apetece algo para "
+            "picar mientras llega?' y menciona el entrante por nombre."
+        )
+    if flags["dessert"]:
+        lineas.append(
+            "- ANTES de cerrar el pedido (cuando el cliente diga 'nada más', "
+            "'es todo', 'eso es todo' o equivalente): ofrece UN postre ⭐ "
+            "recomendado. Ejemplo: '¿Dejamos hueco para un postre? Tenemos X.' "
+            "Si dice no, cierras el pedido sin insistir."
+        )
+    if flags["pairing"]:
+        lineas.append(
+            "- CUANDO el cliente elige un plato principal sin bebida: ofrece "
+            "un maridaje ⭐ recomendado (vino/cerveza/refresco según carta). "
+            "Ejemplo: '¿Te acompañamos con una copa de X?' Una sola vez."
+        )
+    lineas.append(
+        "REGLAS DURAS: (a) NUNCA sugieras un item que no lleve ⭐ en <carta>. "
+        "(b) NUNCA inventes productos. (c) NO encadenes sugerencias en el mismo "
+        "turno. (d) Si el cliente te pide recomendación explícita ('qué me "
+        "recomiendas'), puedes sugerir libremente de entre los ⭐ aunque estas "
+        "reglas no disparen."
+    )
+    lineas.append("</upsell>")
     return "\n".join(lineas)
 
 
@@ -1299,6 +1389,19 @@ async def generar_respuesta(
         logger.exception(
             "menu_block falló (cliente sigue sin carta dinámica)",
             extra={"tenant_slug": tenant.slug, "event": "menu_block_error"},
+        )
+
+    # Mig 046: bloque <upsell> con reglas de recomendación proactiva.
+    # Depende de <carta> (los items ⭐ recomendados viven ahí). Se inyecta
+    # solo si el tenant activó algún flag Y tiene items recomendados.
+    try:
+        upsell_block = await _build_upsell_block(tenant.id)
+        if upsell_block:
+            system_blocks.append({"type": "text", "text": upsell_block})
+    except Exception:
+        logger.exception(
+            "upsell_block falló (el bot sigue sin upselling activo)",
+            extra={"tenant_slug": tenant.slug, "event": "upsell_block_error"},
         )
 
     # Menu overrides activos (C4 tanda 3d 2026-04-20). Si el admin deshabilitó

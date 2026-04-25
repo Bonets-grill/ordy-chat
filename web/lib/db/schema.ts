@@ -170,6 +170,15 @@ export const agentConfigs = pgTable("agent_configs", {
   // (turno auto-abierto, cierre manual, resumen diario). Array vacío →
   // fallback a handoffWhatsappPhone.
   posReportPhones: text("pos_report_phones").array().notNull().default(_sqlTag`ARRAY[]::text[]`),
+  // Mig 046 — config de upselling. Flags que el tenant activa en
+  // /dashboard/recomendaciones. Cada flag autoriza un tipo de sugerencia
+  // proactiva del mesero (entrante con el principal, postre al cerrar,
+  // maridaje de bebida). Los items sugeridos salen de menu_items donde
+  // is_recommended=true + categoría coherente.
+  upsellConfig: jsonb("upsell_config")
+    .$type<{ suggestStarterWithMain: boolean; suggestDessertAtClose: boolean; suggestPairing: boolean }>()
+    .notNull()
+    .default({ suggestStarterWithMain: false, suggestDessertAtClose: false, suggestPairing: false }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -705,6 +714,10 @@ export const menuItems = pgTable("menu_items", {
   stockQty: integer("stock_qty"),
   lowStockThreshold: integer("low_stock_threshold"),
   lastLowStockAlertAt: timestamp("last_low_stock_alert_at", { withTimezone: true }),
+  // Mig 046 — el tenant marca desde /dashboard/recomendaciones qué items
+  // quiere que el mesero recomiende activamente. El bloque <carta> dinámico
+  // los marca con ⭐ RECOMENDADO para que el bot los priorice al sugerir.
+  isRecommended: boolean("is_recommended").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

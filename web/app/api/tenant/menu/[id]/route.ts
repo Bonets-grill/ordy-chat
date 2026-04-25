@@ -23,6 +23,8 @@ const patchSchema = z.object({
   // 0..100_000 = unidades restantes / threshold de aviso.
   stockQty: z.number().int().min(0).max(100_000).nullable().optional(),
   lowStockThreshold: z.number().int().min(0).max(100_000).nullable().optional(),
+  // Mig 046 — flag de recomendación. true = el bot lo prioriza al sugerir.
+  isRecommended: z.boolean().optional(),
 });
 
 type Ctx = { params: Promise<{ id: string }> };
