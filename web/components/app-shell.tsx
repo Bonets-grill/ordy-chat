@@ -14,7 +14,7 @@
 
 import {
   BarChart3, BellRing, Bot, BookOpen, CalendarCheck, CalendarX, ChefHat,
-  CreditCard, FileText, FlaskConical, LayoutDashboard, Menu,
+  ClipboardList, CreditCard, FileText, FlaskConical, LayoutDashboard, Menu,
   MessageSquareText, QrCode, Settings, Smartphone, Sparkles, Truck,
 } from "lucide-react";
 import Link from "next/link";
@@ -41,6 +41,7 @@ const NAV: NavItem[] = [
   { href: "/dashboard/carta",    label: "Carta",           icon: Menu,               group: "rest" },
   { href: "/dashboard/recomendaciones", label: "Recomendaciones", icon: Sparkles,    group: "rest" },
   { href: "/agent/tables",       label: "Mesas y QRs",     icon: QrCode,             group: "rest" },
+  { href: "/agent/comandero",    label: "Comandero",       icon: ClipboardList,      group: "rest" },
   { href: "/agent/kds",          label: "KDS Cocina & Bar",icon: ChefHat,            group: "rest" },
   { href: "/agent/reservations", label: "Reservas",        icon: CalendarCheck,      group: "rest" },
   { href: "/agent/closed-days",  label: "Días cerrados",   icon: CalendarX,          group: "rest" },
