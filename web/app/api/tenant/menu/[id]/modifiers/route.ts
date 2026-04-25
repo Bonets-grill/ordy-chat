@@ -87,25 +87,27 @@ export async function POST(req: Request, ctx: Ctx) {
   const data = parsed.data;
   const maxSelectFinal = data.selectionType === "single" ? 1 : data.maxSelect;
 
-  // Transacción: grupo + modifiers iniciales atómicos.
-  const created = await db.transaction(async (tx) => {
-    const [g] = await tx
-      .insert(menuItemModifierGroups)
-      .values({
-        tenantId: bundle.tenant.id,
-        menuItemId: id,
-        name: data.name,
-        selectionType: data.selectionType,
-        required: data.required,
-        minSelect: data.minSelect,
-        maxSelect: maxSelectFinal,
-        sortOrder: data.sortOrder,
-      })
-      .returning();
+  // Sin transacción: el driver neon-http NO soporta db.transaction(). Hacemos
+  // INSERT del grupo + INSERT de los modifiers secuencial y, si los modifiers
+  // fallan, borramos el grupo manualmente para no dejar grupos huérfanos.
+  const [g] = await db
+    .insert(menuItemModifierGroups)
+    .values({
+      tenantId: bundle.tenant.id,
+      menuItemId: id,
+      name: data.name,
+      selectionType: data.selectionType,
+      required: data.required,
+      minSelect: data.minSelect,
+      maxSelect: maxSelectFinal,
+      sortOrder: data.sortOrder,
+    })
+    .returning();
 
-    let modifiers: Array<typeof menuItemModifiers.$inferSelect> = [];
-    if (data.modifiers.length > 0) {
-      modifiers = await tx
+  let modifiers: Array<typeof menuItemModifiers.$inferSelect> = [];
+  if (data.modifiers.length > 0) {
+    try {
+      modifiers = await db
         .insert(menuItemModifiers)
         .values(
           data.modifiers.map((m) => ({
@@ -117,9 +119,16 @@ export async function POST(req: Request, ctx: Ctx) {
           })),
         )
         .returning();
+    } catch (err) {
+      // Rollback manual: borra el grupo creado para que el cliente pueda
+      // reintentar sin grupos huérfanos.
+      await db
+        .delete(menuItemModifierGroups)
+        .where(eq(menuItemModifierGroups.id, g.id))
+        .catch(() => {});
+      throw err;
     }
-    return { ...g, modifiers };
-  });
+  }
 
-  return NextResponse.json({ ok: true, group: created });
+  return NextResponse.json({ ok: true, group: { ...g, modifiers } });
 }
