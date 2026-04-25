@@ -8,7 +8,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { orders, tenants } from "@/lib/db/schema";
-import { createOrder } from "@/lib/orders";
+import { createOrder, DuplicateOrderError, OutOfHoursError } from "@/lib/orders";
 import { requireTenant } from "@/lib/tenant";
 
 export const runtime = "nodejs";
@@ -128,6 +128,31 @@ export async function POST(req: Request) {
       isTest: parsed.data.isTest ?? false,
     });
   } catch (err) {
+    if (err instanceof OutOfHoursError) {
+      // Bug Bonets 2026-04-26: el bot creaba pedidos fuera de horario porque
+      // el LLM ignoraba el system prompt. Server-side rechazo claro.
+      return NextResponse.json(
+        { error: "out_of_hours", schedule: err.schedule },
+        { status: 409 },
+      );
+    }
+    if (err instanceof DuplicateOrderError) {
+      // Bug Bonets 2026-04-26: el LLM ejecutaba crear_pedido 2x en la misma
+      // sesión. Idempotency en createOrder devuelve el order existente como
+      // si fuera la primera vez (el cliente recibe la confirmación 1x).
+      const [existing] = await db
+        .select({ id: orders.id, totalCents: orders.totalCents, currency: orders.currency, isTest: orders.isTest })
+        .from(orders).where(eq(orders.id, err.existingOrderId)).limit(1);
+      if (existing) {
+        return NextResponse.json({
+          orderId: existing.id,
+          totalCents: existing.totalCents,
+          currency: existing.currency,
+          isTest: existing.isTest,
+          deduped: true,
+        });
+      }
+    }
     const msg = err instanceof Error ? err.message : String(err);
     // Fase 6: bloqueo de añadir items tras pedir la cuenta. El runtime lee
     // este error y traduce a un mensaje al cliente ("la cuenta ya se pidió,

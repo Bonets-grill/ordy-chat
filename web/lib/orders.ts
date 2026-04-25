@@ -6,13 +6,32 @@
 // Checkout Session dedicated a esa orden y devuelve la URL al bot para que la
 // reenvíe al comensal.
 
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { agentConfigs, menuItems, modifierOptions, orderItems, orders, shifts, tableSessions, tenants } from "@/lib/db/schema";
 import { type OrderPaymentMethod } from "@/lib/payment-methods";
 import { queuePosReport } from "@/lib/pos-reports";
+import { isWithinSchedule } from "@/lib/schedule";
 import { stripeClient } from "@/lib/stripe";
 import { computeTotals as computeTotalsImpl } from "@/lib/tax/compute";
+
+/** Error cuando se intenta crear un pedido fuera del horario de apertura. */
+export class OutOfHoursError extends Error {
+  readonly code = "out_of_hours" as const;
+  constructor(public readonly schedule: string) {
+    super(`out_of_hours: el restaurante está cerrado ahora (schedule: ${schedule.slice(0, 80)})`);
+    this.name = "OutOfHoursError";
+  }
+}
+
+/** Error cuando se detecta un pedido idéntico recién creado (idempotency guard). */
+export class DuplicateOrderError extends Error {
+  readonly code = "duplicate_order" as const;
+  constructor(public readonly existingOrderId: string) {
+    super(`duplicate_order: order ${existingOrderId} ya existe en últimos 60s con mismo contenido`);
+    this.name = "DuplicateOrderError";
+  }
+}
 
 /**
  * Mig 044: error que lanza createOrder cuando algún item del pedido no tiene
@@ -96,11 +115,72 @@ export async function createOrder(input: CreateOrderInput) {
       taxRateStandard: tenants.taxRateStandard,
       pricesIncludeTax: tenants.pricesIncludeTax,
       taxLabel: tenants.taxLabel,
+      timezone: tenants.timezone,
     })
     .from(tenants)
     .where(eq(tenants.id, input.tenantId))
     .limit(1);
   if (!tenant) throw new Error("tenant_not_found");
+
+  // GUARD HORARIO (bug Bonets 2026-04-26): el bot creó pedido a las 23:06
+  // sábado cuando el restaurante cerraba 23:00. Ahora server-side rechaza
+  // pedidos fuera del horario declarado en agent_configs.schedule. Los
+  // tests (is_test=true) sí pueden crear fuera de horario para validar
+  // playground sin bloquear desarrollo.
+  if (!(input.isTest ?? false)) {
+    const [cfg] = await db
+      .select({ schedule: agentConfigs.schedule })
+      .from(agentConfigs)
+      .where(eq(agentConfigs.tenantId, input.tenantId))
+      .limit(1);
+    const status = isWithinSchedule(cfg?.schedule, new Date(), tenant.timezone ?? "Atlantic/Canary");
+    if (!status.open) {
+      throw new OutOfHoursError(status.schedule);
+    }
+  }
+
+  // GUARD IDEMPOTENCY (bug Bonets 2026-04-26): el LLM ejecutó crear_pedido
+  // 2x en la misma sesión de Bradly → 2 pedidos idénticos en la DB. Si en
+  // los últimos 60s ya existe un pedido del mismo customer_phone con el
+  // mismo total_cents calculado, lo devolvemos en vez de crear duplicado.
+  // Solo aplica con customerPhone (no para test playground sin phone real).
+  if (input.customerPhone && !(input.isTest ?? false)) {
+    const sinceTs = new Date(Date.now() - 60_000);
+    const recents = await db
+      .select({
+        id: orders.id,
+        totalCents: orders.totalCents,
+        status: orders.status,
+        createdAt: orders.createdAt,
+      })
+      .from(orders)
+      .where(
+        and(
+          eq(orders.tenantId, input.tenantId),
+          eq(orders.customerPhone, input.customerPhone),
+          gt(orders.createdAt, sinceTs),
+        ),
+      )
+      .orderBy(desc(orders.createdAt))
+      .limit(5);
+    // Calculamos el total previsto del nuevo input (sin modifiers detallados aún)
+    // sumando precios+cantidad. Aproximación suficiente para detectar duplicado.
+    const previewTotal = input.items.reduce(
+      (acc, it) => acc + it.unitPriceCents * it.quantity +
+        (it.modifiers ?? []).reduce((mAcc, m) => mAcc + m.priceDeltaCents * it.quantity, 0),
+      0,
+    );
+    // Permitimos ±5% de tolerancia por redondeo IVA. Si total y nº items
+    // coinciden con un order recién creado del mismo phone → duplicado.
+    const dup = recents.find((r) => {
+      if (r.status === "canceled") return false;
+      const delta = Math.abs(r.totalCents - previewTotal);
+      return delta < Math.max(50, Math.round(previewTotal * 0.05));
+    });
+    if (dup) {
+      throw new DuplicateOrderError(dup.id);
+    }
+  }
 
   const defaultRate = parseFloat(tenant.taxRateStandard ?? "10.00");
 

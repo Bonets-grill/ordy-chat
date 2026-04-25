@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 const STORAGE_KEY = "ordy-wa-notify-enabled";
 const SEEN_KEY = "ordy-wa-notify-last-seen";
+const NOTIFIED_IDS_KEY = "ordy-wa-notified-ids"; // dedupe entre refresh
 
 type Preview = {
   id: string;
@@ -20,11 +21,41 @@ type Preview = {
   createdAt: string;
 };
 
+// Carga IDs ya notificados (TTL 1h — los más viejos se borran).
+function loadNotifiedIds(): Set<string> {
+  try {
+    const raw = window.localStorage.getItem(NOTIFIED_IDS_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw) as { id: string; ts: number }[];
+    const cutoff = Date.now() - 60 * 60_000;
+    return new Set(parsed.filter((e) => e.ts > cutoff).map((e) => e.id));
+  } catch {
+    return new Set();
+  }
+}
+
+function persistNotifiedIds(ids: Set<string>) {
+  try {
+    const cutoff = Date.now() - 60 * 60_000;
+    const arr = Array.from(ids).map((id) => ({ id, ts: Date.now() }));
+    window.localStorage.setItem(
+      NOTIFIED_IDS_KEY,
+      JSON.stringify(arr.filter((e) => e.ts > cutoff).slice(-200)),
+    );
+  } catch {
+    /* noop */
+  }
+}
+
 export function NotificationsBell() {
   const [enabled, setEnabled] = useState(false);
   const [unread, setUnread] = useState(0);
   const lastSeenRef = useRef<string>(new Date().toISOString());
   const timerRef = useRef<number | null>(null);
+  // Dedupe: set de message IDs ya notificados en esta sesión + las últimas
+  // 1h vía localStorage. Evita que múltiples pestañas o reloads disparen
+  // la misma notificación N veces (bug Bonets 2026-04-26).
+  const notifiedIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -35,6 +66,7 @@ export function NotificationsBell() {
       }
       const lastSeen = window.localStorage.getItem(SEEN_KEY);
       if (lastSeen) lastSeenRef.current = lastSeen;
+      notifiedIdsRef.current = loadNotifiedIds();
     } catch {
       /* noop */
     }
@@ -51,11 +83,28 @@ export function NotificationsBell() {
         previews: Preview[];
       };
       if (data.count > 0) {
-        setUnread((prev) => prev + data.count);
-        // Disparamos una sola Notificación con el más reciente para no
-        // spamear al staff. El sonido lo pone el sistema operativo.
-        if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-          const p = data.previews[0];
+        // Dedupe: filtra previews ya notificados en esta sesión + last 1h
+        // (evita que múltiples pestañas o reloads disparen notif duplicada
+        // del mismo mensaje — bug Bonets 2026-04-26).
+        const fresh = data.previews.filter((p) => !notifiedIdsRef.current.has(p.id));
+        if (fresh.length === 0) {
+          // Todos eran duplicados — solo avanza el cursor, sin sonar ni contar.
+          lastSeenRef.current = data.latestCreatedAt;
+          try { window.localStorage.setItem(SEEN_KEY, data.latestCreatedAt); } catch { /* noop */ }
+          return;
+        }
+        setUnread((prev) => prev + fresh.length);
+        // Skip notification del SO si Mario tiene la pestaña visible — ya
+        // está mirando el dashboard, no necesita ruido.
+        const hidden = typeof document !== "undefined" && document.visibilityState === "hidden";
+        // Disparamos UNA sola Notificación del SO con el más reciente nuevo
+        // para no spamear. El sonido lo pone el SO.
+        if (
+          hidden &&
+          typeof Notification !== "undefined" &&
+          Notification.permission === "granted"
+        ) {
+          const p = fresh[0]!;
           try {
             new Notification(`WhatsApp · ${p.from}`, {
               body: p.content,
@@ -66,6 +115,9 @@ export function NotificationsBell() {
             /* noop */
           }
         }
+        // Marca como notificados para no repetir.
+        for (const p of fresh) notifiedIdsRef.current.add(p.id);
+        persistNotifiedIds(notifiedIdsRef.current);
       }
       lastSeenRef.current = data.latestCreatedAt;
       try {
