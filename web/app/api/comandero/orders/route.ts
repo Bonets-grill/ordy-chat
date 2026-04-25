@@ -13,9 +13,8 @@ import { eq, and } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { menuItems, restaurantTables } from "@/lib/db/schema";
 import { createOrder } from "@/lib/orders";
-import { requireTenant } from "@/lib/tenant";
 import { limitByUserId } from "@/lib/rate-limit";
-import { auth } from "@/lib/auth";
+import { getComanderoActor } from "@/lib/employees/scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,16 +46,12 @@ const BODY = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "unauth" }, { status: 401 });
-  }
-  const bundle = await requireTenant();
-  if (!bundle) {
-    return NextResponse.json({ error: "tenant_not_found" }, { status: 401 });
-  }
+  const actor = await getComanderoActor();
+  if (!actor) return NextResponse.json({ error: "unauth" }, { status: 401 });
 
-  const rate = await limitByUserId(session.user.id, "comandero_create_order", 120, "1 h");
+  // Rate-limit por actor (employee.id si keypad, user.id si owner directo).
+  const rateKey = actor.kind === "employee" ? actor.employeeId : actor.userId;
+  const rate = await limitByUserId(rateKey, "comandero_create_order", 120, "1 h");
   if (!rate.ok) return NextResponse.json({ error: "rate_limited" }, { status: 429 });
 
   const parsed = BODY.safeParse(await req.json().catch(() => null));
@@ -70,7 +65,7 @@ export async function POST(req: NextRequest) {
     .from(restaurantTables)
     .where(
       and(
-        eq(restaurantTables.tenantId, bundle.tenant.id),
+        eq(restaurantTables.tenantId, actor.tenantId),
         eq(restaurantTables.number, parsed.data.tableNumber),
       ),
     )
@@ -90,7 +85,7 @@ export async function POST(req: NextRequest) {
       available: menuItems.available,
     })
     .from(menuItems)
-    .where(eq(menuItems.tenantId, bundle.tenant.id));
+    .where(eq(menuItems.tenantId, actor.tenantId));
   const byId = new Map(dbItems.map((i) => [i.id, i]));
 
   const lines = [];
@@ -115,15 +110,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "no_valid_items" }, { status: 400 });
   }
 
+  // Mig 049: si el actor es un empleado del keypad, persistimos
+  // created_by_employee_id (canónico). Si es el owner directo desde el
+  // dashboard, mantenemos created_by_waiter_id (retro-compat reportes).
+  const orderMetadata =
+    actor.kind === "employee"
+      ? { created_by_employee_id: actor.employeeId, employee_name: actor.name }
+      : { created_by_waiter_id: actor.userId };
+
   const order = await createOrder({
-    tenantId: bundle.tenant.id,
+    tenantId: actor.tenantId,
     orderType: "dine_in",
     tableNumber: parsed.data.tableNumber,
     notes: parsed.data.notes,
     items: lines,
     isTest: false,
-    // Reportes POS por mesero (Next run #3) — se filtran orders por este key.
-    metadata: { created_by_waiter_id: session.user.id },
+    metadata: orderMetadata,
   });
 
   return NextResponse.json({

@@ -10,11 +10,10 @@ import { z } from "zod";
 import { and, eq, inArray, ne } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { orders, restaurantTables } from "@/lib/db/schema";
-import { auth } from "@/lib/auth";
-import { requireTenant } from "@/lib/tenant";
 import { markOrderPaidManual } from "@/lib/orders";
 import { ORDER_PAYMENT_METHODS } from "@/lib/payment-methods";
 import { limitByUserId } from "@/lib/rate-limit";
+import { getComanderoActor } from "@/lib/employees/scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,14 +34,11 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ number: string }> },
 ) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "unauth" }, { status: 401 });
-  }
-  const bundle = await requireTenant();
-  if (!bundle) return NextResponse.json({ error: "tenant_not_found" }, { status: 401 });
+  const actor = await getComanderoActor();
+  if (!actor) return NextResponse.json({ error: "unauth" }, { status: 401 });
 
-  const rate = await limitByUserId(session.user.id, "comandero_close_table", 60, "1 h");
+  const rateKey = actor.kind === "employee" ? actor.employeeId : actor.userId;
+  const rate = await limitByUserId(rateKey, "comandero_close_table", 60, "1 h");
   if (!rate.ok) return NextResponse.json({ error: "rate_limited" }, { status: 429 });
 
   const { number: tableNumber } = await params;
@@ -61,7 +57,7 @@ export async function POST(
     .from(restaurantTables)
     .where(
       and(
-        eq(restaurantTables.tenantId, bundle.tenant.id),
+        eq(restaurantTables.tenantId, actor.tenantId),
         eq(restaurantTables.number, tableNumber),
       ),
     )
@@ -76,7 +72,7 @@ export async function POST(
     .from(orders)
     .where(
       and(
-        eq(orders.tenantId, bundle.tenant.id),
+        eq(orders.tenantId, actor.tenantId),
         eq(orders.tableNumber, tableNumber),
         eq(orders.orderType, "dine_in"),
         eq(orders.isTest, false),
@@ -90,7 +86,7 @@ export async function POST(
   for (const o of open) {
     const updated = await markOrderPaidManual(
       o.id,
-      bundle.tenant.id,
+      actor.tenantId,
       body.data.paymentMethod,
     );
     if (updated) {

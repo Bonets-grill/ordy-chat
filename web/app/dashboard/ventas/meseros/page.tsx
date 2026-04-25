@@ -9,8 +9,8 @@ import { auth } from "@/lib/auth";
 import { requireTenant } from "@/lib/tenant";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { db } from "@/lib/db";
-import { orders, users } from "@/lib/db/schema";
-import { and, eq, gte, lt, sql } from "drizzle-orm";
+import { employees, orders, users } from "@/lib/db/schema";
+import { and, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Ventas por mesero · Ordy Chat" };
@@ -41,9 +41,17 @@ export default async function VentasMeserosPage({
   const from = new Date(`${fromStr}T00:00:00.000Z`);
   const to = new Date(new Date(`${toStr}T00:00:00.000Z`).getTime() + 24 * 60 * 60 * 1000);
 
+  // Coalescemos employee_id y waiter_id en un solo "actor key" para agrupar
+  // (mig 049: el comandero ahora persiste created_by_employee_id; pre-mig
+  // hay órdenes con created_by_waiter_id del flow owner-directo).
+  const actorExpr = sql<string>`coalesce(
+    ${orders.metadata} ->> 'created_by_employee_id',
+    ${orders.metadata} ->> 'created_by_waiter_id'
+  )`;
   const rows = await db
     .select({
-      waiterId: sql<string>`(${orders.metadata} ->> 'created_by_waiter_id')`,
+      actorId: actorExpr,
+      hasEmployee: sql<boolean>`(${orders.metadata} ? 'created_by_employee_id')`,
       orderCount: sql<number>`cast(count(*) as int)`,
       totalCents: sql<number>`coalesce(sum(${orders.totalCents}), 0)::int`,
       paidTotalCents: sql<number>`coalesce(sum(${orders.totalCents}) filter (where ${orders.status} = 'paid'), 0)::int`,
@@ -55,21 +63,45 @@ export default async function VentasMeserosPage({
         eq(orders.isTest, false),
         gte(orders.createdAt, from),
         lt(orders.createdAt, to),
-        sql`${orders.metadata} ? 'created_by_waiter_id'`,
+        or(
+          sql`${orders.metadata} ? 'created_by_waiter_id'`,
+          sql`${orders.metadata} ? 'created_by_employee_id'`,
+        ),
       ),
     )
-    .groupBy(sql`${orders.metadata} ->> 'created_by_waiter_id'`);
+    .groupBy(actorExpr, sql`(${orders.metadata} ? 'created_by_employee_id')`);
 
   const userRows = await db
     .select({ id: users.id, email: users.email, name: users.name })
     .from(users);
   const userMap = new Map(userRows.map((u) => [u.id, u]));
 
+  const employeeIds = rows.filter((r) => r.hasEmployee && r.actorId).map((r) => r.actorId);
+  const employeeRows = employeeIds.length
+    ? await db
+        .select({ id: employees.id, name: employees.name, role: employees.role })
+        .from(employees)
+        .where(inArray(employees.id, employeeIds))
+    : [];
+  const employeeMap = new Map(employeeRows.map((e) => [e.id, e]));
+
   const enriched = rows
-    .map((r) => ({
-      ...r,
-      user: userMap.get(r.waiterId) ?? { email: "(usuario eliminado)", name: null },
-    }))
+    .map((r) => {
+      if (r.hasEmployee) {
+        const e = employeeMap.get(r.actorId);
+        return {
+          ...r,
+          user: {
+            email: e ? `(empleado · ${e.role})` : "(empleado eliminado)",
+            name: e?.name ?? null,
+          },
+        };
+      }
+      return {
+        ...r,
+        user: userMap.get(r.actorId) ?? { email: "(usuario eliminado)", name: null },
+      };
+    })
     .sort((a, b) => b.paidTotalCents - a.paidTotalCents);
 
   const totalCount = enriched.reduce((s, r) => s + r.orderCount, 0);
@@ -140,7 +172,7 @@ export default async function VentasMeserosPage({
                 </thead>
                 <tbody>
                   {enriched.map((r) => (
-                    <tr key={r.waiterId} className="border-b border-neutral-50 last:border-0">
+                    <tr key={r.actorId} className="border-b border-neutral-50 last:border-0">
                       <td className="py-2">
                         <div className="font-medium text-neutral-900">
                           {r.user.name ?? r.user.email}

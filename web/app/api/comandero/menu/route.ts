@@ -12,13 +12,13 @@ import {
   menuItemModifierGroups,
   menuItemModifiers,
 } from "@/lib/db/schema";
-import { requireTenant } from "@/lib/tenant";
+import { getComanderoActor } from "@/lib/employees/scope";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const bundle = await requireTenant();
-  if (!bundle) return NextResponse.json({ error: "unauth" }, { status: 401 });
+  const actor = await getComanderoActor();
+  if (!actor) return NextResponse.json({ error: "unauth" }, { status: 401 });
 
   const items = await db
     .select({
@@ -34,13 +34,13 @@ export async function GET() {
       sortOrder: menuItems.sortOrder,
     })
     .from(menuItems)
-    .where(eq(menuItems.tenantId, bundle.tenant.id))
+    .where(eq(menuItems.tenantId, actor.tenantId))
     .orderBy(asc(menuItems.sortOrder), asc(menuItems.name));
 
   const groups = await db
     .select()
     .from(menuItemModifierGroups)
-    .where(eq(menuItemModifierGroups.tenantId, bundle.tenant.id))
+    .where(eq(menuItemModifierGroups.tenantId, actor.tenantId))
     .orderBy(asc(menuItemModifierGroups.sortOrder));
 
   const allMods = groups.length

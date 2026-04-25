@@ -7,7 +7,7 @@ import { NextResponse } from "next/server";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { orders, restaurantTables } from "@/lib/db/schema";
-import { requireTenant } from "@/lib/tenant";
+import { getComanderoActor } from "@/lib/employees/scope";
 
 export const dynamic = "force-dynamic";
 
@@ -20,15 +20,15 @@ const OPEN_STATUSES = [
 ];
 
 export async function GET() {
-  const bundle = await requireTenant();
-  if (!bundle) return NextResponse.json({ error: "unauth" }, { status: 401 });
+  const actor = await getComanderoActor();
+  if (!actor) return NextResponse.json({ error: "unauth" }, { status: 401 });
 
   const tables = await db
     .select()
     .from(restaurantTables)
     .where(
       and(
-        eq(restaurantTables.tenantId, bundle.tenant.id),
+        eq(restaurantTables.tenantId, actor.tenantId),
         eq(restaurantTables.active, true),
       ),
     )
@@ -43,7 +43,7 @@ export async function GET() {
     .from(orders)
     .where(
       and(
-        eq(orders.tenantId, bundle.tenant.id),
+        eq(orders.tenantId, actor.tenantId),
         eq(orders.orderType, "dine_in"),
         eq(orders.isTest, false),
         inArray(orders.status, OPEN_STATUSES),
