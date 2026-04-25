@@ -24,12 +24,22 @@ export default async function VentasPage() {
   if (!bundle) redirect("/onboarding");
 
   const tenantId = bundle.tenant.id;
-  const now = new Date();
-  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  // Fix Bonets 2026-04-26: el cálculo de "hoy" usaba el TZ del server Vercel
+  // (UTC). Para tenants en Canary (UTC+1 verano), eso desplazaba el "día"
+  // 1h y los pedidos pagados entre 00:00 y 01:00 hora Canary aparecían
+  // como "ayer". Ahora usamos la TZ del tenant para los buckets de fecha.
+  const tenantTz = bundle.tenant.timezone || "Atlantic/Canary";
   const startOf30 = new Date(Date.now() - 30 * 86_400_000);
 
-  // Totales HOY (pagados).
+  // Helper SQL: el inicio del día/mes EN LA TZ DEL TENANT, devuelto como UTC
+  // para comparar con paid_at (UTC). Usamos sql.raw porque necesitamos
+  // interpolar el nombre de TZ dinámicamente.
+  const tzLiteral = sql.raw(`'${tenantTz.replace(/'/g, "")}'`);
+  const startOfDayInTz = sql<Date>`(date_trunc('day', NOW() AT TIME ZONE ${tzLiteral}) AT TIME ZONE ${tzLiteral})`;
+  const startOfMonthInTz = sql<Date>`(date_trunc('month', NOW() AT TIME ZONE ${tzLiteral}) AT TIME ZONE ${tzLiteral})`;
+  const dayInTz = sql<string>`to_char(date_trunc('day', ${orders.paidAt} AT TIME ZONE ${tzLiteral}), 'YYYY-MM-DD')`;
+
+  // Totales HOY (pagados, en TZ tenant).
   const [today] = await db
     .select({
       count: sql<number>`count(*)::int`,
@@ -40,10 +50,10 @@ export default async function VentasPage() {
       eq(orders.tenantId, tenantId),
       eq(orders.isTest, false),
       isNotNull(orders.paidAt),
-      gte(orders.paidAt, startOfDay),
+      sql`${orders.paidAt} >= ${startOfDayInTz}`,
     ));
 
-  // Totales ESTE MES.
+  // Totales ESTE MES (en TZ tenant).
   const [month] = await db
     .select({
       count: sql<number>`count(*)::int`,
@@ -54,13 +64,13 @@ export default async function VentasPage() {
       eq(orders.tenantId, tenantId),
       eq(orders.isTest, false),
       isNotNull(orders.paidAt),
-      gte(orders.paidAt, startOfMonth),
+      sql`${orders.paidAt} >= ${startOfMonthInTz}`,
     ));
 
-  // Desglose por día, últimos 30.
+  // Desglose por día, últimos 30 — agrupado por día EN TZ TENANT.
   const byDay = await db
     .select({
-      day: sql<string>`to_char(date_trunc('day', ${orders.paidAt}), 'YYYY-MM-DD')`,
+      day: dayInTz,
       count: sql<number>`count(*)::int`,
       total: sql<number>`coalesce(sum(${orders.totalCents}), 0)::int`,
     })
@@ -71,8 +81,8 @@ export default async function VentasPage() {
       isNotNull(orders.paidAt),
       gte(orders.paidAt, startOf30),
     ))
-    .groupBy(sql`date_trunc('day', ${orders.paidAt})`)
-    .orderBy(sql`date_trunc('day', ${orders.paidAt}) desc`);
+    .groupBy(sql`date_trunc('day', ${orders.paidAt} AT TIME ZONE ${tzLiteral})`)
+    .orderBy(sql`date_trunc('day', ${orders.paidAt} AT TIME ZONE ${tzLiteral}) desc`);
 
   // Histórico de turnos cerrados (últimos 30).
   const shiftRows = await db

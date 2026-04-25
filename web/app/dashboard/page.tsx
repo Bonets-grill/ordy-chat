@@ -42,16 +42,21 @@ export default async function DashboardPage() {
     .from(messages)
     .where(and(eq(messages.tenantId, bundle.tenant.id), gte(messages.createdAt, since24h)));
 
-  // Pedidos hoy + revenue hoy (descontando cancelados/test)
-  const sinceToday = new Date();
-  sinceToday.setHours(0, 0, 0, 0);
+  // Pedidos hoy + revenue hoy (descontando cancelados/test).
+  // Fix Bonets 2026-04-26: usar TZ del tenant para "hoy" (server Vercel está
+  // en UTC, eso desplaza el día para tenants en Canary/Madrid).
+  const tenantTz = bundle.tenant.timezone || "Atlantic/Canary";
+  const tzLit = sql.raw(`'${tenantTz.replace(/'/g, "")}'`);
   const [ordersToday] = await db
     .select({
       n: count(),
-      revenue: sql<number>`COALESCE(SUM(CASE WHEN ${orders.status} != 'cancelled' AND ${orders.isTest} = false THEN ${orders.totalCents} ELSE 0 END), 0)::int`,
+      revenue: sql<number>`COALESCE(SUM(CASE WHEN ${orders.status} != 'canceled' AND ${orders.isTest} = false THEN ${orders.totalCents} ELSE 0 END), 0)::int`,
     })
     .from(orders)
-    .where(and(eq(orders.tenantId, bundle.tenant.id), gte(orders.createdAt, sinceToday)));
+    .where(and(
+      eq(orders.tenantId, bundle.tenant.id),
+      sql`${orders.createdAt} >= (date_trunc('day', NOW() AT TIME ZONE ${tzLit}) AT TIME ZONE ${tzLit})`,
+    ));
 
   const recent = await db
     .select()
