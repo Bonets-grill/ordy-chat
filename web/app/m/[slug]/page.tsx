@@ -282,9 +282,17 @@ export default async function PublicMenuPage({ params, searchParams }: PageParam
                       className="flex items-center gap-4 border-b border-dashed border-stone-200 pb-4 last:border-b-0 last:pb-0"
                     >
                       <div className="min-w-0 flex-1">
-                        <h3 className="font-medium text-stone-900">{it.name}</h3>
+                        <h3
+                          className="font-medium text-stone-900"
+                          data-i18n-key="name"
+                        >
+                          {it.name}
+                        </h3>
                         {it.description ? (
-                          <p className="mt-1 text-sm leading-snug text-stone-500">
+                          <p
+                            className="mt-1 text-sm leading-snug text-stone-500"
+                            data-i18n-key="description"
+                          >
                             {it.description}
                           </p>
                         ) : null}

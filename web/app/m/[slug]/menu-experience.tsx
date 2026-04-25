@@ -107,6 +107,43 @@ export function MenuExperience(props: Props) {
     setLang(detectLang());
   }, []);
 
+  // Mig 048 — Carta visible traducida al vuelo. La página SSR pinta nombres
+  // y descripciones en ES (canónico). Cuando el cliente está en otro idioma,
+  // fetcheamos /api/public/menu-i18n/<slug>?lang=X y reemplazamos el texto
+  // de los <h3 data-i18n-key="name"> y <p data-i18n-key="description"> de
+  // cada <li data-item-id>. Auto-cache server-side: solo el primer cliente
+  // por idioma paga el coste LLM, después es lectura DB.
+  React.useEffect(() => {
+    if (lang === "es") return;
+    if (typeof document === "undefined") return;
+    let aborted = false;
+    (async () => {
+      try {
+        const r = await fetch(
+          `/api/public/menu-i18n/${slug}?lang=${encodeURIComponent(lang)}`,
+          { cache: "no-store" },
+        );
+        if (!r.ok || aborted) return;
+        const data = (await r.json()) as {
+          items?: Array<{ id: string; name: string; description: string | null }>;
+        };
+        for (const it of data.items ?? []) {
+          const root = document.querySelector(`[data-item-id="${it.id}"]`);
+          if (!root) continue;
+          const h = root.querySelector('[data-i18n-key="name"]');
+          if (h && it.name) h.textContent = it.name;
+          const p = root.querySelector('[data-i18n-key="description"]');
+          if (p && it.description) p.textContent = it.description;
+        }
+      } catch {
+        // i18n best-effort: si falla el endpoint, el cliente sigue viendo ES.
+      }
+    })();
+    return () => {
+      aborted = true;
+    };
+  }, [lang, slug]);
+
   // ── Carrito ─────────────────────────────────────────────────
   const [cart, setCart] = React.useState<CartLine[]>([]);
   const cartKey = `${CART_STORAGE_PREFIX}${slug}`;
