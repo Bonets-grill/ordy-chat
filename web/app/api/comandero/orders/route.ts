@@ -122,6 +122,8 @@ export async function POST(req: NextRequest) {
     notes: parsed.data.notes,
     items: lines,
     isTest: false,
+    // Reportes POS por mesero (Next run #3) — se filtran orders por este key.
+    metadata: { created_by_waiter_id: session.user.id },
   });
 
   return NextResponse.json({

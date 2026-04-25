@@ -65,6 +65,9 @@ export type CreateOrderInput = {
   /** Mig 029: true = pedido creado desde el playground (runtime sandbox=true).
    *  KDS filtra is_test=false por defecto; workers proactivos WA saltan estas filas. */
   isTest?: boolean;
+  /** Metadata libre persistida en orders.metadata (jsonb). El comandero usa
+   *  { created_by_waiter_id: userId } para reportes por mesero. */
+  metadata?: Record<string, unknown>;
 };
 
 export type OrderTotals = {
@@ -321,6 +324,8 @@ export async function createOrder(input: CreateOrderInput) {
         sessionId,
         // Mig 038: link al turno POS abierto (NULL si no hay turno o es test).
         shiftId,
+        // Comandero: { created_by_waiter_id: userId } para reportes por mesero.
+        ...(input.metadata ? { metadata: input.metadata } : {}),
       })
       .returning();
 
