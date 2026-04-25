@@ -17,6 +17,22 @@ html, body {
   -moz-osx-font-smoothing: grayscale;
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior-y: none;
+  letter-spacing: 0.005em;
+}
+
+/* Tabular numerals por defecto en números de dinero/contadores
+   dentro de paneles internos. Aplica vía clase `.tabular-nums`
+   en el componente, no global, para no afectar landing.
+
+   `.font-serif-editorial`: helper para H1 con stack serif Claude. */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+}
+
+.font-serif-editorial {
+  font-family: Charter, "Iowan Old Style", Palatino, "Palatino Linotype", Georgia, "Times New Roman", serif;
+  font-feature-settings: "kern" 1, "liga" 1;
 }
 
 /* Ajustes cuando corremos dentro de Capacitor (iOS/Android). */
