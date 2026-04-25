@@ -224,6 +224,20 @@ export function ComanderoBoard({ actor }: { actor?: ComanderoActor }) {
     }
   }
 
+  // IMPORTANTE: este useMemo DEBE estar arriba del early return de "tables".
+  // Antes vivía después y al alternar view tables↔menu cambiaba el número de
+  // hooks ejecutados → React error #310 (rendered more hooks than previous
+  // render) que crasheaba la página entera. Incidente prod 2026-04-25 13:14.
+  const itemsByCategory = React.useMemo(() => {
+    const m = new Map<string, MenuItem[]>();
+    for (const i of items) {
+      const arr = m.get(i.category) ?? [];
+      arr.push(i);
+      m.set(i.category, arr);
+    }
+    return Array.from(m.entries());
+  }, [items]);
+
   if (view === "tables") {
     return (
       <div className="min-h-screen bg-stone-50">
@@ -341,16 +355,6 @@ export function ComanderoBoard({ actor }: { actor?: ComanderoActor }) {
   }
 
   // view === "menu"
-  const itemsByCategory = React.useMemo(() => {
-    const m = new Map<string, MenuItem[]>();
-    for (const i of items) {
-      const arr = m.get(i.category) ?? [];
-      arr.push(i);
-      m.set(i.category, arr);
-    }
-    return Array.from(m.entries());
-  }, [items]);
-
   return (
     <div className="min-h-screen bg-stone-50">
       {actor ? <ActorTopBar actor={actor} /> : null}
