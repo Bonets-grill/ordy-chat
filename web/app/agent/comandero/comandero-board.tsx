@@ -7,7 +7,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Check, CreditCard, Minus, Plus, ShoppingCart, Utensils } from "lucide-react";
+import { ArrowLeft, Check, CreditCard, Minus, Plus, ShoppingCart, Trash2, Utensils } from "lucide-react";
 
 type Modifier = { id: string; name: string; priceDeltaCents: number };
 type ModifierGroup = {
@@ -141,6 +141,15 @@ export function ComanderoBoard() {
       next[idx] = { ...target, qty: newQty };
       return next;
     });
+  }
+
+  function removeLine(idx: number) {
+    setCart((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  function clearCart() {
+    if (cart.length === 0) return;
+    if (confirm("¿Vaciar todo el carrito?")) setCart([]);
   }
 
   const itemsById = React.useMemo(() => {
@@ -354,8 +363,21 @@ export function ComanderoBoard() {
                   <ShoppingCart size={16} />
                   {cart.reduce((s, l) => s + l.qty, 0)} ítems
                 </span>
-                <span className="font-semibold text-neutral-900">
-                  {formatEur(cartTotal)}
+                <span className="flex items-center gap-2">
+                  <span className="font-semibold text-neutral-900">
+                    {formatEur(cartTotal)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      clearCart();
+                    }}
+                    className="text-xs text-red-600 hover:underline"
+                    aria-label="Vaciar carrito"
+                  >
+                    Vaciar
+                  </button>
                 </span>
               </summary>
               <ul className="mt-3 space-y-1 text-sm">
@@ -388,6 +410,14 @@ export function ComanderoBoard() {
                           </span>
                         ) : null}
                       </span>
+                      <button
+                        type="button"
+                        onClick={() => removeLine(i)}
+                        className="inline-flex h-6 w-6 items-center justify-center rounded-full text-red-500 hover:bg-red-50"
+                        aria-label={`Quitar ${item.name}`}
+                      >
+                        <Trash2 size={12} />
+                      </button>
                     </li>
                   );
                 })}
