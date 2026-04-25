@@ -155,35 +155,79 @@ async def cargar_tenant_por_slug(slug: str) -> TenantContext:
     )
 
 
+# Caché in-memory de la key global con TTL corto. Permite rotación 1-click
+# desde el panel super admin sin penalizar latency (<60s de propagación).
+_ANTHROPIC_KEY_CACHE: dict = {"value": None, "source": None, "expires_at": 0.0}
+_ANTHROPIC_KEY_TTL_SECS = 60.0
+
+
+def _invalidate_anthropic_key_cache() -> None:
+    """Invalidación explícita (útil en tests o tras 401 desde Anthropic)."""
+    _ANTHROPIC_KEY_CACHE["value"] = None
+    _ANTHROPIC_KEY_CACHE["source"] = None
+    _ANTHROPIC_KEY_CACHE["expires_at"] = 0.0
+
+
 async def obtener_anthropic_api_key(tenant_credentials: dict) -> str:
     """
-    Prioridad: env ANTHROPIC_API_KEY (master global) → platform_settings → tenant.
-    Para Ordy Chat el modelo por defecto es master key global.
+    Prioridad (clase mundial: super admin controla rotación desde el panel,
+    no desde infra; env queda como bootstrap/dev local):
+      1. platform_settings.anthropic_api_key (cifrada AES-256-GCM, rotable
+         1-click desde /admin/settings)
+      2. env ANTHROPIC_API_KEY (fallback dev local / bootstrap inicial)
+      3. tenant_credentials.anthropic_api_key (override manual per-tenant)
+
+    Caché in-memory TTL=60s para no añadir 1 query/turno al hot path del brain.
     """
     import os
+    import time
 
+    now = time.monotonic()
+    cached = _ANTHROPIC_KEY_CACHE
+    if cached["value"] and cached["expires_at"] > now:
+        # Si el caché vino de platform o env (globales), úsalo. Si vino de tenant,
+        # NO porque depende del tenant_credentials de cada llamada.
+        if cached["source"] in ("platform_settings", "env"):
+            return cached["value"]
+
+    # 1. platform_settings (fuente de verdad — rotable desde panel super admin)
+    try:
+        pool = await inicializar_pool()
+        async with pool.acquire() as conn:
+            encrypted = await conn.fetchval(
+                "SELECT value_encrypted FROM platform_settings WHERE key = 'anthropic_api_key'"
+            )
+        if encrypted:
+            try:
+                key = descifrar(encrypted)
+                _ANTHROPIC_KEY_CACHE.update(
+                    value=key, source="platform_settings", expires_at=now + _ANTHROPIC_KEY_TTL_SECS
+                )
+                return key
+            except Exception as e:
+                logger.error(
+                    "error descifrando anthropic_api_key global",
+                    extra={"event": "platform_key_decrypt_error"},
+                    exc_info=e,
+                )
+    except Exception as e:
+        # DB no disponible (boot, migración) → caemos a env como red de seguridad
+        logger.warning(
+            "platform_settings no accesible al resolver anthropic_api_key, fallback a env",
+            extra={"event": "platform_settings_unreachable", "error": str(e)},
+        )
+
+    # 2. env (fallback dev local / bootstrap inicial antes del primer set en panel)
     env_key = os.getenv("ANTHROPIC_API_KEY", "")
     if env_key:
+        _ANTHROPIC_KEY_CACHE.update(
+            value=env_key, source="env", expires_at=now + _ANTHROPIC_KEY_TTL_SECS
+        )
         return env_key
 
-    pool = await inicializar_pool()
-    async with pool.acquire() as conn:
-        encrypted = await conn.fetchval(
-            "SELECT value_encrypted FROM platform_settings WHERE key = 'anthropic_api_key'"
-        )
-    if encrypted:
-        try:
-            return descifrar(encrypted)
-        except Exception as e:
-            logger.error(
-                "error descifrando anthropic_api_key global",
-                extra={"event": "platform_key_decrypt_error"},
-                exc_info=e,
-            )
-
-    # Último recurso: key por tenant (solo si alguien lo configuró manualmente).
+    # 3. per-tenant (override manual, no se cachea — depende del tenant)
     per_tenant = tenant_credentials.get("anthropic_api_key")
     if per_tenant:
         return per_tenant
 
-    raise RuntimeError("No hay ANTHROPIC_API_KEY disponible (ni env, ni platform, ni tenant)")
+    raise RuntimeError("No hay ANTHROPIC_API_KEY disponible (ni platform, ni env, ni tenant)")
