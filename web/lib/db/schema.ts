@@ -912,6 +912,22 @@ export type AgentRule = typeof agentRules.$inferSelect;
 export type NewAgentRule = typeof agentRules.$inferInsert;
 export type AgentFeedback = typeof agentFeedback.$inferSelect;
 export type NewAgentFeedback = typeof agentFeedback.$inferInsert;
+
+// Mig 049 — Empleados (meseros) para login PIN del comandero.
+export const employees = pgTable("employees", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  // argon2id hash del PIN — never store plain.
+  pinHash: text("pin_hash").notNull(),
+  role: text("role").notNull().default("waiter"),
+  active: boolean("active").notNull().default(true),
+  lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+export type Employee = typeof employees.$inferSelect;
+export type NewEmployee = typeof employees.$inferInsert;
 export type LearningRun = typeof learningRuns.$inferSelect;
 export type NewLearningRun = typeof learningRuns.$inferInsert;
 export type LearnedRulePending = typeof learnedRulesPending.$inferSelect;
