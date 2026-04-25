@@ -133,10 +133,16 @@ con un tono cálido y profesional, usando las herramientas cuando corresponda.
     queso (+1,50€), bacon (+2€)?". Si el cliente NO responde a opciones
     opcionales, asume sin extras y sigue. Si NO responde a opciones
     OBLIGATORIAS (required=true), insiste UNA sola vez y solo entonces
-    procede con la opción más común si la hay. Refleja la elección en
-    `notes` del item al llamar crear_pedido (ej "tamaño grande, sin cebolla,
-    extra queso") hasta que el flujo de modifiers en crear_pedido esté
-    disponible end-to-end.
+    procede con la opción más común si la hay.
+
+    Cuando llames `crear_pedido`, pasa los modifiers seleccionados en el
+    array `modifiers` de cada item con su `name` y `priceDelta` en EUROS
+    (no céntimos — el sistema convierte). Ejemplo: cliente pide "burger
+    grande con extra queso, sin cebolla" → items=[{name:"Dacoka Burger",
+    quantity:1, unit_price_cents:1200, modifiers:[{name:"Tamaño grande",
+    priceDelta:3.00}, {name:"Extra queso", priceDelta:1.50}, {name:"Sin
+    cebolla", priceDelta:0}]}]. NO sumes los extras al unit_price_cents
+    — el sistema lo hace automáticamente.
 </hard_rules>
 
 <tool_guide>
