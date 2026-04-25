@@ -50,6 +50,26 @@ type View = "tables" | "menu";
 const formatEur = (cents: number) =>
   `${(cents / 100).toFixed(2).replace(".", ",")} €`;
 
+const ZONE_FALLBACK = "Sin zona";
+
+function groupTablesByZone(tables: Table[]): Array<{ zone: string; list: Table[] }> {
+  const map = new Map<string, Table[]>();
+  for (const t of tables) {
+    const key = (t.zone ?? "").trim() || ZONE_FALLBACK;
+    const arr = map.get(key) ?? [];
+    arr.push(t);
+    map.set(key, arr);
+  }
+  // Orden alfabético por zona, "Sin zona" siempre al final.
+  return Array.from(map.entries())
+    .sort(([a], [b]) => {
+      if (a === ZONE_FALLBACK) return 1;
+      if (b === ZONE_FALLBACK) return -1;
+      return a.localeCompare(b, "es");
+    })
+    .map(([zone, list]) => ({ zone, list }));
+}
+
 export function ComanderoBoard() {
   const router = useRouter();
   const [view, setView] = React.useState<View>("tables");
@@ -223,73 +243,88 @@ export function ComanderoBoard() {
             </p>
           </div>
         ) : (
-          <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-            {tables.map((t) => (
-              <li key={t.id}>
-                <button
-                  type="button"
-                  onClick={() => selectTable(t)}
-                  className={`w-full rounded-xl border p-4 text-left transition active:scale-95 ${
-                    t.state === "occupied"
-                      ? "border-amber-300 bg-amber-50 hover:border-amber-400"
-                      : "border-emerald-200 bg-emerald-50 hover:border-emerald-300"
-                  }`}
-                >
-                  <div className="flex items-baseline justify-between">
-                    <span className="text-2xl font-semibold text-neutral-900">
-                      {t.number}
-                    </span>
+          <div className="space-y-8">
+            {groupTablesByZone(tables).map(({ zone, list }) => {
+              const occupied = list.filter((t) => t.state === "occupied").length;
+              return (
+                <section key={zone}>
+                  <header className="mb-3 flex items-baseline justify-between border-b border-neutral-200 pb-2">
+                    <h2 className="text-xs font-semibold uppercase tracking-wider text-neutral-700">
+                      {zone}
+                    </h2>
                     <span className="text-xs text-neutral-500">
-                      {t.seats} pax
+                      {list.length} mesa{list.length !== 1 ? "s" : ""}
+                      {occupied > 0 ? ` · ${occupied} ocupada${occupied !== 1 ? "s" : ""}` : ""}
                     </span>
-                  </div>
-                  {t.zone ? (
-                    <div className="mt-1 text-xs text-neutral-500">{t.zone}</div>
-                  ) : null}
-                  <div className="mt-3 text-xs">
-                    {t.state === "occupied" ? (
-                      <span className="font-medium text-amber-800">
-                        Ocupada · {t.openOrdersCount} pedido{t.openOrdersCount !== 1 ? "s" : ""}
-                      </span>
-                    ) : (
-                      <span className="font-medium text-emerald-800">Libre</span>
-                    )}
-                  </div>
-                  {t.state === "occupied" && t.openTotalCents > 0 ? (
-                    <div className="mt-1 text-xs text-neutral-700">
-                      Acumulado: {formatEur(t.openTotalCents)}
-                    </div>
-                  ) : null}
-                </button>
-                {t.state === "occupied" ? (
-                  <div className="mt-2 flex gap-1">
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void closeTable(t, "cash");
-                      }}
-                      className="inline-flex flex-1 items-center justify-center gap-1 rounded-md bg-emerald-600 px-2 py-1.5 text-xs font-medium text-white shadow-sm active:scale-95"
-                    >
-                      <CreditCard size={12} />
-                      Efectivo
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void closeTable(t, "card");
-                      }}
-                      className="inline-flex flex-1 items-center justify-center gap-1 rounded-md bg-stone-700 px-2 py-1.5 text-xs font-medium text-white shadow-sm active:scale-95"
-                    >
-                      <CreditCard size={12} />
-                      Tarjeta
-                    </button>
-                  </div>
-                ) : null}
-              </li>
-            ))}
-          </ul>
+                  </header>
+                  <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                    {list.map((t) => (
+                      <li key={t.id}>
+                        <button
+                          type="button"
+                          onClick={() => selectTable(t)}
+                          className={`w-full rounded-xl border p-4 text-left transition active:scale-95 ${
+                            t.state === "occupied"
+                              ? "border-amber-300 bg-amber-50 hover:border-amber-400"
+                              : "border-emerald-200 bg-emerald-50 hover:border-emerald-300"
+                          }`}
+                        >
+                          <div className="flex items-baseline justify-between">
+                            <span className="text-2xl font-semibold text-neutral-900">
+                              {t.number}
+                            </span>
+                            <span className="text-xs text-neutral-500">
+                              {t.seats} pax
+                            </span>
+                          </div>
+                          <div className="mt-3 text-xs">
+                            {t.state === "occupied" ? (
+                              <span className="font-medium text-amber-800">
+                                Ocupada · {t.openOrdersCount} pedido{t.openOrdersCount !== 1 ? "s" : ""}
+                              </span>
+                            ) : (
+                              <span className="font-medium text-emerald-800">Libre</span>
+                            )}
+                          </div>
+                          {t.state === "occupied" && t.openTotalCents > 0 ? (
+                            <div className="mt-1 text-xs text-neutral-700">
+                              Acumulado: {formatEur(t.openTotalCents)}
+                            </div>
+                          ) : null}
+                        </button>
+                        {t.state === "occupied" ? (
+                          <div className="mt-2 flex gap-1">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void closeTable(t, "cash");
+                              }}
+                              className="inline-flex flex-1 items-center justify-center gap-1 rounded-md bg-emerald-600 px-2 py-1.5 text-xs font-medium text-white shadow-sm active:scale-95"
+                            >
+                              <CreditCard size={12} />
+                              Efectivo
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void closeTable(t, "card");
+                              }}
+                              className="inline-flex flex-1 items-center justify-center gap-1 rounded-md bg-stone-700 px-2 py-1.5 text-xs font-medium text-white shadow-sm active:scale-95"
+                            >
+                              <CreditCard size={12} />
+                              Tarjeta
+                            </button>
+                          </div>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              );
+            })}
+          </div>
         )}
         {error ? (
           <p className="mt-4 text-center text-sm text-red-600">{error}</p>
