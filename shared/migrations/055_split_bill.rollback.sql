@@ -1,0 +1,3 @@
+BEGIN;
+DROP TABLE IF EXISTS table_split_payments CASCADE;
+COMMIT;

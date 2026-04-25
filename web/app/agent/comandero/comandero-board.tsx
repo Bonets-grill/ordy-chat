@@ -915,6 +915,7 @@ function PosView({
   const [discountMode, setDiscountMode] = React.useState<"eur" | "pct">("eur");
   const [tipMode, setTipMode] = React.useState<"eur" | "pct">("pct");
   const [paying, setPaying] = React.useState(false);
+  const [showSplit, setShowSplit] = React.useState(false);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -1106,10 +1107,26 @@ function PosView({
               </button>
             </section>
 
-            <p className="mt-4 text-center text-[11px] text-stone-400">
-              Dividir cuenta entre varios clientes — próximamente.
-            </p>
+            <button
+              type="button"
+              onClick={() => setShowSplit(true)}
+              className="mt-3 w-full rounded-xl border-2 border-dashed border-stone-300 bg-white px-4 py-3 text-sm font-medium text-stone-700 active:scale-[0.98] hover:border-stone-400 hover:bg-stone-50"
+            >
+              Dividir cuenta entre varios clientes →
+            </button>
           </>
+        )}
+
+        {showSplit && ticket && (
+          <SplitBillDialog
+            tableNumber={tableNumber}
+            ticket={ticket}
+            onClose={() => setShowSplit(false)}
+            onClosed={() => {
+              setShowSplit(false);
+              onBack();
+            }}
+          />
         )}
       </main>
     </div>
@@ -1164,6 +1181,331 @@ function AdjustmentInput({
           >
             %
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── SplitBillDialog (Mig 055) ──────────────────────────────────────
+// Dividir cuenta entre N comensales. 3 modos:
+//   - equal: divide finalToPay entre N partes iguales
+//   - amount: el mesero introduce el monto exacto a cobrar (split por monto libre)
+//   - item: marca order_items concretos que cubre la subcuenta
+//
+// Cada subcuenta se persiste como `pending` y el mesero la cobra de uno en uno.
+// Cuando la suma de pagados >= finalToPay, todos los orders dine_in abiertos
+// se marcan paid y la mesa se libera.
+type SplitPaymentRow = {
+  id: string;
+  splitKind: "item" | "amount" | "equal";
+  amountCents: number;
+  paymentMethod: string;
+  status: "pending" | "paid" | "voided";
+  label: string | null;
+  paidAt: string | null;
+};
+
+function SplitBillDialog({
+  tableNumber,
+  ticket,
+  onClose,
+  onClosed,
+}: {
+  tableNumber: string;
+  ticket: Ticket;
+  onClose: () => void;
+  onClosed: () => void;
+}) {
+  type SplitMode = "equal" | "amount" | "item";
+  const [mode, setMode] = React.useState<SplitMode>("equal");
+  const [partyCount, setPartyCount] = React.useState(2);
+  const [amountInput, setAmountInput] = React.useState("");
+  const [paymentMethod, setPaymentMethod] = React.useState<"cash" | "card">("cash");
+  const [label, setLabel] = React.useState("");
+  const [selectedItems, setSelectedItems] = React.useState<Set<string>>(new Set());
+  const [payments, setPayments] = React.useState<SplitPaymentRow[]>([]);
+  const [remainingCents, setRemainingCents] = React.useState<number>(ticket.totals.finalToPay);
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  const reload = React.useCallback(async () => {
+    const r = await fetch(`/api/comandero/tables/${encodeURIComponent(tableNumber)}/split`, { cache: "no-store" });
+    if (!r.ok) {
+      const data = (await r.json().catch(() => ({}))) as { error?: string };
+      setError(data.error ?? `Error ${r.status}`);
+      return;
+    }
+    const json = (await r.json()) as { payments: SplitPaymentRow[]; totals: { remaining: number } };
+    setPayments(json.payments);
+    setRemainingCents(json.totals.remaining);
+  }, [tableNumber]);
+
+  React.useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  // Build itemKey for the per-item split (stable across renders).
+  const itemKeys = React.useMemo(() => {
+    return ticket.lines.map((l, idx) => `${l.orderId}:${idx}`);
+  }, [ticket.lines]);
+
+  function toggleItem(key: string) {
+    setSelectedItems((s) => {
+      const next = new Set(s);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  // Compute amount based on mode.
+  const computedAmount = React.useMemo(() => {
+    if (mode === "equal") {
+      const n = Math.max(1, Math.floor(partyCount));
+      return Math.floor(remainingCents / n);
+    }
+    if (mode === "amount") {
+      const n = Number(amountInput.replace(",", ".").replace(/[^\d.]/g, ""));
+      if (!Number.isFinite(n) || n < 0) return 0;
+      return Math.round(n * 100);
+    }
+    // item mode
+    let total = 0;
+    for (const key of selectedItems) {
+      const idx = itemKeys.indexOf(key);
+      if (idx >= 0) {
+        const line = ticket.lines[idx];
+        total += line.lineTotalCents;
+      }
+    }
+    return total;
+  }, [mode, partyCount, amountInput, remainingCents, selectedItems, itemKeys, ticket.lines]);
+
+  async function createPayment() {
+    if (computedAmount <= 0) {
+      setError("Monto inválido");
+      return;
+    }
+    if (computedAmount > remainingCents + 1) {
+      setError(`Excede lo que queda por pagar (${formatEur(remainingCents)})`);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const items = mode === "item"
+        ? Array.from(selectedItems).map((key) => {
+            const idx = itemKeys.indexOf(key);
+            const l = ticket.lines[idx];
+            return {
+              orderId: l.orderId,
+              name: l.name,
+              quantity: l.quantity,
+              unitPriceCents: l.unitPriceCents,
+            };
+          })
+        : undefined;
+      const r = await fetch(`/api/comandero/tables/${encodeURIComponent(tableNumber)}/split`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          splitKind: mode,
+          amountCents: computedAmount,
+          paymentMethod,
+          items,
+          label: label.trim() || null,
+        }),
+      });
+      if (!r.ok) {
+        const data = (await r.json().catch(() => ({}))) as { error?: string };
+        setError(data.error ?? `Error ${r.status}`);
+        return;
+      }
+      setLabel("");
+      setSelectedItems(new Set());
+      setAmountInput("");
+      await reload();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function payNow(paymentId: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await fetch(
+        `/api/comandero/tables/${encodeURIComponent(tableNumber)}/split/${paymentId}/pay`,
+        { method: "PATCH" },
+      );
+      const data = (await r.json().catch(() => ({}))) as { error?: string; tableClosed?: boolean };
+      if (!r.ok) {
+        setError(data.error ?? `Error ${r.status}`);
+        return;
+      }
+      if (data.tableClosed) {
+        onClosed();
+        return;
+      }
+      await reload();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function voidPayment(paymentId: string) {
+    if (!confirm("¿Cancelar esta subcuenta?")) return;
+    setBusy(true);
+    try {
+      await fetch(
+        `/api/comandero/tables/${encodeURIComponent(tableNumber)}/split?id=${paymentId}`,
+        { method: "DELETE" },
+      );
+      await reload();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-stone-900/40 p-2 sm:items-center sm:p-4">
+      <div className="flex max-h-[92vh] w-full max-w-xl flex-col rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl">
+        <header className="flex items-center justify-between border-b border-stone-200 px-5 py-3">
+          <div>
+            <h3 className="text-base font-semibold text-stone-900">Dividir cuenta · Mesa {tableNumber}</h3>
+            <p className="text-xs text-stone-500">Quedan {formatEur(remainingCents)} por cobrar</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-lg p-1 text-stone-500 hover:bg-stone-100"><X size={18} /></button>
+        </header>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+          {/* Subcuentas existentes */}
+          {payments.length > 0 && (
+            <section>
+              <h4 className="mb-2 text-xs font-medium uppercase tracking-wider text-stone-500">Subcuentas</h4>
+              <ul className="divide-y divide-stone-100 rounded-lg border border-stone-200">
+                {payments.map((p) => (
+                  <li key={p.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-stone-900">{formatEur(p.amountCents)}</span>
+                        <span className="text-xs text-stone-500">{p.paymentMethod === "cash" ? "Efectivo" : "Tarjeta"}</span>
+                        {p.label && <span className="text-xs text-stone-600">· {p.label}</span>}
+                      </div>
+                      <span className={`text-[10px] font-medium uppercase ${p.status === "paid" ? "text-emerald-600" : "text-amber-600"}`}>
+                        {p.status === "paid" ? "Pagado" : "Pendiente"}
+                      </span>
+                    </div>
+                    {p.status === "pending" && (
+                      <div className="flex gap-1">
+                        <button type="button" disabled={busy} onClick={() => payNow(p.id)} className="rounded bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50">Cobrar</button>
+                        <button type="button" disabled={busy} onClick={() => voidPayment(p.id)} className="rounded border border-stone-300 px-2.5 py-1 text-xs text-stone-700 disabled:opacity-50"><Trash2 size={12} /></button>
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          {/* Nueva subcuenta */}
+          <section className="rounded-xl border border-violet-200 bg-violet-50/40 p-3">
+            <h4 className="mb-2 text-xs font-medium uppercase tracking-wider text-violet-700">Nueva subcuenta</h4>
+
+            {/* Mode tabs */}
+            <div className="mb-3 flex gap-1 rounded-md border border-stone-200 bg-white p-0.5 text-xs">
+              {(["equal", "amount", "item"] as SplitMode[]).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setMode(m)}
+                  className={`flex-1 rounded px-2 py-1.5 ${mode === m ? "bg-stone-900 text-white" : "text-stone-700"}`}
+                >
+                  {m === "equal" ? "Partes iguales" : m === "amount" ? "Monto libre" : "Por items"}
+                </button>
+              ))}
+            </div>
+
+            {mode === "equal" && (
+              <div className="mb-3 flex items-center gap-2">
+                <span className="text-sm text-stone-700">¿Entre cuántos?</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={partyCount}
+                  onChange={(e) => setPartyCount(Number(e.target.value) || 1)}
+                  className="w-20 rounded-md border border-stone-300 px-2 py-1 text-sm"
+                />
+                <span className="ml-auto text-sm font-semibold text-stone-900">{formatEur(computedAmount)}</span>
+              </div>
+            )}
+            {mode === "amount" && (
+              <div className="mb-3 flex items-center gap-2">
+                <span className="text-sm text-stone-700">€</span>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={amountInput}
+                  onChange={(e) => setAmountInput(e.target.value)}
+                  placeholder="0,00"
+                  className="flex-1 rounded-md border border-stone-300 px-3 py-1.5 text-sm"
+                />
+                <span className="text-sm font-semibold text-stone-900">{formatEur(computedAmount)}</span>
+              </div>
+            )}
+            {mode === "item" && (
+              <div className="mb-3 max-h-48 overflow-y-auto rounded-md border border-stone-200 bg-white">
+                <ul className="divide-y divide-stone-100 text-sm">
+                  {ticket.lines.map((l, idx) => {
+                    const key = itemKeys[idx];
+                    const checked = selectedItems.has(key);
+                    return (
+                      <li key={key}>
+                        <label className="flex cursor-pointer items-center gap-2 px-3 py-2">
+                          <input type="checkbox" checked={checked} onChange={() => toggleItem(key)} className="h-4 w-4 accent-violet-600" />
+                          <span className="flex-1">{l.quantity}× {l.name}</span>
+                          <span className="text-stone-700 tabular-nums">{formatEur(l.lineTotalCents)}</span>
+                        </label>
+                      </li>
+                    );
+                  })}
+                </ul>
+                <div className="border-t border-stone-200 bg-stone-50 px-3 py-2 text-right text-sm font-semibold">
+                  Total seleccionado: {formatEur(computedAmount)}
+                </div>
+              </div>
+            )}
+
+            <div className="mb-3 flex gap-2">
+              <input
+                type="text"
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                placeholder="Etiqueta (Mario, Cliente 1…)"
+                maxLength={80}
+                className="flex-1 rounded-md border border-stone-300 px-3 py-1.5 text-sm"
+              />
+              <div className="inline-flex rounded-md border border-stone-300 p-0.5">
+                <button type="button" onClick={() => setPaymentMethod("cash")} className={`rounded px-2 py-1 text-xs ${paymentMethod === "cash" ? "bg-emerald-600 text-white" : "text-stone-700"}`}>Efectivo</button>
+                <button type="button" onClick={() => setPaymentMethod("card")} className={`rounded px-2 py-1 text-xs ${paymentMethod === "card" ? "bg-stone-900 text-white" : "text-stone-700"}`}>Tarjeta</button>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              disabled={busy || computedAmount <= 0}
+              onClick={createPayment}
+              className="w-full rounded-lg bg-violet-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+            >
+              + Añadir subcuenta {formatEur(computedAmount)}
+            </button>
+          </section>
+
+          {error && (
+            <p className="rounded-md bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>
+          )}
         </div>
       </div>
     </div>

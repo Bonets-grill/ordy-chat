@@ -367,6 +367,34 @@ export const orders = pgTable(
   },
 );
 
+// ── Subcuentas split bill (Mig 055) ────────────────────────────────
+// Una mesa puede tener N subcuentas pendientes hasta que la suma cubra el
+// total ajustado. Cada subcuenta cobra independiente y referencia a su
+// session_id + table_number para queries directas.
+export const tableSplitPayments = pgTable("table_split_payments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  sessionId: uuid("session_id").references((): AnyPgColumn => tableSessions.id, { onDelete: "cascade" }),
+  tableNumber: text("table_number").notNull(),
+  // 'item' | 'amount' | 'equal'
+  splitKind: text("split_kind").notNull(),
+  // Snapshot de items cubiertos cuando splitKind='item'.
+  itemsJson: jsonb("items_json").notNull().default([]),
+  amountCents: integer("amount_cents").notNull(),
+  tipCents: integer("tip_cents").notNull().default(0),
+  discountCents: integer("discount_cents").notNull().default(0),
+  paymentMethod: text("payment_method").notNull(),
+  // 'pending' | 'paid' | 'voided'
+  status: text("status").notNull().default("pending"),
+  paidAt: timestamp("paid_at", { withTimezone: true }),
+  label: text("label"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type TableSplitPayment = typeof tableSplitPayments.$inferSelect;
+export type NewTableSplitPayment = typeof tableSplitPayments.$inferInsert;
+
 // Sesión de mesa (mig 032). Una fila por "mesa abierta" en un restaurante.
 // Acumula pedidos hasta que se cobra (Stripe o camarero marca pagado).
 // Partial unique a nivel DB: solo una sesión viva por (tenant, table_number).
