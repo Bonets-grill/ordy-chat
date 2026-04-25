@@ -358,6 +358,9 @@ export const orders = pgTable(
     // (no incluida). 0 por default. CHECK >= 0 a nivel DB. Pedidos pre-mig
     // 041 quedan en 0 — no inventamos propinas históricas.
     tipCents: integer("tip_cents").notNull().default(0),
+    // Migración 054: descuento aplicado por el comandero al cobrar (céntimos).
+    // Se RESTA al cobro real, no modifica subtotal/tax. CHECK >= 0 en DB.
+    discountCents: integer("discount_cents").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     paidAt: timestamp("paid_at", { withTimezone: true }),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

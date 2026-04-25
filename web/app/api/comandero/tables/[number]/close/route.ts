@@ -20,6 +20,12 @@ export const dynamic = "force-dynamic";
 
 const BODY = z.object({
   paymentMethod: z.enum(ORDER_PAYMENT_METHODS).default("cash"),
+  /** Mig 054: descuento + propina opcionales aplicados al cobrar.
+   * Se distribuyen en el primer pedido abierto de la mesa para que el
+   * reporting refleje el ajuste sin tocar el subtotal/tax originales.
+   * (Split bill no soportado v1 — Human TODO.) */
+  discountCents: z.number().int().min(0).max(100_000_000).optional(),
+  tipCents: z.number().int().min(0).max(100_000_000).optional(),
 });
 
 const OPEN_STATUSES = [
@@ -81,6 +87,17 @@ export async function POST(
       ),
     );
 
+  // Persistir descuento + propina en el primer pedido abierto antes de marcar
+  // pagados — para que aparezcan en reportes con el resto del cobro.
+  const discountCents = body.data.discountCents ?? 0;
+  const tipCents = body.data.tipCents ?? 0;
+  if ((discountCents > 0 || tipCents > 0) && open.length > 0) {
+    await db
+      .update(orders)
+      .set({ discountCents, tipCents, updatedAt: new Date() })
+      .where(eq(orders.id, open[0].id));
+  }
+
   let closedCount = 0;
   let closedTotalCents = 0;
   for (const o of open) {
@@ -99,6 +116,9 @@ export async function POST(
     ok: true,
     closedCount,
     closedTotalCents,
+    discountCents,
+    tipCents,
+    finalPaidCents: Math.max(0, closedTotalCents - discountCents + tipCents),
     paymentMethod: body.data.paymentMethod,
   });
 }

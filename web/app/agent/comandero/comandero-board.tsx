@@ -50,7 +50,33 @@ type CartLine = {
   modifiers: { groupId: string; modifierId: string; name: string; priceDeltaCents: number }[];
 };
 
-type View = "tables" | "menu";
+type View = "tables" | "menu" | "pos";
+
+type TicketLine = {
+  orderId: string;
+  name: string;
+  quantity: number;
+  unitPriceCents: number;
+  lineTotalCents: number;
+  modifiersJson: Array<{ name: string; priceDeltaCents: number }> | null;
+  notes: string | null;
+};
+
+type TicketTotals = {
+  subtotal: number;
+  tax: number;
+  total: number;
+  discount: number;
+  tip: number;
+  finalToPay: number;
+};
+
+type Ticket = {
+  tableNumber: string;
+  orders: Array<{ id: string; status: string; totalCents: number; createdAt: string }>;
+  lines: TicketLine[];
+  totals: TicketTotals;
+};
 
 const formatEur = (cents: number) =>
   `${(cents / 100).toFixed(2).replace(".", ",")} €`;
@@ -115,33 +141,43 @@ export function ComanderoBoard({ actor }: { actor?: ComanderoActor }) {
   }, [view, items.length]);
 
   function selectTable(t: Table) {
+    // Mesa libre → vista menú directa para empezar pedido nuevo.
+    // Mesa ocupada → vista POS con la cuenta acumulada para cobrar/ajustar.
     setTableNumber(t.number);
-    setCart([]);
     setError(null);
-    setView("menu");
+    if (t.state === "occupied") {
+      setView("pos");
+    } else {
+      setCart([]);
+      setView("menu");
+    }
   }
 
-  async function closeTable(t: Table, method: "cash" | "card" = "cash") {
-    const confirmTxt =
-      method === "cash"
-        ? `Cobrar mesa ${t.number} en efectivo (${formatEur(t.openTotalCents)})?`
-        : `Cobrar mesa ${t.number} con tarjeta (${formatEur(t.openTotalCents)})?`;
-    if (!confirm(confirmTxt)) return;
+  async function closeTable(
+    t: Table,
+    method: "cash" | "card" = "cash",
+    extras: { discountCents?: number; tipCents?: number } = {},
+  ) {
     const r = await fetch(
       `/api/comandero/tables/${encodeURIComponent(t.number)}/close`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ paymentMethod: method }),
+        body: JSON.stringify({
+          paymentMethod: method,
+          discountCents: extras.discountCents,
+          tipCents: extras.tipCents,
+        }),
       },
     );
     if (!r.ok) {
       const data = (await r.json().catch(() => ({}))) as { error?: string };
       setError(data.error ?? `Error ${r.status}`);
-      return;
+      return false;
     }
     await loadTables();
     router.refresh();
+    return true;
   }
 
   function addToCart(item: MenuItem, modifiers: CartLine["modifiers"] = []) {
@@ -376,6 +412,34 @@ export function ComanderoBoard({ actor }: { actor?: ComanderoActor }) {
         ) : null}
       </main>
       </div>
+    );
+  }
+
+  if (view === "pos" && tableNumber) {
+    return (
+      <PosView
+        tableNumber={tableNumber}
+        onBack={() => {
+          setView("tables");
+          setTableNumber(null);
+          setError(null);
+        }}
+        onAddItems={() => {
+          setCart([]);
+          setView("menu");
+        }}
+        onCobrar={async (method, extras) => {
+          const t = tables.find((x) => x.number === tableNumber);
+          if (!t) return false;
+          const ok = await closeTable(t, method, extras);
+          if (ok) {
+            setView("tables");
+            setTableNumber(null);
+          }
+          return ok;
+        }}
+        actor={actor}
+      />
     );
   }
 
@@ -817,3 +881,291 @@ function ModifierPicker({
 
 // Exporto el icono usado en sidebar para evitar re-import en otros lugares.
 export const ComanderoIcon = Utensils;
+
+// ── POSView (mig 054) ──────────────────────────────────────────────
+// Vista cuenta de mesa ocupada: lee /api/comandero/tables/[n]/ticket,
+// muestra líneas + totales, permite aplicar descuento + propina y
+// disparar cobro (efectivo o tarjeta) con la suma final ajustada.
+//
+// Split bill no soportado v1 (UX compleja). Si Mario pide split,
+// duplicar este componente con un selector de items por subcuenta.
+function PosView({
+  tableNumber,
+  onBack,
+  onAddItems,
+  onCobrar,
+  actor,
+}: {
+  tableNumber: string;
+  onBack: () => void;
+  onAddItems: () => void;
+  onCobrar: (
+    method: "cash" | "card",
+    extras: { discountCents: number; tipCents: number },
+  ) => Promise<boolean>;
+  actor?: ComanderoActor;
+}) {
+  const [ticket, setTicket] = React.useState<Ticket | null>(null);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+
+  // Inputs como string para permitir edición libre. Validamos al cobrar.
+  const [discountInput, setDiscountInput] = React.useState("");
+  const [tipInput, setTipInput] = React.useState("");
+  const [discountMode, setDiscountMode] = React.useState<"eur" | "pct">("eur");
+  const [tipMode, setTipMode] = React.useState<"eur" | "pct">("pct");
+  const [paying, setPaying] = React.useState(false);
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const r = await fetch(
+        `/api/comandero/tables/${encodeURIComponent(tableNumber)}/ticket`,
+        { cache: "no-store" },
+      );
+      if (!r.ok) {
+        const data = (await r.json().catch(() => ({}))) as { error?: string };
+        setError(data.error ?? `Error ${r.status}`);
+        return;
+      }
+      setTicket((await r.json()) as Ticket);
+    } finally {
+      setLoading(false);
+    }
+  }, [tableNumber]);
+
+  React.useEffect(() => {
+    void load();
+  }, [load]);
+
+  // Computa céntimos de descuento/propina a partir de inputs + modo + total.
+  const totalCents = ticket?.totals.total ?? 0;
+
+  function parseAmountCents(raw: string, mode: "eur" | "pct", base: number): number {
+    const n = Number(raw.replace(",", ".").replace(/[^\d.]/g, ""));
+    if (!Number.isFinite(n) || n < 0) return 0;
+    if (mode === "pct") return Math.round((base * Math.min(100, n)) / 100);
+    return Math.round(n * 100);
+  }
+
+  const discountCents = parseAmountCents(discountInput, discountMode, totalCents);
+  const tipCents = parseAmountCents(tipInput, tipMode, totalCents);
+  const finalToPay = Math.max(0, totalCents - discountCents + tipCents);
+
+  // Agrupa líneas por pedido para que el mesero vea el "ticket".
+  const linesByOrder = React.useMemo(() => {
+    const map = new Map<string, TicketLine[]>();
+    for (const l of ticket?.lines ?? []) {
+      const arr = map.get(l.orderId) ?? [];
+      arr.push(l);
+      map.set(l.orderId, arr);
+    }
+    return map;
+  }, [ticket]);
+
+  async function handlePay(method: "cash" | "card") {
+    if (paying) return;
+    if (finalToPay > 0 && !confirm(`Cobrar ${formatEur(finalToPay)} a la mesa ${tableNumber} (${method === "cash" ? "efectivo" : "tarjeta"})?`)) return;
+    setPaying(true);
+    try {
+      const ok = await onCobrar(method, { discountCents, tipCents });
+      if (!ok) setError("No se pudo cerrar la mesa");
+    } finally {
+      setPaying(false);
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-stone-50">
+      {actor ? <ActorTopBar actor={actor} /> : null}
+      <main className="mx-auto max-w-2xl px-4 py-4">
+        <header className="mb-4 flex items-center gap-3">
+          <button
+            type="button"
+            onClick={onBack}
+            className="rounded-lg border border-stone-300 bg-white p-2 text-stone-700 active:scale-95"
+          >
+            <ArrowLeft size={18} />
+          </button>
+          <div>
+            <h1 className="text-xl font-semibold text-stone-900">Mesa {tableNumber}</h1>
+            <p className="text-xs text-stone-500">Cuenta y cobro</p>
+          </div>
+          <button
+            type="button"
+            onClick={onAddItems}
+            className="ml-auto inline-flex items-center gap-1 rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-sm text-stone-700 active:scale-95"
+          >
+            <Plus size={14} />
+            Añadir items
+          </button>
+        </header>
+
+        {loading ? (
+          <p className="rounded-xl border border-stone-200 bg-white p-6 text-center text-sm text-stone-500">Cargando cuenta…</p>
+        ) : error ? (
+          <p className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-center text-sm text-rose-700">{error}</p>
+        ) : !ticket || ticket.orders.length === 0 ? (
+          <p className="rounded-xl border border-stone-200 bg-white p-6 text-center text-sm text-stone-500">
+            La mesa no tiene pedidos abiertos.
+          </p>
+        ) : (
+          <>
+            {/* Líneas agrupadas por pedido */}
+            <section className="mb-4 rounded-xl border border-stone-200 bg-white">
+              {Array.from(linesByOrder.entries()).map(([orderId, lines], idx) => (
+                <div key={orderId} className={idx > 0 ? "border-t border-stone-100" : ""}>
+                  <div className="flex items-baseline justify-between px-4 py-2 text-[11px] uppercase tracking-wider text-stone-500">
+                    <span>Pedido #{orderId.slice(0, 6)}</span>
+                    <span>{lines.length} líneas</span>
+                  </div>
+                  <ul className="divide-y divide-stone-100">
+                    {lines.map((l, i) => {
+                      const mods = (l.modifiersJson ?? []).map((m) => m.name).join(", ");
+                      return (
+                        <li key={i} className="flex items-baseline justify-between gap-3 px-4 py-2 text-sm">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-baseline gap-2">
+                              <span className="font-medium text-stone-900">{l.quantity}×</span>
+                              <span className="text-stone-800">{l.name}</span>
+                            </div>
+                            {mods && <div className="ml-6 text-xs text-stone-500">{mods}</div>}
+                            {l.notes && <div className="ml-6 text-xs italic text-stone-500">{l.notes}</div>}
+                          </div>
+                          <span className="text-sm tabular-nums text-stone-700">{formatEur(l.lineTotalCents)}</span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ))}
+            </section>
+
+            {/* Totales + ajustes */}
+            <section className="mb-4 rounded-xl border border-stone-200 bg-white p-4">
+              <div className="space-y-1 text-sm">
+                <div className="flex justify-between text-stone-600">
+                  <span>Subtotal</span>
+                  <span className="tabular-nums">{formatEur(ticket.totals.subtotal)}</span>
+                </div>
+                <div className="flex justify-between text-stone-600">
+                  <span>IVA</span>
+                  <span className="tabular-nums">{formatEur(ticket.totals.tax)}</span>
+                </div>
+                <div className="mt-1 flex justify-between border-t border-stone-100 pt-2 font-medium text-stone-900">
+                  <span>Total</span>
+                  <span className="tabular-nums">{formatEur(ticket.totals.total)}</span>
+                </div>
+              </div>
+
+              <div className="mt-4 grid gap-3">
+                <AdjustmentInput
+                  label="Descuento"
+                  value={discountInput}
+                  onChange={setDiscountInput}
+                  mode={discountMode}
+                  onModeChange={setDiscountMode}
+                  computedCents={discountCents}
+                  accent="rose"
+                />
+                <AdjustmentInput
+                  label="Propina"
+                  value={tipInput}
+                  onChange={setTipInput}
+                  mode={tipMode}
+                  onModeChange={setTipMode}
+                  computedCents={tipCents}
+                  accent="emerald"
+                />
+              </div>
+
+              <div className="mt-4 flex items-baseline justify-between border-t border-stone-200 pt-3">
+                <span className="text-sm font-medium uppercase tracking-wide text-stone-700">A pagar</span>
+                <span className="text-2xl font-bold tabular-nums text-stone-900">{formatEur(finalToPay)}</span>
+              </div>
+            </section>
+
+            {/* Cobrar */}
+            <section className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                disabled={paying}
+                onClick={() => handlePay("cash")}
+                className="rounded-xl bg-emerald-600 px-4 py-4 text-base font-semibold text-white shadow-sm active:scale-95 disabled:opacity-50"
+              >
+                Efectivo
+              </button>
+              <button
+                type="button"
+                disabled={paying}
+                onClick={() => handlePay("card")}
+                className="rounded-xl bg-stone-900 px-4 py-4 text-base font-semibold text-white shadow-sm active:scale-95 disabled:opacity-50"
+              >
+                Tarjeta
+              </button>
+            </section>
+
+            <p className="mt-4 text-center text-[11px] text-stone-400">
+              Dividir cuenta entre varios clientes — próximamente.
+            </p>
+          </>
+        )}
+      </main>
+    </div>
+  );
+}
+
+function AdjustmentInput({
+  label,
+  value,
+  onChange,
+  mode,
+  onModeChange,
+  computedCents,
+  accent,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  mode: "eur" | "pct";
+  onModeChange: (m: "eur" | "pct") => void;
+  computedCents: number;
+  accent: "rose" | "emerald";
+}) {
+  const accentBg = accent === "rose" ? "bg-rose-50 border-rose-200 text-rose-700" : "bg-emerald-50 border-emerald-200 text-emerald-700";
+  return (
+    <div className={`rounded-lg border p-3 ${accentBg}`}>
+      <div className="flex items-baseline justify-between">
+        <span className="text-xs font-medium uppercase tracking-wider">{label}</span>
+        <span className="text-xs tabular-nums">{formatEur(computedCents)}</span>
+      </div>
+      <div className="mt-2 flex gap-2">
+        <input
+          type="text"
+          inputMode="decimal"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="0"
+          className="flex-1 rounded-md border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900"
+        />
+        <div className="inline-flex rounded-md border border-stone-300 bg-white p-0.5">
+          <button
+            type="button"
+            onClick={() => onModeChange("eur")}
+            className={`rounded px-2 py-1 text-xs ${mode === "eur" ? "bg-stone-900 text-white" : "text-stone-600"}`}
+          >
+            €
+          </button>
+          <button
+            type="button"
+            onClick={() => onModeChange("pct")}
+            className={`rounded px-2 py-1 text-xs ${mode === "pct" ? "bg-stone-900 text-white" : "text-stone-600"}`}
+          >
+            %
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,4 @@
+BEGIN;
+ALTER TABLE orders DROP COLUMN IF EXISTS tip_cents;
+ALTER TABLE orders DROP COLUMN IF EXISTS discount_cents;
+COMMIT;
