@@ -45,15 +45,10 @@ type KdsItem = {
   modifiers?: KdsItemModifier[];
 };
 
+// Tipo de pago: el KDS NO cobra (eso vive en /agent/comandero), pero los
+// pedidos pueden llegar ya pagados desde el comandero — mantenemos el
+// shape para compatibilidad con el endpoint /api/kds.
 type PaymentMethod = "cash" | "card" | "transfer" | "other";
-
-// Mig 045: lectores Stripe Terminal disponibles para el tenant.
-type TpvReader = {
-  id: string;
-  readerId: string;
-  label: string | null;
-  status: "online" | "offline";
-};
 
 type KdsOrder = {
   id: string;
@@ -78,31 +73,6 @@ type KdsOrder = {
   createdAt: string;
   items: KdsItem[];
 };
-
-const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
-  cash: "Efectivo",
-  card: "Tarjeta",
-  transfer: "Transferencia",
-  other: "Otro",
-};
-
-// Mig 041: helpers para input "Propina €". Tolera coma o punto decimal,
-// rechaza negativos y limita a 100€ (mismo cap que el Zod del endpoint).
-// Devuelve céntimos enteros. "" / "0" / undefined → 0.
-function parseTipEuros(input: string): number {
-  if (!input) return 0;
-  const normalized = input.replace(",", ".").trim();
-  if (normalized === "") return 0;
-  const v = Number(normalized);
-  if (!Number.isFinite(v) || v < 0) return 0;
-  const cents = Math.round(v * 100);
-  return Math.min(cents, 100_00);
-}
-
-function formatTipEuros(cents: number): string {
-  if (cents <= 0) return "";
-  return (cents / 100).toFixed(2).replace(/\.00$/, "");
-}
 
 // Columnas tradicionales (post-aceptación). pending_kitchen_review tiene su
 // propia sección con botones aceptar/rechazar arriba del board.
@@ -163,11 +133,6 @@ export function KdsBoard({ kioskToken }: { kioskToken?: string } = {}) {
   // elección del admin en localStorage para que no tenga que tocarlo cada
   // sesión.
   const [includeTest, setIncludeTest] = React.useState<boolean>(true);
-  // Mig 045: lectores Stripe Terminal del tenant. Si vacío, el flujo "Cobrar
-  // en TPV" no se ofrece y caemos al cobro manual de mig 039.
-  const [readers, setReaders] = React.useState<TpvReader[]>([]);
-  // Polling de un cobro TPV en curso por orden. Map<orderId, paymentId>.
-  const [tpvInFlight, setTpvInFlight] = React.useState<Record<string, string>>({});
 
   React.useEffect(() => {
     if (typeof window === "undefined") return;
@@ -243,88 +208,6 @@ export function KdsBoard({ kioskToken }: { kioskToken?: string } = {}) {
     return () => clearInterval(id);
   }, [fetchReservations]);
 
-  // Mig 045: cargar lectores TPV una vez al montar. Si el tenant no tiene
-  // Stripe Connect, devuelve { readers: [], connected: false } y la UI cae
-  // a cobro manual sin más. Solo aplica con sesión real (no kiosk).
-  React.useEffect(() => {
-    if (kioskToken) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch("/api/stripe/terminal/readers", { cache: "no-store" });
-        if (!res.ok) return;
-        const body = (await res.json()) as { readers: TpvReader[] };
-        if (!cancelled) setReaders(body.readers ?? []);
-      } catch {
-        /* sin readers, KDS sigue funcionando con cobro manual */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [kioskToken]);
-
-  // Mig 045: dispara cobro al lector físico y arranca polling del status.
-  async function chargeOnReader(orderId: string, readerUuid: string) {
-    if (advancing) return;
-    setAdvancing(orderId);
-    setError(null);
-    try {
-      const res = await fetch("/api/stripe/terminal/charge", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders },
-        body: JSON.stringify({ orderId, readerId: readerUuid }),
-      });
-      const body = (await res.json().catch(() => ({}))) as {
-        ok?: boolean;
-        paymentId?: string;
-        error?: string;
-        message?: string;
-      };
-      if (!res.ok || !body.paymentId) {
-        setError(`Cobrar en TPV falló: ${body.message ?? body.error ?? res.status}`);
-        return;
-      }
-      // Arrancar polling — cada 2s consulta status hasta succeed/fail.
-      setTpvInFlight((prev) => ({ ...prev, [orderId]: body.paymentId! }));
-    } finally {
-      setAdvancing(null);
-    }
-  }
-
-  // Polling de cobros TPV en curso. Cada 2s consulta status. Cuando llega a
-  // succeeded/failed/canceled limpia el in-flight y refresca orders.
-  React.useEffect(() => {
-    const ids = Object.entries(tpvInFlight);
-    if (ids.length === 0) return;
-    const interval = setInterval(async () => {
-      for (const [orderId, paymentId] of ids) {
-        try {
-          const res = await fetch(`/api/stripe/terminal/payments/${paymentId}/status`, {
-            cache: "no-store",
-            headers: authHeaders,
-          });
-          if (!res.ok) continue;
-          const body = (await res.json()) as { status: string };
-          if (body.status === "succeeded" || body.status === "failed" || body.status === "canceled") {
-            setTpvInFlight((prev) => {
-              const next = { ...prev };
-              delete next[orderId];
-              return next;
-            });
-            if (body.status !== "succeeded") {
-              setError(`Cobro TPV ${body.status} para pedido ${orderId.slice(0, 8)}`);
-            }
-            await fetchOrders();
-          }
-        } catch {
-          /* network blip — siguiente tick reintenta */
-        }
-      }
-    }, 2000);
-    return () => clearInterval(interval);
-  }, [tpvInFlight, fetchOrders, authHeaders]);
-
   async function advance(orderId: string) {
     if (advancing) return;
     setAdvancing(orderId);
@@ -386,39 +269,9 @@ export function KdsBoard({ kioskToken }: { kioskToken?: string } = {}) {
     }
   }
 
-  // Mig 039 + 041: marcar pedido como pagado desde el KDS con método +
-  // (opcional) propina. La ruta PATCH /api/orders/[id] es retrocompatible:
-  // si markPaid=true y ya estaba paid, solo corrige método/propina ("lo
-  // marqué cash y era tarjeta", "olvidé añadir la propina").
-  async function markPaid(orderId: string, paymentMethod: PaymentMethod, tipCents: number) {
-    if (advancing) return;
-    setAdvancing(orderId);
-    // Optimistic: pintar local método + paid_at + propina para feedback inmediato.
-    setOrders((prev) =>
-      prev.map((o) =>
-        o.id === orderId
-          ? { ...o, paymentMethod, tipCents, paidAt: new Date().toISOString() }
-          : o,
-      ),
-    );
-    try {
-      // tipCents siempre se envía: 0 es válido (sin propina). Así un cobro
-      // post-error que corrige una propina previa la pisa a 0 si el camarero
-      // limpia el campo.
-      const res = await fetch(`/api/orders/${orderId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json", ...authHeaders },
-        body: JSON.stringify({ markPaid: true, paymentMethod, tipCents }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        setError(`Cobrar falló: ${body.error ?? res.status}`);
-      }
-      await fetchOrders();
-    } finally {
-      setAdvancing(null);
-    }
-  }
+  // El cobro y propinas viven en /agent/comandero (POS). El KDS solo bumpea
+  // estados de cocina. La ruta PATCH /api/orders/[id] sigue existiendo para
+  // el comandero — se quitó solo del UI del KDS (mig 056).
 
   // Mig 030 bug-fix: "Pendientes de aceptar" filtra solo los que la cocina aún
   // no ha decidido. Antes mostraba TODOS los pending_kitchen_review incluyendo
@@ -513,10 +366,6 @@ export function KdsBoard({ kioskToken }: { kioskToken?: string } = {}) {
                 status={status}
                 orders={byStatus[status]}
                 onAdvance={advance}
-                onMarkPaid={markPaid}
-                onChargeTpv={chargeOnReader}
-                readers={readers}
-                tpvInFlight={tpvInFlight}
                 advancingId={advancing}
               />
             ))}
@@ -698,19 +547,11 @@ function Column({
   status,
   orders,
   onAdvance,
-  onMarkPaid,
-  onChargeTpv,
-  readers,
-  tpvInFlight,
   advancingId,
 }: {
   status: OrderStatus;
   orders: KdsOrder[];
   onAdvance: (id: string) => void;
-  onMarkPaid: (id: string, method: PaymentMethod, tipCents: number) => void;
-  onChargeTpv: (orderId: string, readerUuid: string) => void;
-  readers: TpvReader[];
-  tpvInFlight: Record<string, string>;
   advancingId: string | null;
 }) {
   return (
@@ -732,10 +573,6 @@ function Column({
             order={o}
             disabled={advancingId === o.id}
             onAdvance={() => onAdvance(o.id)}
-            onMarkPaid={(method, tipCents) => onMarkPaid(o.id, method, tipCents)}
-            onChargeTpv={(readerUuid) => onChargeTpv(o.id, readerUuid)}
-            readers={readers}
-            tpvBusy={Boolean(tpvInFlight[o.id])}
           />
         ))
       )}
@@ -747,18 +584,10 @@ function OrderCard({
   order,
   disabled,
   onAdvance,
-  onMarkPaid,
-  onChargeTpv,
-  readers,
-  tpvBusy,
 }: {
   order: KdsOrder;
   disabled: boolean;
   onAdvance: () => void;
-  onMarkPaid: (method: PaymentMethod, tipCents: number) => void;
-  onChargeTpv: (readerUuid: string) => void;
-  readers: TpvReader[];
-  tpvBusy: boolean;
 }) {
   const next = NEXT_STATUS[order.status];
   const tone = STATUS_TONE[order.status];
@@ -772,25 +601,8 @@ function OrderCard({
       : minutesAgo < 1440
         ? `${Math.round(minutesAgo / 60)} h`
         : `${Math.round(minutesAgo / 1440)} d`;
-  const isStale = minutesAgo > 180;
   const hasNotes = order.notes || order.items.some((it) => it.notes);
 
-  // Mig 039: dropdown inline. Default 'cash' (flujo común camarero cobra).
-  // El admin cambia y pulsa "Cobrar" = 1 click + 1 tap como pidió Mario.
-  const [method, setMethod] = React.useState<PaymentMethod>(() =>
-    (order.paymentMethod as PaymentMethod | null | undefined) ?? "cash",
-  );
-  // Mig 041: input propina € visible solo cuando estás marcando pagado o
-  // corrigiendo. Stringueamos para no pelear con el type=number (Mario quiere
-  // permitir ",50" sin que JS lo refuse). El parseo a céntimos pasa por
-  // parseTipEuros para tolerar coma o punto.
-  const initialTipString = (order.tipCents ?? 0) > 0 ? formatTipEuros(order.tipCents ?? 0) : "";
-  const [tipEuros, setTipEuros] = React.useState<string>(initialTipString);
-  const isPaid = Boolean(order.paidAt);
-
-  // El card dejó de ser un <button> outer — ahora es <div> para poder
-  // anidar select + botón "Cobrar" sin HTML inválido. La zona "avanzar
-  // estado" (clickable del card) queda como un button explícito abajo.
   return (
     <div
       className={`rounded-xl border p-4 text-left transition ${tone.card}`}
@@ -851,113 +663,10 @@ function OrderCard({
         </button>
       )}
 
-      {/* Mig 039: zona de cobro inline. Se muestra SIEMPRE (cocina puede
-           cobrar un pedido en cualquier estado). Si ya está pagado, se
-           pinta un badge con el método y un select por si hay que corregir.
-           Mig 041: input "Propina €" opcional para reportes por turno/día. */}
-      <div className="mt-3 space-y-2 rounded-md bg-white/80 px-2 py-1.5 ring-1 ring-neutral-200">
-        <div className="flex items-center gap-2">
-          <label className="text-[10px] font-medium uppercase tracking-wider text-neutral-500">
-            {isPaid ? "Pagado" : "Cobrar"}
-          </label>
-          <select
-            value={method}
-            onChange={(e) => setMethod(e.target.value as PaymentMethod)}
-            disabled={disabled || tpvBusy}
-            className="flex-1 rounded border border-neutral-200 bg-white px-1.5 py-1 text-xs"
-            aria-label="Método de pago"
-          >
-            {(Object.keys(PAYMENT_METHOD_LABELS) as PaymentMethod[]).map((m) => (
-              <option key={m} value={m}>
-                {PAYMENT_METHOD_LABELS[m]}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            onClick={() => onMarkPaid(method, parseTipEuros(tipEuros))}
-            disabled={disabled || tpvBusy}
-            className={`rounded px-2 py-1 text-xs font-medium text-white transition disabled:opacity-50 ${
-              isPaid ? "bg-neutral-600 hover:bg-neutral-700" : "bg-emerald-600 hover:bg-emerald-700"
-            }`}
-          >
-            {isPaid ? "Corregir" : "Cobrar manual"}
-          </button>
-        </div>
-        <div className="flex items-center gap-2">
-          <label
-            htmlFor={`tip-${order.id}`}
-            className="text-[10px] font-medium uppercase tracking-wider text-neutral-500"
-            title="Propina opcional. Se guarda al pulsar Cobrar/Corregir."
-          >
-            Propina €
-          </label>
-          <input
-            id={`tip-${order.id}`}
-            type="text"
-            inputMode="decimal"
-            placeholder="0,00"
-            value={tipEuros}
-            onChange={(e) => setTipEuros(e.target.value)}
-            disabled={disabled || tpvBusy}
-            className="w-20 rounded border border-neutral-200 bg-white px-1.5 py-1 text-right text-xs font-variant-numeric tabular-nums"
-            aria-label="Propina en euros"
-          />
-          {(order.tipCents ?? 0) > 0 ? (
-            <span className="text-[10px] text-neutral-400">
-              guardada: {formatTipEuros(order.tipCents ?? 0)} €
-            </span>
-          ) : null}
-        </div>
-      </div>
-
-      {/* Mig 045: cobro en TPV físico. Solo si:
-           - hay readers emparejados al tenant
-           - método elegido es 'card'
-           - la orden no está pagada todavía */}
-      {!isPaid && method === "card" && readers.length > 0 && (
-        <div className="mt-2 flex items-center gap-2 rounded-md bg-indigo-50 px-2 py-1.5 ring-1 ring-indigo-200">
-          {tpvBusy ? (
-            <span className="flex-1 text-xs font-medium text-indigo-800">
-              Procesando en TPV… acerca la tarjeta al lector.
-            </span>
-          ) : (
-            <>
-              <label className="text-[10px] font-medium uppercase tracking-wider text-indigo-700">
-                TPV
-              </label>
-              {readers.length === 1 ? (
-                <button
-                  type="button"
-                  onClick={() => onChargeTpv(readers[0]!.id)}
-                  disabled={disabled}
-                  className="flex-1 rounded bg-indigo-600 px-2 py-1 text-xs font-medium text-white transition hover:bg-indigo-700 disabled:opacity-50"
-                  title={`Cobrar en ${readers[0]!.label ?? readers[0]!.readerId}`}
-                >
-                  Cobrar en TPV
-                </button>
-              ) : (
-                <select
-                  onChange={(e) => {
-                    if (e.target.value) onChargeTpv(e.target.value);
-                  }}
-                  disabled={disabled}
-                  defaultValue=""
-                  className="flex-1 rounded border border-indigo-300 bg-white px-1.5 py-1 text-xs"
-                  aria-label="Elegir lector"
-                >
-                  <option value="" disabled>Cobrar en TPV…</option>
-                  {readers.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.label ?? r.readerId} {r.status === "online" ? "🟢" : "⚫"}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </>
-          )}
-        </div>
-      )}
+      {/* KDS de cocina: el cobro NO vive aquí. Se maneja en /agent/comandero
+           (POS/Front-of-house) — ver mig 054 split bill + propina + descuentos.
+           Toast/Square/Lightspeed/TouchBistro/Revel/Clover separan KDS y POS
+           por la misma razón: cocina solo bumpea estados. */}
     </div>
   );
 }
