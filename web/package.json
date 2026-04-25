@@ -90,7 +90,10 @@
   "pnpm": {
     "overrides": {
       "esbuild@<=0.24.2": ">=0.25.0",
-      "postcss@<8.5.10": ">=8.5.10"
+      "postcss@<8.5.10": ">=8.5.10",
+      "drizzle-orm@<0.45.2": ">=0.45.2",
+      "mathjs@<15.2.0": ">=15.2.0",
+      "uuid@<14.0.0": ">=14.0.0"
     },
     "ignoredBuiltDependencies": [],
     "onlyBuiltDependencies": [

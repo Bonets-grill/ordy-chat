@@ -19,11 +19,27 @@ type UrlState = { from: string; errorParam: string | null };
  * hacía que el click del toggle "Prefiero enlace mágico" no disparara
  * setState en Playwright (bug e2e 2026-04-20).
  */
+// Open redirect guard: solo paths relativos same-origin. Rechaza:
+//   - URLs absolutas (http:// https:// //evil.com)
+//   - protocol-relative ("//evil.com")
+//   - data:/javascript:/mailto:/etc.
+//   - cualquier path que no empiece por "/" simple
+// Si la entrada es maliciosa, cae al default seguro "/onboarding".
+function safeRelativePath(input: string | null | undefined): string {
+  const fallback = "/onboarding";
+  if (!input || typeof input !== "string") return fallback;
+  // Debe empezar por "/" pero NO por "//" (protocol-relative).
+  if (!input.startsWith("/") || input.startsWith("//")) return fallback;
+  // Rechaza schemes embebidos (defensa extra contra encoding raro).
+  if (/^\/[a-z][a-z0-9+.-]*:/i.test(input)) return fallback;
+  return input;
+}
+
 function SearchParamsSync({ onReady }: { onReady: (s: UrlState) => void }) {
   const params = useSearchParams();
   useEffect(() => {
     onReady({
-      from: params.get("from") ?? params.get("next") ?? "/onboarding",
+      from: safeRelativePath(params.get("from") ?? params.get("next")),
       errorParam: params.get("error"),
     });
   }, [params, onReady]);

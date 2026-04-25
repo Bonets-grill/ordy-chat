@@ -9,9 +9,18 @@ import { Input } from "@/components/ui/input";
 
 type Issues = Partial<Record<"email" | "password" | "name" | "confirm", string>>;
 
+// Open redirect guard: solo paths relativos same-origin. Mismo guard que /signin.
+function safeRelativePath(input: string | null | undefined): string {
+  const fallback = "/onboarding";
+  if (!input || typeof input !== "string") return fallback;
+  if (!input.startsWith("/") || input.startsWith("//")) return fallback;
+  if (/^\/[a-z][a-z0-9+.-]*:/i.test(input)) return fallback;
+  return input;
+}
+
 function SignUpForm() {
   const params = useSearchParams();
-  const from = params.get("from") ?? "/onboarding";
+  const from = safeRelativePath(params.get("from"));
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");

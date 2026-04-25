@@ -1617,6 +1617,21 @@ async def generar_respuesta(
                 texto_final = "".join(
                     block.text for block in resp.content if getattr(block, "type", None) == "text"
                 ).strip()
+                # Defensive logging del bug stop_reason sin text block
+                # (memoria 1505 LLM stop_reason sin text → fallback silente).
+                # Si stop_reason termina sin text Y sin tool_use, log full
+                # stop_reason + block_types para diagnóstico futuro.
+                if not texto_final:
+                    block_types = [getattr(b, "type", "?") for b in resp.content]
+                    logger.warning(
+                        "brain cliente devolvió respuesta sin texto",
+                        extra={
+                            "event": "brain_empty_text",
+                            "tenant_slug": tenant.slug,
+                            "stop_reason": resp.stop_reason,
+                            "block_types": block_types,
+                        },
+                    )
                 return texto_final or tenant.error_message, total_in, total_out
 
             # Claude pidió una tool. Registrar el assistant turn completo y ejecutar.

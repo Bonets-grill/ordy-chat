@@ -830,18 +830,27 @@ async def internal_health_evolution_all(request: Request):
 
 @app.get("/webhook/{provider}/{tenant_slug}")
 async def webhook_get(provider: str, tenant_slug: str, request: Request):
+    # Solo Meta usa GET para verify_token. Los demás providers (Whapi/Twilio/
+    # Evolution) NO tienen handshake GET — devolvemos 404 uniforme para no
+    # filtrar enumeración de slugs (audit 2026-04-25 H-Runtime-1).
+    if provider != "meta":
+        raise HTTPException(status_code=404, detail="not found")
+
     try:
         tenant = await cargar_tenant_por_slug(tenant_slug)
     except TenantNotFound:
-        raise HTTPException(status_code=404, detail="tenant not found")
-    except TenantInactive as e:
-        raise HTTPException(status_code=402, detail=str(e))
+        raise HTTPException(status_code=404, detail="not found")
+    except TenantInactive:
+        # Tenant existe pero suspendido — devolvemos 404 uniforme (no 402)
+        # para no diferenciar de "no existe" en el GET handshake.
+        raise HTTPException(status_code=404, detail="not found")
 
     adapter = obtener_proveedor(provider, tenant.credentials, tenant.webhook_secret)
     resultado = await adapter.validar_webhook_get(request)
     if resultado is not None:
         return PlainTextResponse(str(resultado))
-    return {"status": "ok"}
+    # Verify_token incorrecto o no provisto → 403 (Meta espera esto).
+    raise HTTPException(status_code=403, detail="verify token mismatch")
 
 
 @app.post("/webhook/{provider}/{tenant_slug}")

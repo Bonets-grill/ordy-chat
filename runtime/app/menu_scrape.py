@@ -31,6 +31,7 @@ import httpx
 
 from app.brain import _get_client
 from app.tenants import obtener_anthropic_api_key
+from app.url_safety import es_url_publica
 
 logger = logging.getLogger("ordychat.menu_scrape")
 
@@ -200,9 +201,39 @@ async def scrape_url_to_items(
     if not url.startswith(("http://", "https://")):
         raise ValueError("url debe empezar con http:// o https://")
 
-    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as http_client:
+    # SSRF guard: rechaza loopback, IPs privadas, link-local (169.254.169.254
+    # = AWS/GCP metadata), .onion, etc. Mismo guard que `onboarding_scraper.py`
+    # — la inconsistencia anterior permitía pegar URLs internas desde la web
+    # del tenant y filtrar contenido al LLM.
+    ok, reason = await es_url_publica(url)
+    if not ok:
+        raise ValueError(f"URL no permitida: {reason or 'private/loopback'}")
+
+    # follow_redirects=True ya seguro porque httpx revalida cada redirect contra
+    # el host original... pero también queremos volver a comprobar es_url_publica
+    # tras cada hop. Implementamos el follow manualmente con re-validación.
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=False) as http_client:
         try:
-            r = await http_client.get(url, headers={"User-Agent": "OrdyChat-Menu-Importer/1.0"})
+            current_url = url
+            for _ in range(5):  # max 5 hops
+                r = await http_client.get(
+                    current_url,
+                    headers={"User-Agent": "OrdyChat-Menu-Importer/1.0"},
+                )
+                if r.status_code in (301, 302, 303, 307, 308):
+                    location = r.headers.get("location", "")
+                    if not location:
+                        break
+                    # Re-valida la URL de redirect contra el SSRF guard.
+                    redirect_url = str(httpx.URL(current_url).join(location))
+                    ok, reason = await es_url_publica(redirect_url)
+                    if not ok:
+                        raise ValueError(
+                            f"redirect a URL no permitida: {reason or 'private/loopback'}"
+                        )
+                    current_url = redirect_url
+                    continue
+                break
         except httpx.HTTPError as e:
             raise ValueError(f"fetch falló: {type(e).__name__}: {str(e)[:200]}")
     if r.status_code >= 400:
