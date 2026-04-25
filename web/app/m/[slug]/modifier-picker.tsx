@@ -39,6 +39,9 @@ type Group = {
   minSelect: number;
   maxSelect: number | null;
   sortOrder: number;
+  /** Mig 051: si != null, este grupo solo se muestra cuando esa opción
+   * concreta de OTRO grupo del mismo producto está seleccionada. */
+  dependsOnOptionId?: string | null;
   modifiers: Modifier[];
 };
 
@@ -148,13 +151,48 @@ export function ModifierPicker(props: Props) {
     onConfirm([], item.priceCents);
   }, [open, item, state, onConfirm]);
 
-  // Cálculo de validez + precio final.
+  // Mig 051: grupos visibles según dependsOnOptionId. Un grupo con dep solo
+  // aparece si esa opción está seleccionada en algún otro grupo del producto.
+  const allSelectedOptionIds = React.useMemo(() => {
+    const all = new Set<string>();
+    for (const set of Object.values(selectedByGroup)) {
+      for (const id of set) all.add(id);
+    }
+    return all;
+  }, [selectedByGroup]);
+
+  const visibleGroups = React.useMemo(() => {
+    if (state.kind !== "ready") return [] as Group[];
+    return state.groups.filter(
+      (g) => !g.dependsOnOptionId || allSelectedOptionIds.has(g.dependsOnOptionId),
+    );
+  }, [state, allSelectedOptionIds]);
+
+  // Limpia selección de grupos que dejan de ser visibles (ej. cliente cambia
+  // de Medallon a Smash → "Tipo de cocción" se oculta y olvidamos su valor).
+  React.useEffect(() => {
+    if (state.kind !== "ready") return;
+    setSelectedByGroup((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const g of state.groups) {
+        const isVisible = !g.dependsOnOptionId || allSelectedOptionIds.has(g.dependsOnOptionId);
+        if (!isVisible && next[g.id] && next[g.id].size > 0) {
+          next[g.id] = new Set();
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [allSelectedOptionIds, state]);
+
+  // Cálculo de validez + precio final usando solo grupos visibles.
   const validation = React.useMemo(() => {
     if (state.kind !== "ready") return { valid: false, priceCents: item?.priceCents ?? 0, selection: [] as ModifierSelection[] };
     let priceCents = item?.priceCents ?? 0;
     let valid = true;
     const selection: ModifierSelection[] = [];
-    for (const g of state.groups) {
+    for (const g of visibleGroups) {
       const sel = selectedByGroup[g.id] ?? new Set<string>();
       const minRequired = g.required ? Math.max(1, g.minSelect) : g.minSelect;
       if (sel.size < minRequired) valid = false;
@@ -172,7 +210,7 @@ export function ModifierPicker(props: Props) {
       }
     }
     return { valid, priceCents, selection };
-  }, [state, selectedByGroup, item]);
+  }, [state, visibleGroups, selectedByGroup, item]);
 
   if (!open || !item) return null;
   // Auto-confirm path: groups vacío → no renderizamos nada (el efecto ya
@@ -240,7 +278,7 @@ export function ModifierPicker(props: Props) {
             <div className="py-12 text-center text-sm text-stone-600">{labels.errorRetry}</div>
           ) : state.kind === "ready" ? (
             <div className="space-y-5">
-              {state.groups.map((g) => {
+              {visibleGroups.map((g) => {
                 const sel = selectedByGroup[g.id] ?? new Set<string>();
                 const showMin = g.required || g.minSelect > 0;
                 const minRequired = g.required ? Math.max(1, g.minSelect) : g.minSelect;

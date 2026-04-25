@@ -17,6 +17,11 @@ type ModifierGroup = {
   required: boolean;
   minSelect: number;
   maxSelect: number | null;
+  /** Mig 051: si != null, este grupo solo se muestra cuando esa opción
+   * concreta de OTRO grupo del mismo producto está seleccionada. Útil para
+   * "Tipo de cocción" que solo aplica si la carne es Medallón (Smash no
+   * tiene puntos de cocción). NULL = siempre visible (legacy). */
+  dependsOnOptionId?: string | null;
   modifiers: Modifier[];
 };
 type MenuItem = {
@@ -677,6 +682,43 @@ function ModifierPicker({
     () => Object.fromEntries(item.modifierGroups.map((g) => [g.id, new Set<string>()])),
   );
 
+  // Mig 051: un grupo con dependsOnOptionId solo aparece si esa opción está
+  // seleccionada en algún otro grupo del producto. Recalculamos qué grupos son
+  // visibles cada render — barato porque modifierGroups suele ser <5.
+  const allSelectedOptionIds = React.useMemo(() => {
+    const all = new Set<string>();
+    for (const set of Object.values(selected)) {
+      for (const id of set) all.add(id);
+    }
+    return all;
+  }, [selected]);
+
+  const visibleGroups = React.useMemo(
+    () =>
+      item.modifierGroups.filter(
+        (g) => !g.dependsOnOptionId || allSelectedOptionIds.has(g.dependsOnOptionId),
+      ),
+    [item.modifierGroups, allSelectedOptionIds],
+  );
+
+  // Si un grupo se vuelve invisible tras un cambio (cliente cambia a Smash
+  // tras haber elegido cocción), limpiamos su selección — evita persistir
+  // datos no aplicables al item final.
+  React.useEffect(() => {
+    setSelected((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const g of item.modifierGroups) {
+        const isVisible = !g.dependsOnOptionId || allSelectedOptionIds.has(g.dependsOnOptionId);
+        if (!isVisible && next[g.id] && next[g.id].size > 0) {
+          next[g.id] = new Set();
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [allSelectedOptionIds, item.modifierGroups]);
+
   function toggle(group: ModifierGroup, modId: string) {
     setSelected((prev) => {
       const cur = new Set(prev[group.id] ?? []);
@@ -692,7 +734,7 @@ function ModifierPicker({
   }
 
   function isValid(): boolean {
-    return item.modifierGroups.every((g) => {
+    return visibleGroups.every((g) => {
       const set = selected[g.id] ?? new Set();
       if (g.required && set.size < g.minSelect) return false;
       if (g.maxSelect != null && set.size > g.maxSelect) return false;
@@ -702,7 +744,7 @@ function ModifierPicker({
 
   function confirm() {
     const mods: CartLine["modifiers"] = [];
-    for (const g of item.modifierGroups) {
+    for (const g of visibleGroups) {
       for (const id of selected[g.id] ?? []) {
         const m = g.modifiers.find((mm) => mm.id === id);
         if (m) {
@@ -720,7 +762,7 @@ function ModifierPicker({
 
   return (
     <div className="border-t border-neutral-100 bg-neutral-50 p-3">
-      {item.modifierGroups.map((g) => (
+      {visibleGroups.map((g) => (
         <div key={g.id} className="mb-3 last:mb-0">
           <div className="mb-1 text-xs font-semibold text-neutral-700">
             {g.name}{" "}
