@@ -21,7 +21,8 @@
 description: "Brain Ordy Chat — eval por flujos críticos contra runtime real (sandbox)"
 
 providers:
-  - id: runtime-brain
+  - id: file://./providers/runtime-brain.js
+    label: runtime-brain
     config:
       tenant_slug: bonets-grill-icod
       timeout_ms: 60000
@@ -32,9 +33,6 @@ prompts:
   - "{{user}}"
 
 defaultTest:
-  options:
-    provider:
-      id: file://./providers/runtime-brain.js
   assert:
     # Garantías universales para CADA respuesta del brain.
     - type: javascript

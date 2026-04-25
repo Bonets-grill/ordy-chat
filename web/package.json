@@ -17,10 +17,10 @@
     "test:unit:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "eval:brain": "pnpm dlx promptfoo@0.118.17 eval -c promptfoo/brain/brain.eval.yaml --pass-threshold 0.8",
-    "eval:brain:idiomas": "pnpm dlx promptfoo@0.118.17 eval -c promptfoo/brain/brain.eval.yaml --filter-pattern idiomas --pass-threshold 0.8",
-    "eval:brain:view": "pnpm dlx promptfoo@0.118.17 view",
-    "eval:merger": "pnpm dlx promptfoo@0.118.17 eval -c promptfoo/merger.eval.yaml --pass-threshold 0.9",
+    "eval:brain": "pnpm exec promptfoo eval -c promptfoo/brain/brain.eval.yaml --pass-threshold 0.8",
+    "eval:brain:idiomas": "pnpm exec promptfoo eval -c promptfoo/brain/brain.eval.yaml --filter-pattern idiomas --pass-threshold 0.8",
+    "eval:brain:view": "pnpm exec promptfoo view",
+    "eval:merger": "pnpm exec promptfoo eval -c promptfoo/merger.eval.yaml --pass-threshold 0.9",
     "cap:sync": "node scripts/build-mobile.mjs",
     "build:mobile:ios": "node scripts/build-mobile.mjs ios",
     "build:mobile:android": "node scripts/build-mobile.mjs android"
@@ -91,6 +91,10 @@
     "overrides": {
       "esbuild@<=0.24.2": ">=0.25.0",
       "postcss@<8.5.10": ">=8.5.10"
-    }
+    },
+    "ignoredBuiltDependencies": [],
+    "onlyBuiltDependencies": [
+      "better-sqlite3"
+    ]
   }
 }
