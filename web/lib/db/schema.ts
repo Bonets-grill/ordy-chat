@@ -721,6 +721,11 @@ export const menuItems = pgTable("menu_items", {
   // quiere que el mesero recomiende activamente. El bloque <carta> dinámico
   // los marca con ⭐ RECOMENDADO para que el bot los priorice al sugerir.
   isRecommended: boolean("is_recommended").notNull().default(false),
+  // Mig 048 — Traducciones i18n por idioma. Shape:
+  //   { en: { name, description }, fr: { name, description }, ... }
+  // Vacío = sin traducción → fallback a name/description canónicos (ES).
+  // El KDS y crear_pedido SIEMPRE usan name canónico, no estas traducciones.
+  i18nTranslations: jsonb("i18n_translations").notNull().default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
