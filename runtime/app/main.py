@@ -380,6 +380,7 @@ async def internal_playground_generate(request: Request):
     # "bebidas primero + KDS con mesa". Ambos opcionales.
     raw_channel = (body or {}).get("channel")
     raw_table = (body or {}).get("table_number")
+    raw_lang = (body or {}).get("client_lang")
     channel = str(raw_channel).strip() if isinstance(raw_channel, str) else None
     table_number = str(raw_table).strip() if isinstance(raw_table, str) else None
     # Validación paranoica: 1-8 chars alfanuméricos para evitar prompt injection.
@@ -390,6 +391,13 @@ async def internal_playground_generate(request: Request):
         table_number = None
     if channel not in ("menu_web", None):
         channel = None
+    # Mig 048: client_lang debe ser un código ISO-639-1 corto. Lista blanca
+    # estricta para evitar prompt injection vía este campo.
+    client_lang: str | None = None
+    if isinstance(raw_lang, str):
+        candidate = raw_lang.strip().lower().split("-")[0]
+        if candidate in {"es", "en", "fr", "it", "de", "pt", "ca", "eu"}:
+            client_lang = candidate
     if not tenant_slug:
         raise HTTPException(status_code=400, detail="tenant_slug requerido")
     if not isinstance(messages, list) or not messages:
@@ -433,6 +441,7 @@ async def internal_playground_generate(request: Request):
             channel=channel,
             table_number=table_number,
             cards_sink=cards,
+            client_lang=client_lang,
         )
     except Exception as e:
         logger.exception(

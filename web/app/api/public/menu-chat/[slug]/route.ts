@@ -56,6 +56,7 @@ export async function POST(
   const body = (await req.json().catch(() => null)) as {
     messages?: Msg[];
     table_number?: string | null;
+    client_lang?: string | null;
   } | null;
   const rawMessages = body?.messages ?? [];
   // Mesa opcional — viene de /m/<slug>?mesa=N. Validación paranoica: máx 8
@@ -63,6 +64,14 @@ export async function POST(
   const rawTable = typeof body?.table_number === "string" ? body.table_number.trim() : "";
   let tableNumber =
     rawTable && /^[A-Za-z0-9\-]{1,8}$/.test(rawTable) ? rawTable : null;
+
+  // Mig 048: idioma del cliente — whitelist estricta para anti-injection.
+  const ALLOWED_LANGS = new Set(["es", "en", "fr", "it", "de", "pt", "ca", "eu"]);
+  const rawLang =
+    typeof body?.client_lang === "string"
+      ? body.client_lang.trim().toLowerCase().split("-")[0]
+      : "";
+  const clientLang = ALLOWED_LANGS.has(rawLang) ? rawLang : null;
 
   // Validación soft: si el tenant tiene mesas configuradas, el number
   // DEBE existir y estar activa. Backwards-compat: tenants sin mesas
@@ -136,6 +145,8 @@ export async function POST(
         // la inyecta como contexto del system prompt para el flujo
         // "bebidas primero + KDS con mesa" de los QR en mesa.
         ...(tableNumber ? { table_number: tableNumber, channel: "menu_web" } : {}),
+        // Mig 048: idioma del cliente para que el bot responda en él.
+        ...(clientLang ? { client_lang: clientLang } : {}),
       }),
     });
     if (!r.ok) {

@@ -664,6 +664,8 @@ export function MenuExperience(props: Props) {
         body: JSON.stringify({
           messages: nextMessages,
           table_number: tableNumber,
+          // Mig 048: el bot responde en este idioma + traduce descripciones.
+          client_lang: lang,
         }),
       });
       if (!r.ok) {

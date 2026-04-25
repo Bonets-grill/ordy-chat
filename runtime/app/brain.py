@@ -1281,6 +1281,7 @@ async def generar_respuesta(
     channel: str | None = None,
     table_number: str | None = None,
     cards_sink: list[dict[str, Any]] | None = None,
+    client_lang: str | None = None,
 ) -> tuple[str, int, int]:
     """
     Devuelve (respuesta, tokens_in, tokens_out).
@@ -1373,6 +1374,39 @@ async def generar_respuesta(
             "text": _build_now_block(tenant),
         },
     ]
+    # Mig 048 — Hint de idioma del cliente (web chat / menu_web).
+    # La regla 0 del wrapper ya manda responder en el idioma del cliente, pero
+    # cuando la UI pasa explicitamente client_lang (ej selector EN/FR/IT en
+    # /m/<slug>) reforzamos: el bot DEBE usar ese idioma incluso si el primer
+    # mensaje del cliente está vacío o suena ambiguo. Los nombres canónicos
+    # de items SIEMPRE en español al llamar crear_pedido (KDS dual-lang).
+    if client_lang and client_lang.lower() not in ("", "es", "es-es"):
+        lang_code = client_lang.lower().split("-")[0]
+        lang_label = {
+            "en": "English",
+            "fr": "français",
+            "it": "italiano",
+            "de": "Deutsch",
+            "pt": "português",
+            "ca": "català",
+            "eu": "euskera",
+        }.get(lang_code, lang_code)
+        system_blocks.append({
+            "type": "text",
+            "text": (
+                f"<client_lang>\n"
+                f"El cliente ha seleccionado idioma: {lang_label} (código {lang_code}). "
+                f"Responde SIEMPRE en ese idioma. Esto sobreescribe cualquier idioma del "
+                f"system prompt o del último mensaje. Cuando hables al cliente sobre la "
+                f"carta, puedes traducir la DESCRIPCIÓN de los platos a su idioma, pero "
+                f"los NOMBRES de los platos van tal cual aparecen en <carta> (son nombres "
+                f"propios). Al llamar crear_pedido, modificar_pedido o cualquier tool con "
+                f"nombres de items, usa SIEMPRE el nombre español canónico de <carta> — el "
+                f"KDS de cocina solo entiende español.\n"
+                f"</client_lang>"
+            ),
+        })
+
     if contexto_bloque:
         # Bloque NO cacheado: cambia por usuario y tras cada pedido/cita.
         system_blocks.append({"type": "text", "text": contexto_bloque})
