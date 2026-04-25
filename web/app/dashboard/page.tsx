@@ -42,20 +42,26 @@ export default async function DashboardPage() {
     .from(messages)
     .where(and(eq(messages.tenantId, bundle.tenant.id), gte(messages.createdAt, since24h)));
 
-  // Pedidos hoy + revenue hoy (descontando cancelados/test).
-  // Fix Bonets 2026-04-26: usar TZ del tenant para "hoy" (server Vercel está
-  // en UTC, eso desplaza el día para tenants en Canary/Madrid).
+  // VENTAS HOY — criterio canónico unificado entre dashboard, ventas y admin
+  // (audit Mario 2026-04-26): pedidos PAGADOS hoy en TZ tenant, no test, no
+  // canceled. Es lo que entró a caja — convención POS estándar.
+  // ANTES: count() contaba TODO (incluido canceled+test) y SUM excluía solo
+  //        cancelados → "2 pedidos · 16.90€" cuando el real era 1 pedido.
+  // ANTES: filtraba por createdAt (no paidAt) → no coincidía con /ventas.
   const tenantTz = bundle.tenant.timezone || "Atlantic/Canary";
   const tzLit = sql.raw(`'${tenantTz.replace(/'/g, "")}'`);
   const [ordersToday] = await db
     .select({
       n: count(),
-      revenue: sql<number>`COALESCE(SUM(CASE WHEN ${orders.status} != 'canceled' AND ${orders.isTest} = false THEN ${orders.totalCents} ELSE 0 END), 0)::int`,
+      revenue: sql<number>`COALESCE(SUM(${orders.totalCents}), 0)::int`,
     })
     .from(orders)
     .where(and(
       eq(orders.tenantId, bundle.tenant.id),
-      sql`${orders.createdAt} >= (date_trunc('day', NOW() AT TIME ZONE ${tzLit}) AT TIME ZONE ${tzLit})`,
+      eq(orders.isTest, false),
+      sql`${orders.status} != 'canceled'`,
+      sql`${orders.paidAt} IS NOT NULL`,
+      sql`${orders.paidAt} >= (date_trunc('day', NOW() AT TIME ZONE ${tzLit}) AT TIME ZONE ${tzLit})`,
     ));
 
   const recent = await db

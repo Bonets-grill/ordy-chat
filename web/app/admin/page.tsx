@@ -46,7 +46,9 @@ export default async function AdminHome() {
           (SELECT count(*) FROM orders o
             WHERE o.tenant_id = t.id
               AND o.is_test = false
-              AND o.created_at >= date_trunc('day', now() AT TIME ZONE 'Atlantic/Canary'))::int AS orders_today,
+              AND o.status != 'canceled'
+              AND o.paid_at IS NOT NULL
+              AND o.paid_at >= (date_trunc('day', now() AT TIME ZONE COALESCE(t.timezone, 'Atlantic/Canary')) AT TIME ZONE COALESCE(t.timezone, 'Atlantic/Canary')))::int AS orders_today,
           (SELECT count(*) FROM messages m
             WHERE m.tenant_id = t.id
               AND m.created_at >= now() - interval '24 hours')::int AS messages_24h,

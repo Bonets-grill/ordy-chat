@@ -17,7 +17,10 @@
 // que ya no existen tras cada deploy → página sin estilos hasta que el usuario
 // refrescaba. Los assets _next/static (versionados por hash, immutables) siguen
 // cache-first largo, que es la estrategia correcta para ellos.
-const CACHE_VERSION = "ordy-v2-2026-04-22";
+// v3 (2026-04-26): bump tras redesign visual + fixes ventas/horario/notif.
+// Forzamos invalidación porque varios usuarios reportaban ver UI vieja por
+// SW v2 cacheado en Safari Mac (no se renueva con simple Cmd+Shift+R).
+const CACHE_VERSION = "ordy-v3-2026-04-26";
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const ASSETS_CACHE = `${CACHE_VERSION}-assets`;
 
