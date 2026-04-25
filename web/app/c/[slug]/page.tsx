@@ -18,8 +18,40 @@ import { getCurrentEmployee } from "@/lib/employees/auth";
 import { ComanderoBoard } from "../../agent/comandero/comandero-board";
 import { PinKeypad } from "./pin-keypad";
 
-export const metadata = { title: "Comandero · Ordy Chat" };
+// Metadata se genera por slug — el manifest, viewport y los meta tags PWA
+// dependen del tenant. Esto permite "Add to Home Screen" estilo app nativa
+// con el nombre del restaurante.
 export const dynamic = "force-dynamic";
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}) {
+  const { slug } = await params;
+  return {
+    title: `Comandero · ${slug}`,
+    manifest: `/c/${slug}/manifest.webmanifest`,
+    appleWebApp: {
+      capable: true,
+      title: "Comandero",
+      statusBarStyle: "black-translucent" as const,
+    },
+    viewport: {
+      width: "device-width",
+      initialScale: 1,
+      maximumScale: 1,
+      userScalable: false,
+      viewportFit: "cover" as const,
+    },
+    themeColor: "#0a0a0a",
+    other: {
+      "mobile-web-app-capable": "yes",
+      "apple-mobile-web-app-capable": "yes",
+      "apple-mobile-web-app-status-bar-style": "black-translucent",
+    },
+  };
+}
 
 type PageParams = { params: Promise<{ slug: string }> };
 
