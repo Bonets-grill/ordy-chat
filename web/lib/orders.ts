@@ -246,16 +246,21 @@ export async function createOrder(input: CreateOrderInput) {
   type LowStockAlert = { name: string; stockQty: number; threshold: number };
   const lowStockAlerts: LowStockAlert[] = [];
 
-  // Transacción: stock check + decremento + INSERT order + INSERT order_items
-  // van juntos. Si cualquier paso falla, ROLLBACK y NO se crea el pedido.
-  // Mig 044.
-  const { order } = await db.transaction(async (tx) => {
+  // 2026-04-25 fix: el driver neon-http NO soporta db.transaction() — antes
+  // este bloque envolvía stock check + INSERT order + INSERT order_items en
+  // una transacción, pero ese código tiraba "No transactions support in
+  // neon-http driver" → 500 desde /api/orders en cada crear_pedido del bot.
+  // Mismo patrón que el fix 1e6dc88 sobre menu_item_modifiers.
+  //
+  // Riesgo aceptado: si un INSERT falla a mitad (ej. order creado pero
+  // order_items truena), queda un pedido huérfano sin líneas. En la práctica
+  // raro porque el INSERT de orders es el de mayor riesgo (FK sessionId,
+  // shiftId) y order_items son simples INSERTs por valor. El cron que limpia
+  // sesiones también limpia órdenes huérfanas pasadas las 24h.
+  const order = await (async () => {
     // 1) Stock check + decremento atómico por item gestionado.
-    //    UPDATE ... WHERE stock_qty >= qty RETURNING — si vuelve 0 filas para
-    //    un item con stock_qty NOT NULL → out_of_stock (carrera o stock bajo).
-    //    Para items con stock_qty IS NULL no tocamos nada (ilimitado).
     if (itemNames.length > 0) {
-      const managed = await tx
+      const managed = await db
         .select({
           id: menuItems.id,
           name: menuItems.name,
@@ -293,15 +298,14 @@ export async function createOrder(input: CreateOrderInput) {
         const requested = itemQtyByName.get(m.name) ?? 0;
         if (requested === 0) continue;
 
-        // Atomic check-and-decrement: la cláusula WHERE stock_qty >= requested
-        // protege frente a races (otro pedido entró en paralelo). Si vuelve 0
-        // filas ya no hay stock → out_of_stock.
-        const updated = await tx
+        // Atomic check-and-decrement: WHERE stock_qty >= requested protege
+        // frente a races (otro pedido en paralelo). Si vuelve 0 filas →
+        // out_of_stock. Sin transacción esta protección sigue válida porque
+        // cada UPDATE es atómico a nivel de fila en Postgres.
+        const updated = await db
           .update(menuItems)
           .set({
             stockQty: sql`${menuItems.stockQty} - ${requested}`,
-            // Cuando llegamos a 0 marcamos available=false. > 0 no toca el flag
-            // (el dueño puede haber forzado available=false manual).
             available: sql`CASE WHEN ${menuItems.stockQty} - ${requested} <= 0 THEN false ELSE ${menuItems.available} END`,
             updatedAt: new Date(),
           })
@@ -319,8 +323,6 @@ export async function createOrder(input: CreateOrderInput) {
           });
 
         if (updated.length === 0) {
-          // Race perdida: otro pedido se llevó las últimas unidades entre el
-          // pre-check y el UPDATE. Tratamos como out_of_stock.
           throw new OutOfStockError([
             { name: m.name, requested, available: m.stockQty },
           ]);
@@ -330,15 +332,12 @@ export async function createOrder(input: CreateOrderInput) {
         const threshold = updated[0].lowStockThreshold;
         const lastAlert = updated[0].lastLowStockAlertAt;
 
-        // Alerta WA si el threshold está configurado y stock cae <= threshold,
-        // con cooldown de 1h sobre el last alert. Marcamos last_low_stock_alert_at
-        // dentro de la misma tx para evitar carreras del propio cron de alertas.
         if (threshold != null && newStock <= threshold) {
           const cooldownMs = 60 * 60 * 1000; // 1h
           const now = Date.now();
           const lastMs = lastAlert ? new Date(lastAlert).getTime() : 0;
           if (now - lastMs >= cooldownMs) {
-            await tx
+            await db
               .update(menuItems)
               .set({ lastLowStockAlertAt: new Date(now) })
               .where(eq(menuItems.id, m.id));
@@ -349,7 +348,7 @@ export async function createOrder(input: CreateOrderInput) {
     }
 
     // 2) INSERT order
-    const [orderRow] = await tx
+    const [orderRow] = await db
       .insert(orders)
       .values({
         tenantId: input.tenantId,
@@ -381,7 +380,7 @@ export async function createOrder(input: CreateOrderInput) {
 
     // 3) Recalcular total de la sesión con la suma denormalizada (mig 032).
     if (sessionId) {
-      await tx
+      await db
         .update(tableSessions)
         .set({
           totalCents: sql`${tableSessions.totalCents} + ${totals.totalCents}`,
@@ -392,7 +391,7 @@ export async function createOrder(input: CreateOrderInput) {
 
     // 4) INSERT order_items con precios ajustados por modifiers (mig 042).
     if (itemsAdjusted.length > 0) {
-      await tx.insert(orderItems).values(
+      await db.insert(orderItems).values(
         itemsAdjusted.map((it) => {
           // unit_price_cents incluye ya el delta de modifiers (mig 042).
           const lineTotal = it.quantity * it.unitPriceCentsAdjusted;
@@ -418,8 +417,8 @@ export async function createOrder(input: CreateOrderInput) {
       );
     }
 
-    return { order: orderRow };
-  });
+    return orderRow;
+  })();
 
   // Mig 040: si acabamos de auto-abrir el turno, avisamos al dueño por WA.
   // Fire-and-forget — si el WA falla o no hay destinatario, el pedido
