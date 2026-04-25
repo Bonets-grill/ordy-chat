@@ -1,4 +1,4 @@
-import { count, desc, eq } from "drizzle-orm";
+import { count, desc, eq, sql } from "drizzle-orm";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AdminShell } from "@/components/admin-shell";
@@ -9,6 +9,13 @@ import { getRunsKpi24h } from "@/lib/admin/validator-queries";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { conversations, messages, tenants, users } from "@/lib/db/schema";
+
+// MRR estimado por tenant según plan (€/mes). Sync con pricing público.
+// Si el tenant no tiene status active/trialing → 0.
+function estimatedMrr(status: string | null): number {
+  if (status === "active") return 49.9; // único plan público actualmente
+  return 0;
+}
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +37,25 @@ export default async function AdminHome() {
     ["instancesKpis", () => getInstancesKpis()],
     ["validatorKpi", () => getRunsKpi24h()],
     ["recentTenants", () => db.select().from(tenants).orderBy(desc(tenants.createdAt)).limit(10)],
+    // Cockpit en vivo: pedidos hoy + mensajes 24h + último mensaje por tenant.
+    // Una sola SQL agregada sobre 10 tenants top-by-createdAt.
+    ["cockpit", () =>
+      db.execute(sql`
+        SELECT
+          t.id,
+          (SELECT count(*) FROM orders o
+            WHERE o.tenant_id = t.id
+              AND o.is_test = false
+              AND o.created_at >= date_trunc('day', now() AT TIME ZONE 'Atlantic/Canary'))::int AS orders_today,
+          (SELECT count(*) FROM messages m
+            WHERE m.tenant_id = t.id
+              AND m.created_at >= now() - interval '24 hours')::int AS messages_24h,
+          (SELECT max(m.created_at) FROM messages m
+            WHERE m.tenant_id = t.id) AS last_message_at
+        FROM tenants t
+        WHERE t.id IN (SELECT id FROM tenants ORDER BY created_at DESC LIMIT 10)
+      `),
+    ],
   ] as const;
 
   const results: Record<string, unknown> = {};
@@ -53,6 +79,20 @@ export default async function AdminHome() {
   const validatorKpi = results.validatorKpi as Awaited<ReturnType<typeof getRunsKpi24h>>;
   type TenantRow = typeof tenants.$inferSelect;
   const recent = results.recentTenants as TenantRow[];
+  type CockpitRow = { id: string; orders_today: number; messages_24h: number; last_message_at: string | null };
+  const cockpitRaw = results.cockpit as { rows: CockpitRow[] } | CockpitRow[] | undefined;
+  const cockpitArr: CockpitRow[] = Array.isArray(cockpitRaw)
+    ? cockpitRaw
+    : cockpitRaw?.rows ?? [];
+  const cockpit = new Map<string, CockpitRow>(cockpitArr.map((r) => [r.id, r]));
+
+  // Totales cockpit: MRR sumado + tenants en riesgo (trial expira <3d).
+  const totalMrr = recent.reduce((s, t) => s + estimatedMrr(t.subscriptionStatus), 0);
+  const trialExpiringSoon = recent.filter((t) => {
+    if (t.subscriptionStatus !== "trialing") return false;
+    const ms = new Date(t.trialEndsAt).getTime() - Date.now();
+    return ms > 0 && ms < 3 * 24 * 60 * 60 * 1000;
+  }).length;
 
   return (
     <AdminShell session={session}>
@@ -159,49 +199,114 @@ export default async function AdminHome() {
               Ver todos →
             </Link>
           </div>
+          {/* Cockpit cards: MRR estimado + trials a punto de expirar. */}
+          <div className="mb-3 grid gap-3 sm:grid-cols-3">
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+              <div className="text-[11px] uppercase tracking-wide text-emerald-700">MRR estimado (top 10)</div>
+              <div className="mt-1 text-2xl font-semibold tabular-nums text-emerald-900">
+                {totalMrr.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €
+              </div>
+              <div className="mt-1 text-[11px] text-emerald-700/80">
+                Solo planes 'active' (49,90 €/mes/tenant)
+              </div>
+            </div>
+            <div className={`rounded-xl border p-4 ${trialExpiringSoon > 0 ? "border-amber-200 bg-amber-50" : "border-neutral-200 bg-white"}`}>
+              <div className={`text-[11px] uppercase tracking-wide ${trialExpiringSoon > 0 ? "text-amber-700" : "text-neutral-500"}`}>Trials &lt; 3d</div>
+              <div className={`mt-1 text-2xl font-semibold tabular-nums ${trialExpiringSoon > 0 ? "text-amber-900" : "text-neutral-900"}`}>
+                {trialExpiringSoon}
+              </div>
+              <div className={`mt-1 text-[11px] ${trialExpiringSoon > 0 ? "text-amber-700/80" : "text-neutral-500"}`}>
+                {trialExpiringSoon > 0 ? "Acción: contactar para upgrade" : "Sin trials cerca de expirar"}
+              </div>
+            </div>
+            <div className="rounded-xl border border-neutral-200 bg-white p-4">
+              <div className="text-[11px] uppercase tracking-wide text-neutral-500">Total tenants top 10</div>
+              <div className="mt-1 text-2xl font-semibold tabular-nums text-neutral-900">
+                {recent.length}
+              </div>
+              <div className="mt-1 text-[11px] text-neutral-500">
+                {recent.filter((t) => t.subscriptionStatus === "active").length} activos · {recent.filter((t) => t.subscriptionStatus === "trialing").length} trial
+              </div>
+            </div>
+          </div>
+
           <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white">
             <table className="w-full text-sm">
               <thead className="bg-neutral-50">
                 <tr className="text-left text-xs uppercase text-neutral-500">
-                  <th className="px-4 py-2.5 font-medium">Slug</th>
-                  <th className="py-2.5 font-medium">Nombre</th>
+                  <th className="px-4 py-2.5 font-medium">Tenant</th>
                   <th className="py-2.5 font-medium">Estado</th>
-                  <th className="py-2.5 font-medium">Trial</th>
-                  <th className="py-2.5 font-medium">Creado</th>
+                  <th className="py-2.5 text-right font-medium">MRR</th>
+                  <th className="py-2.5 text-right font-medium">Pedidos hoy</th>
+                  <th className="py-2.5 text-right font-medium">Msgs 24h</th>
+                  <th className="py-2.5 font-medium">Salud</th>
+                  <th className="py-2.5 font-medium">Última actividad</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-100">
                 {recent.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="px-4 py-6 text-center text-sm text-neutral-500">
+                    <td colSpan={7} className="px-4 py-6 text-center text-sm text-neutral-500">
                       Aún no hay tenants creados.
                     </td>
                   </tr>
                 ) : (
-                  recent.map((t) => (
-                    <tr key={t.id} className="hover:bg-neutral-50">
-                      <td className="px-4 py-2.5">
-                        <Link
-                          href={`/admin/tenants/${t.id}`}
-                          className="font-mono text-xs text-neutral-700 hover:underline"
-                        >
-                          {t.slug}
-                        </Link>
-                      </td>
-                      <td className="py-2.5">{t.name}</td>
-                      <td className="py-2.5">
-                        <Badge tone={t.subscriptionStatus === "active" ? "success" : "warn"}>
-                          {t.subscriptionStatus}
-                        </Badge>
-                      </td>
-                      <td className="py-2.5 text-xs text-neutral-500">
-                        {new Date(t.trialEndsAt).toLocaleDateString("es-ES")}
-                      </td>
-                      <td className="py-2.5 text-xs text-neutral-500">
-                        {new Date(t.createdAt).toLocaleDateString("es-ES")}
-                      </td>
-                    </tr>
-                  ))
+                  recent.map((t) => {
+                    const c = cockpit.get(t.id);
+                    const ordersToday = c?.orders_today ?? 0;
+                    const msgs24h = c?.messages_24h ?? 0;
+                    const lastMs = c?.last_message_at ? new Date(c.last_message_at).getTime() : 0;
+                    const minutesSince = lastMs ? Math.floor((Date.now() - lastMs) / 60000) : null;
+                    // Salud: verde si activo Y actividad <60min; ámbar trial; rojo expirado / sin actividad >24h
+                    const isExpired = t.subscriptionStatus !== "active" && t.subscriptionStatus !== "trialing";
+                    const isStale = minutesSince === null || minutesSince > 60 * 24;
+                    let health: { tone: "success" | "warn" | "danger" | "muted"; label: string } = { tone: "success", label: "OK" };
+                    if (isExpired) health = { tone: "danger", label: "Expirado" };
+                    else if (t.subscriptionStatus === "trialing") health = { tone: "warn", label: "Trial" };
+                    else if (isStale) health = { tone: "warn", label: "Inactivo" };
+                    return (
+                      <tr key={t.id} className="hover:bg-neutral-50">
+                        <td className="px-4 py-2.5">
+                          <Link href={`/admin/tenants/${t.id}`} className="block">
+                            <div className="font-medium text-neutral-900">{t.name}</div>
+                            <div className="font-mono text-[10.5px] text-neutral-500">{t.slug}</div>
+                          </Link>
+                        </td>
+                        <td className="py-2.5">
+                          <Badge tone={t.subscriptionStatus === "active" ? "success" : "warn"}>
+                            {t.subscriptionStatus}
+                          </Badge>
+                        </td>
+                        <td className="py-2.5 text-right tabular-nums">
+                          {estimatedMrr(t.subscriptionStatus).toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €
+                        </td>
+                        <td className="py-2.5 text-right tabular-nums">
+                          <span className={ordersToday > 0 ? "font-semibold text-emerald-700" : "text-neutral-400"}>
+                            {ordersToday}
+                          </span>
+                        </td>
+                        <td className="py-2.5 text-right tabular-nums">
+                          <span className={msgs24h > 0 ? "font-medium text-neutral-900" : "text-neutral-400"}>
+                            {msgs24h}
+                          </span>
+                        </td>
+                        <td className="py-2.5">
+                          <Badge tone={health.tone}>
+                            {health.label}
+                          </Badge>
+                        </td>
+                        <td className="py-2.5 text-xs text-neutral-500">
+                          {minutesSince === null
+                            ? "—"
+                            : minutesSince < 60
+                              ? `hace ${minutesSince}m`
+                              : minutesSince < 60 * 24
+                                ? `hace ${Math.floor(minutesSince / 60)}h`
+                                : `hace ${Math.floor(minutesSince / (60 * 24))}d`}
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
