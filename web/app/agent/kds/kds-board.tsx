@@ -140,6 +140,15 @@ const STATUS_TONE: Record<OrderStatus, { card: string; badge: string }> = {
   served: { card: "bg-neutral-50 border-neutral-200", badge: "bg-neutral-100 text-neutral-700" },
 };
 
+// Mig POS-redesign F7: ticket-age coloring estándar de KDS de clase mundial
+// (Toast/Square). Verde <10min · ámbar 10-25min · rojo >25min. El badge de
+// edad reemplaza el badge de status para reflejar urgencia operativa real.
+function ageTone(minutes: number): string {
+  if (minutes < 10) return "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200";
+  if (minutes < 25) return "bg-amber-100 text-amber-800 ring-1 ring-amber-200";
+  return "bg-rose-100 text-rose-800 ring-1 ring-rose-200 animate-pulse";
+}
+
 export function KdsBoard({ kioskToken }: { kioskToken?: string } = {}) {
   const [station, setStation] = React.useState<Station>("all");
   const [orders, setOrders] = React.useState<KdsOrder[]>([]);
@@ -548,7 +557,7 @@ function ReviewCard({
           {order.isTest ? <span title="Pedido de playground" className="mr-1">🧪</span> : null}
           {typeLabel}
         </span>
-        <span className={`rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${tone.badge}`}>
+        <span className={`rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${ageTone(minutesAgo)}`}>
           {ageLabel}
         </span>
       </div>
@@ -792,9 +801,7 @@ function OrderCard({
           {order.tableNumber ? `Mesa ${order.tableNumber}` : "Para llevar"}
         </span>
         <span
-          className={`rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
-            isStale ? "bg-rose-100 text-rose-800 ring-1 ring-rose-200" : tone.badge
-          }`}
+          className={`rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${ageTone(minutesAgo)}`}
         >
           {ageLabel}
         </span>
