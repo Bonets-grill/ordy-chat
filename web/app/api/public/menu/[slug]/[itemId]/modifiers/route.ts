@@ -3,12 +3,19 @@
 // Endpoint PÚBLICO (sin auth) — usado por el widget /m/[slug] cuando el
 // cliente toca "+" en un item para ver/seleccionar sus modificadores.
 //
-// Devuelve solo los modifiers con available=true.
+// Lee los grupos asignados al item via menu_item_modifier_group_links + biblioteca
+// (mig 051) y solo devuelve opciones con available=true.
 
 import { NextResponse } from "next/server";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { menuItems, menuItemModifierGroups, menuItemModifiers, tenants } from "@/lib/db/schema";
+import {
+  menuItems,
+  menuItemModifierGroupLinks,
+  modifierGroups,
+  modifierOptions,
+  tenants,
+} from "@/lib/db/schema";
 
 export const runtime = "nodejs";
 
@@ -17,7 +24,6 @@ type Ctx = { params: Promise<{ slug: string; itemId: string }> };
 export async function GET(_req: Request, ctx: Ctx) {
   const { slug, itemId } = await ctx.params;
 
-  // Resolver tenant por slug (ruta pública).
   const [t] = await db
     .select({ id: tenants.id })
     .from(tenants)
@@ -34,45 +40,46 @@ export async function GET(_req: Request, ctx: Ctx) {
     .limit(1);
   if (!item) return NextResponse.json({ error: "item_not_found" }, { status: 404 });
 
-  const groups = await db
-    .select()
-    .from(menuItemModifierGroups)
+  const links = await db
+    .select({
+      sortOrder: menuItemModifierGroupLinks.sortOrder,
+      dependsOnOptionId: menuItemModifierGroupLinks.dependsOnOptionId,
+      group: modifierGroups,
+    })
+    .from(menuItemModifierGroupLinks)
+    .innerJoin(modifierGroups, eq(modifierGroups.id, menuItemModifierGroupLinks.groupId))
     .where(
       and(
-        eq(menuItemModifierGroups.menuItemId, itemId),
-        eq(menuItemModifierGroups.tenantId, t.id),
+        eq(menuItemModifierGroupLinks.menuItemId, itemId),
+        eq(modifierGroups.tenantId, t.id),
       ),
     )
-    .orderBy(asc(menuItemModifierGroups.sortOrder), asc(menuItemModifierGroups.name));
+    .orderBy(asc(menuItemModifierGroupLinks.sortOrder), asc(modifierGroups.name));
 
-  if (groups.length === 0) return NextResponse.json({ groups: [] });
+  if (links.length === 0) return NextResponse.json({ groups: [] });
 
-  const groupIds = groups.map((g) => g.id);
-  const mods = await db
+  const groupIds = links.map((l) => l.group.id);
+  const opts = await db
     .select()
-    .from(menuItemModifiers)
-    .where(
-      and(
-        inArray(menuItemModifiers.groupId, groupIds),
-        eq(menuItemModifiers.available, true),
-      ),
-    )
-    .orderBy(asc(menuItemModifiers.sortOrder), asc(menuItemModifiers.name));
+    .from(modifierOptions)
+    .where(and(inArray(modifierOptions.groupId, groupIds), eq(modifierOptions.available, true)))
+    .orderBy(asc(modifierOptions.sortOrder), asc(modifierOptions.name));
 
-  const byGroup = new Map<string, typeof mods>();
-  for (const m of mods) {
-    if (!byGroup.has(m.groupId)) byGroup.set(m.groupId, []);
-    byGroup.get(m.groupId)!.push(m);
+  const byGroup = new Map<string, typeof opts>();
+  for (const o of opts) {
+    if (!byGroup.has(o.groupId)) byGroup.set(o.groupId, []);
+    byGroup.get(o.groupId)!.push(o);
   }
-  const result = groups.map((g) => ({
-    id: g.id,
-    name: g.name,
-    selectionType: g.selectionType,
-    required: g.required,
-    minSelect: g.minSelect,
-    maxSelect: g.maxSelect,
-    sortOrder: g.sortOrder,
-    modifiers: (byGroup.get(g.id) ?? []).map((m) => ({
+  const result = links.map((l) => ({
+    id: l.group.id,
+    name: l.group.name,
+    selectionType: l.group.selectionType,
+    required: l.group.required,
+    minSelect: l.group.minSelect,
+    maxSelect: l.group.maxSelect,
+    sortOrder: l.sortOrder,
+    dependsOnOptionId: l.dependsOnOptionId,
+    modifiers: (byGroup.get(l.group.id) ?? []).map((m) => ({
       id: m.id,
       name: m.name,
       priceDeltaCents: m.priceDeltaCents,

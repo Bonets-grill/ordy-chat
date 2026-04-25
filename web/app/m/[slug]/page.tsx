@@ -10,12 +10,19 @@
 // Aditivo puro: no toca schema, APIs, brain, ni middleware. El matcher de
 // proxy.ts no cubre /m/:path*, así que la ruta es pública sin tocar config.
 
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { CalendarDays, MessageCircle, Phone } from "lucide-react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
-import { agentConfigs, menuItems, providerCredentials, tenants } from "@/lib/db/schema";
+import {
+  agentConfigs,
+  allergens,
+  menuItemAllergens,
+  menuItems,
+  providerCredentials,
+  tenants,
+} from "@/lib/db/schema";
 import { MenuExperience } from "./menu-experience";
 
 export const dynamic = "force-dynamic";
@@ -68,19 +75,42 @@ async function loadTenantBundle(slug: string) {
     .where(eq(agentConfigs.tenantId, t.id))
     .limit(1);
 
-  const items = await db
+  const itemRows = await db
     .select({
       id: menuItems.id,
       category: menuItems.category,
       name: menuItems.name,
       priceCents: menuItems.priceCents,
       description: menuItems.description,
-      allergens: menuItems.allergens,
       sortOrder: menuItems.sortOrder,
     })
     .from(menuItems)
     .where(and(eq(menuItems.tenantId, t.id), eq(menuItems.available, true)))
     .orderBy(asc(menuItems.category), asc(menuItems.sortOrder), asc(menuItems.name));
+
+  // Mig 051: alérgenos vienen de la biblioteca via menu_item_allergens.
+  const allergenRows = itemRows.length
+    ? await db
+        .select({
+          menuItemId: menuItemAllergens.menuItemId,
+          label: allergens.label,
+        })
+        .from(menuItemAllergens)
+        .innerJoin(allergens, eq(allergens.id, menuItemAllergens.allergenId))
+        .where(
+          and(
+            inArray(menuItemAllergens.menuItemId, itemRows.map((i) => i.id)),
+            eq(allergens.tenantId, t.id),
+          ),
+        )
+        .orderBy(asc(allergens.sortOrder), asc(allergens.label))
+    : [];
+  const allergensByItem = new Map<string, string[]>();
+  for (const r of allergenRows) {
+    if (!allergensByItem.has(r.menuItemId)) allergensByItem.set(r.menuItemId, []);
+    allergensByItem.get(r.menuItemId)!.push(r.label);
+  }
+  const items = itemRows.map((i) => ({ ...i, allergens: allergensByItem.get(i.id) ?? [] }));
 
   const [creds] = await db
     .select({ phoneNumber: providerCredentials.phoneNumber })

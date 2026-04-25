@@ -1,134 +1,128 @@
 // web/app/api/tenant/menu/[id]/modifiers/route.ts
 //
-// CRUD de grupos de modificadores y sus modifiers para un menu_item.
+// Asignación de grupos de la biblioteca a un menu_item concreto (mig 051).
 //
-// GET   → lista grupos del item con sus modifiers anidados.
-// POST  → crea un grupo (con sus modifiers iniciales) en una transacción.
-//
-// Multi-tenant: todas las queries pasan tenant_id del bundle. El menu_item se
-// valida que pertenezca al tenant antes de tocar grupos.
+// GET → grupos asignados a este item con sus opciones, link metadata
+//       (sortOrder, dependsOnOptionId) y el id del link.
+// PUT → reemplaza el conjunto completo de grupos asignados al item.
+//       Body: { groupIds: uuid[] }.
+//       Solo añade/quita LINKS — no toca grupos ni opciones de la biblioteca.
 
 import { NextResponse } from "next/server";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { menuItems, menuItemModifierGroups, menuItemModifiers } from "@/lib/db/schema";
+import {
+  menuItemModifierGroupLinks,
+  menuItems,
+  modifierGroups,
+  modifierOptions,
+} from "@/lib/db/schema";
 import { requireTenant } from "@/lib/tenant";
-import { groupCreateSchema } from "@/lib/menu-modifiers-schema";
+import { itemLinksReplaceSchema } from "@/lib/modifier-library-schema";
 
 export const runtime = "nodejs";
 
-// Re-exports para retro-compat (algunos tests pueden importar desde aquí).
-export { modifierInputSchema, groupCreateSchema } from "@/lib/menu-modifiers-schema";
-
 type Ctx = { params: Promise<{ id: string }> };
+
+async function ensureItem(tenantId: string, itemId: string) {
+  const [it] = await db
+    .select({ id: menuItems.id })
+    .from(menuItems)
+    .where(and(eq(menuItems.id, itemId), eq(menuItems.tenantId, tenantId)))
+    .limit(1);
+  return it ?? null;
+}
 
 export async function GET(_req: Request, ctx: Ctx) {
   const bundle = await requireTenant();
   if (!bundle) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-
   const { id } = await ctx.params;
+  if (!(await ensureItem(bundle.tenant.id, id))) {
+    return NextResponse.json({ error: "not_found" }, { status: 404 });
+  }
 
-  // Validar ownership del item.
-  const [item] = await db
-    .select({ id: menuItems.id })
-    .from(menuItems)
-    .where(and(eq(menuItems.id, id), eq(menuItems.tenantId, bundle.tenant.id)))
-    .limit(1);
-  if (!item) return NextResponse.json({ error: "not_found" }, { status: 404 });
-
-  const groups = await db
-    .select()
-    .from(menuItemModifierGroups)
+  const linked = await db
+    .select({
+      linkId: menuItemModifierGroupLinks.id,
+      sortOrder: menuItemModifierGroupLinks.sortOrder,
+      dependsOnOptionId: menuItemModifierGroupLinks.dependsOnOptionId,
+      group: modifierGroups,
+    })
+    .from(menuItemModifierGroupLinks)
+    .innerJoin(modifierGroups, eq(modifierGroups.id, menuItemModifierGroupLinks.groupId))
     .where(
       and(
-        eq(menuItemModifierGroups.menuItemId, id),
-        eq(menuItemModifierGroups.tenantId, bundle.tenant.id),
+        eq(menuItemModifierGroupLinks.menuItemId, id),
+        eq(modifierGroups.tenantId, bundle.tenant.id),
       ),
     )
-    .orderBy(asc(menuItemModifierGroups.sortOrder), asc(menuItemModifierGroups.name));
+    .orderBy(asc(menuItemModifierGroupLinks.sortOrder), asc(modifierGroups.name));
 
-  if (groups.length === 0) return NextResponse.json({ groups: [] });
+  if (linked.length === 0) return NextResponse.json({ groups: [] });
 
-  const groupIds = groups.map((g) => g.id);
-  const mods = await db
+  const groupIds = linked.map((r) => r.group.id);
+  const options = await db
     .select()
-    .from(menuItemModifiers)
-    .where(inArray(menuItemModifiers.groupId, groupIds))
-    .orderBy(asc(menuItemModifiers.sortOrder), asc(menuItemModifiers.name));
+    .from(modifierOptions)
+    .where(inArray(modifierOptions.groupId, groupIds))
+    .orderBy(asc(modifierOptions.sortOrder), asc(modifierOptions.name));
 
-  const byGroup = new Map<string, typeof mods>();
-  for (const m of mods) {
-    if (!byGroup.has(m.groupId)) byGroup.set(m.groupId, []);
-    byGroup.get(m.groupId)!.push(m);
+  const optsByGroup = new Map<string, typeof options>();
+  for (const o of options) {
+    if (!optsByGroup.has(o.groupId)) optsByGroup.set(o.groupId, []);
+    optsByGroup.get(o.groupId)!.push(o);
   }
-  const result = groups.map((g) => ({ ...g, modifiers: byGroup.get(g.id) ?? [] }));
-  return NextResponse.json({ groups: result });
+
+  return NextResponse.json({
+    groups: linked.map((r) => ({
+      ...r.group,
+      linkId: r.linkId,
+      sortOrder: r.sortOrder,
+      dependsOnOptionId: r.dependsOnOptionId,
+      options: optsByGroup.get(r.group.id) ?? [],
+    })),
+  });
 }
 
-export async function POST(req: Request, ctx: Ctx) {
+export async function PUT(req: Request, ctx: Ctx) {
   const bundle = await requireTenant();
   if (!bundle) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-
   const { id } = await ctx.params;
+  if (!(await ensureItem(bundle.tenant.id, id))) {
+    return NextResponse.json({ error: "not_found" }, { status: 404 });
+  }
 
-  const parsed = groupCreateSchema.safeParse(await req.json().catch(() => null));
+  const parsed = itemLinksReplaceSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: "bad_input", issues: parsed.error.flatten() }, { status: 400 });
   }
+  const { groupIds } = parsed.data;
 
-  // Ownership.
-  const [item] = await db
-    .select({ id: menuItems.id })
-    .from(menuItems)
-    .where(and(eq(menuItems.id, id), eq(menuItems.tenantId, bundle.tenant.id)))
-    .limit(1);
-  if (!item) return NextResponse.json({ error: "not_found" }, { status: 404 });
+  // Solo grupos del tenant — descarta IDs ajenos en silencio.
+  const valid =
+    groupIds.length === 0
+      ? []
+      : await db
+          .select({ id: modifierGroups.id })
+          .from(modifierGroups)
+          .where(
+            and(eq(modifierGroups.tenantId, bundle.tenant.id), inArray(modifierGroups.id, groupIds)),
+          );
+  const validIds = valid.map((r) => r.id);
 
-  const data = parsed.data;
-  const maxSelectFinal = data.selectionType === "single" ? 1 : data.maxSelect;
-
-  // Sin transacción: el driver neon-http NO soporta db.transaction(). Hacemos
-  // INSERT del grupo + INSERT de los modifiers secuencial y, si los modifiers
-  // fallan, borramos el grupo manualmente para no dejar grupos huérfanos.
-  const [g] = await db
-    .insert(menuItemModifierGroups)
-    .values({
-      tenantId: bundle.tenant.id,
-      menuItemId: id,
-      name: data.name,
-      selectionType: data.selectionType,
-      required: data.required,
-      minSelect: data.minSelect,
-      maxSelect: maxSelectFinal,
-      sortOrder: data.sortOrder,
-    })
-    .returning();
-
-  let modifiers: Array<typeof menuItemModifiers.$inferSelect> = [];
-  if (data.modifiers.length > 0) {
-    try {
-      modifiers = await db
-        .insert(menuItemModifiers)
-        .values(
-          data.modifiers.map((m) => ({
-            groupId: g.id,
-            name: m.name,
-            priceDeltaCents: m.priceDeltaCents,
-            available: m.available,
-            sortOrder: m.sortOrder,
-          })),
-        )
-        .returning();
-    } catch (err) {
-      // Rollback manual: borra el grupo creado para que el cliente pueda
-      // reintentar sin grupos huérfanos.
-      await db
-        .delete(menuItemModifierGroups)
-        .where(eq(menuItemModifierGroups.id, g.id))
-        .catch(() => {});
-      throw err;
-    }
+  // Reemplazo atómico: borra todos los links del item y reinserta.
+  await db.delete(menuItemModifierGroupLinks).where(eq(menuItemModifierGroupLinks.menuItemId, id));
+  if (validIds.length > 0) {
+    await db
+      .insert(menuItemModifierGroupLinks)
+      .values(
+        validIds.map((groupId, idx) => ({
+          menuItemId: id,
+          groupId,
+          sortOrder: idx,
+        })),
+      );
   }
 
-  return NextResponse.json({ ok: true, group: { ...g, modifiers } });
+  return NextResponse.json({ ok: true, linked: validIds.length });
 }

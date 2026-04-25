@@ -705,7 +705,8 @@ export const menuItems = pgTable("menu_items", {
   // URL absoluta de la imagen del item (webp/jpg/png). El scraper de URL la
   // extrae del HTML; en items manuales es nullable. Migración 034.
   imageUrl: text("image_url"),
-  allergens: text("allergens").array().notNull().default(_sqlTag`ARRAY[]::text[]`),
+  // Mig 053 (cutover): la columna `allergens text[]` se removió. Los
+  // alérgenos viven ahora en menu_item_allergens + biblioteca `allergens`.
   available: boolean("available").notNull().default(true),
   sortOrder: integer("sort_order").notNull().default(0),
   // 'manual' | 'scrape' | 'pdf' | 'import' — quién creó el item.
@@ -730,47 +731,105 @@ export const menuItems = pgTable("menu_items", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-// ── Modificadores de producto (migración 042) ──────────────────
-// Cada menu_item puede tener N grupos. Un grupo es "Tamaño" (single, required),
-// "Extras" (multi, opcional), "Quitar" (multi, opcional). Cada grupo contiene
-// N modifiers concretos con su delta de precio (>=0). Snapshot persistido en
-// order_items.modifiersJson al crear el pedido.
-export const menuItemModifierGroups = pgTable("menu_item_modifier_groups", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
-  menuItemId: uuid("menu_item_id").notNull().references((): AnyPgColumn => menuItems.id, { onDelete: "cascade" }),
-  name: text("name").notNull(),
-  // 'single' (radio, máx 1) | 'multi' (checkbox, varios).
-  selectionType: text("selection_type").notNull(),
-  required: boolean("required").notNull().default(false),
-  minSelect: integer("min_select").notNull().default(0),
-  // null = sin límite (multi). Para single la DB fuerza =1.
-  maxSelect: integer("max_select"),
-  sortOrder: integer("sort_order").notNull().default(0),
-  // Mig 048 — i18n del nombre del grupo ({ en: { name }, fr: { name }, ... }).
-  i18nTranslations: jsonb("i18n_translations").notNull().default({}),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+// Mig 053 (cutover): las tablas legacy `menu_item_modifier_groups` y
+// `menu_item_modifiers` se reemplazaron por la biblioteca tenant-wide
+// (modifier_groups + modifier_options + menu_item_modifier_group_links,
+// definidas más arriba). Los datos se migraron con Mig 052.
 
-export const menuItemModifiers = pgTable("menu_item_modifiers", {
+// ── Biblioteca de modificadores y alérgenos (migración 051) ────────
+// Reemplaza el modelo 1:1 anterior. Ahora un grupo se define UNA vez por tenant
+// y se asigna a N productos vía menu_item_modifier_group_links. Igual para
+// alérgenos. La dependencia condicional (un grupo solo aparece si se eligió
+// cierta opción en otro grupo) vive en el LINK por producto, no en el grupo
+// biblioteca, porque el mismo grupo puede asignarse a varios productos con
+// dependencias distintas.
+export const modifierGroups = pgTable(
+  "modifier_groups",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    // 'single' (radio, máx 1) | 'multi' (checkbox, varios). CHECK en DB.
+    selectionType: text("selection_type").notNull(),
+    required: boolean("required").notNull().default(false),
+    minSelect: integer("min_select").notNull().default(0),
+    // null = sin límite (multi). Para single la app fuerza =1.
+    maxSelect: integer("max_select"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    // i18n: { en: { name }, fr: { name }, ... }
+    i18nTranslations: jsonb("i18n_translations").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({ uniqTenantName: unique().on(t.tenantId, t.name) }),
+);
+
+export const modifierOptions = pgTable("modifier_options", {
   id: uuid("id").primaryKey().defaultRandom(),
-  groupId: uuid("group_id").notNull().references(() => menuItemModifierGroups.id, { onDelete: "cascade" }),
+  groupId: uuid("group_id").notNull().references(() => modifierGroups.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   // Solo positivos o cero (CHECK en DB). Descuentos no se modelan aquí.
   priceDeltaCents: integer("price_delta_cents").notNull().default(0),
   available: boolean("available").notNull().default(true),
   sortOrder: integer("sort_order").notNull().default(0),
-  // Mig 048 — i18n del nombre del modifier.
   i18nTranslations: jsonb("i18n_translations").notNull().default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-export type MenuItemModifierGroup = typeof menuItemModifierGroups.$inferSelect;
-export type NewMenuItemModifierGroup = typeof menuItemModifierGroups.$inferInsert;
-export type MenuItemModifier = typeof menuItemModifiers.$inferSelect;
-export type NewMenuItemModifier = typeof menuItemModifiers.$inferInsert;
+export const menuItemModifierGroupLinks = pgTable(
+  "menu_item_modifier_group_links",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    menuItemId: uuid("menu_item_id").notNull().references((): AnyPgColumn => menuItems.id, { onDelete: "cascade" }),
+    groupId: uuid("group_id").notNull().references(() => modifierGroups.id, { onDelete: "cascade" }),
+    sortOrder: integer("sort_order").notNull().default(0),
+    // Si != null, este grupo solo aparece para este producto cuando el cliente
+    // eligió esa opción concreta en otro grupo del mismo producto.
+    dependsOnOptionId: uuid("depends_on_option_id").references(() => modifierOptions.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({ uniqItemGroup: unique().on(t.menuItemId, t.groupId) }),
+);
+
+// Biblioteca de alérgenos. code es slug estable ("gluten", "lactosa") usado por
+// la UI/brain. label es el nombre canónico ES; i18nTranslations cubre el resto.
+export const allergens = pgTable(
+  "allergens",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    code: text("code").notNull(),
+    label: text("label").notNull(),
+    icon: text("icon"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    i18nTranslations: jsonb("i18n_translations").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({ uniqTenantCode: unique().on(t.tenantId, t.code) }),
+);
+
+export const menuItemAllergens = pgTable(
+  "menu_item_allergens",
+  {
+    menuItemId: uuid("menu_item_id").notNull().references((): AnyPgColumn => menuItems.id, { onDelete: "cascade" }),
+    allergenId: uuid("allergen_id").notNull().references(() => allergens.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.menuItemId, t.allergenId] }) }),
+);
+
+export type ModifierGroup = typeof modifierGroups.$inferSelect;
+export type NewModifierGroup = typeof modifierGroups.$inferInsert;
+export type ModifierOption = typeof modifierOptions.$inferSelect;
+export type NewModifierOption = typeof modifierOptions.$inferInsert;
+export type MenuItemModifierGroupLink = typeof menuItemModifierGroupLinks.$inferSelect;
+export type NewMenuItemModifierGroupLink = typeof menuItemModifierGroupLinks.$inferInsert;
+export type Allergen = typeof allergens.$inferSelect;
+export type NewAllergen = typeof allergens.$inferInsert;
+export type MenuItemAllergen = typeof menuItemAllergens.$inferSelect;
+export type NewMenuItemAllergen = typeof menuItemAllergens.$inferInsert;
 
 // ── Restaurant tables (migración 035) ──────────────────────────
 // Plano de mesas del tenant. Cada fila representa una mesa con su QR

@@ -13,9 +13,10 @@
 //     que no lo usen siguen funcionando con su propio markup.
 
 import {
-  BarChart3, BellRing, Bot, BookOpen, CalendarCheck, CalendarX, ChefHat,
-  ClipboardList, CreditCard, FileText, FlaskConical, LayoutDashboard, Menu,
-  MessageSquareText, QrCode, Settings, Smartphone, Sparkles, Truck, Users,
+  AlertTriangle, BarChart3, BellRing, Bot, BookOpen, CalendarCheck, CalendarX,
+  ChefHat, ClipboardList, CreditCard, FileText, FlaskConical, LayoutDashboard,
+  Menu, MessageSquareText, Puzzle, QrCode, Settings, Smartphone, Sparkles,
+  Truck, Users,
 } from "lucide-react";
 import Link from "next/link";
 import type { Session } from "next-auth";
@@ -39,6 +40,8 @@ const NAV: NavItem[] = [
 
   // Restaurante — operativa de servicio.
   { href: "/dashboard/carta",    label: "Carta",           icon: Menu,               group: "rest" },
+  { href: "/dashboard/modificadores", label: "Modificadores", icon: Puzzle,         group: "rest" },
+  { href: "/dashboard/alergenos", label: "Alérgenos",       icon: AlertTriangle,    group: "rest" },
   { href: "/dashboard/recomendaciones", label: "Recomendaciones", icon: Sparkles,    group: "rest" },
   { href: "/agent/tables",       label: "Mesas y QRs",     icon: QrCode,             group: "rest" },
   { href: "/agent/comandero",    label: "Comandero",       icon: ClipboardList,      group: "rest" },

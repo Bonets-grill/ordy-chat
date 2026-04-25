@@ -8,7 +8,7 @@
 
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { agentConfigs, menuItemModifiers, menuItems, orderItems, orders, shifts, tableSessions, tenants } from "@/lib/db/schema";
+import { agentConfigs, menuItems, modifierOptions, orderItems, orders, shifts, tableSessions, tenants } from "@/lib/db/schema";
 import { type OrderPaymentMethod } from "@/lib/payment-methods";
 import { queuePosReport } from "@/lib/pos-reports";
 import { stripeClient } from "@/lib/stripe";
@@ -121,15 +121,17 @@ export async function createOrder(input: CreateOrderInput) {
   let dbMods: Array<{ id: string; groupId: string; name: string; priceDeltaCents: number }> = [];
   if (allModifierIds.length) {
     try {
+      // Mig 051: lookup canónico desde la biblioteca (modifier_options).
+      // El KDS sigue solo entendiendo español → name canónico ES.
       const raw = await db
         .select({
-          id: menuItemModifiers.id,
-          groupId: menuItemModifiers.groupId,
-          name: menuItemModifiers.name,
-          priceDeltaCents: menuItemModifiers.priceDeltaCents,
+          id: modifierOptions.id,
+          groupId: modifierOptions.groupId,
+          name: modifierOptions.name,
+          priceDeltaCents: modifierOptions.priceDeltaCents,
         })
-        .from(menuItemModifiers)
-        .where(inArray(menuItemModifiers.id, allModifierIds));
+        .from(modifierOptions)
+        .where(inArray(modifierOptions.id, allModifierIds));
       if (Array.isArray(raw)) dbMods = raw;
     } catch {
       // Defensive: si el lookup falla, caemos a client data.

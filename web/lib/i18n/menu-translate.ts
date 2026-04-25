@@ -16,8 +16,8 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   menuItems,
-  menuItemModifierGroups,
-  menuItemModifiers,
+  modifierGroups,
+  modifierOptions,
 } from "@/lib/db/schema";
 import { resolveAnthropicApiKey } from "@/lib/anthropic-key";
 
@@ -205,22 +205,24 @@ export async function getTranslatedMenu(
   // Mig 048 (sesión 2026-04-25 14:18): traduce también los nombres de
   // modifier groups y modifiers individuales. Mismo patrón: cache en
   // i18n_translations[lang], LLM solo cuando falta.
+  // Mig 051: ahora la traducción vive en la biblioteca (modifier_groups +
+  // modifier_options), no en las tablas legacy 1:1. Una traducción por tenant.
   const groupRows = await db
     .select({
-      id: menuItemModifierGroups.id,
-      name: menuItemModifierGroups.name,
-      i18n: menuItemModifierGroups.i18nTranslations,
+      id: modifierGroups.id,
+      name: modifierGroups.name,
+      i18n: modifierGroups.i18nTranslations,
     })
-    .from(menuItemModifierGroups)
-    .where(eq(menuItemModifierGroups.tenantId, tenantId));
+    .from(modifierGroups)
+    .where(eq(modifierGroups.tenantId, tenantId));
   const modRows = groupRows.length
     ? await db
         .select({
-          id: menuItemModifiers.id,
-          name: menuItemModifiers.name,
-          i18n: menuItemModifiers.i18nTranslations,
+          id: modifierOptions.id,
+          name: modifierOptions.name,
+          i18n: modifierOptions.i18nTranslations,
         })
-        .from(menuItemModifiers)
+        .from(modifierOptions)
     : [];
 
   const missingGroups: SourceItem[] = groupRows
@@ -241,9 +243,9 @@ export async function getTranslatedMenu(
       await Promise.all(
         translations.map((t) => {
           const targetTable = groupIds.has(t.id)
-            ? menuItemModifierGroups
+            ? modifierGroups
             : modIds.has(t.id)
-              ? menuItemModifiers
+              ? modifierOptions
               : null;
           if (!targetTable) return Promise.resolve();
           return db
@@ -305,5 +307,5 @@ export async function getCanonicalMenu(tenantId: string) {
     .where(eq(menuItems.tenantId, tenantId));
 }
 
-// Re-exporta tablas para que callers pasen tipos sin tocar schema directo.
-export { menuItemModifierGroups, menuItemModifiers };
+// Re-exporta tablas biblioteca para que callers pasen tipos sin tocar schema directo.
+export { modifierGroups, modifierOptions };

@@ -30,27 +30,36 @@ async def buscar_items(tenant_id: UUID, query: str, limit: int = 5) -> list[dict
     q = query.strip()
     if not q:
         return []
+    # Mig 051: alérgenos vienen de la biblioteca (menu_item_allergens + allergens),
+    # no del antiguo text[] en menu_items. Subquery agrega los labels por item.
     pool = await inicializar_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT id, category, name, price_cents, description,
-                   image_url, allergens,
+            SELECT mi.id, mi.category, mi.name, mi.price_cents, mi.description,
+                   mi.image_url,
+                   COALESCE(
+                     (SELECT array_agg(a.label ORDER BY a.sort_order, a.label)
+                      FROM menu_item_allergens mia
+                      JOIN allergens a ON a.id = mia.allergen_id
+                      WHERE mia.menu_item_id = mi.id),
+                     ARRAY[]::text[]
+                   ) AS allergens,
                    CASE
-                     WHEN LOWER(name) = LOWER($2) THEN 1
-                     WHEN LOWER(name) LIKE LOWER($2) || '%' THEN 2
-                     WHEN LOWER(name) LIKE '%' || LOWER($2) || '%' THEN 3
-                     WHEN LOWER(COALESCE(description, '')) LIKE '%' || LOWER($2) || '%' THEN 4
+                     WHEN LOWER(mi.name) = LOWER($2) THEN 1
+                     WHEN LOWER(mi.name) LIKE LOWER($2) || '%' THEN 2
+                     WHEN LOWER(mi.name) LIKE '%' || LOWER($2) || '%' THEN 3
+                     WHEN LOWER(COALESCE(mi.description, '')) LIKE '%' || LOWER($2) || '%' THEN 4
                      ELSE 5
                    END AS rank
-            FROM menu_items
-            WHERE tenant_id = $1
-              AND available = true
+            FROM menu_items mi
+            WHERE mi.tenant_id = $1
+              AND mi.available = true
               AND (
-                LOWER(name) LIKE '%' || LOWER($2) || '%'
-                OR LOWER(COALESCE(description, '')) LIKE '%' || LOWER($2) || '%'
+                LOWER(mi.name) LIKE '%' || LOWER($2) || '%'
+                OR LOWER(COALESCE(mi.description, '')) LIKE '%' || LOWER($2) || '%'
               )
-            ORDER BY rank, sort_order, name
+            ORDER BY rank, mi.sort_order, mi.name
             LIMIT $3
             """,
             tenant_id, q, limit,

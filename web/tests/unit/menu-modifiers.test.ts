@@ -1,16 +1,18 @@
 // web/tests/unit/menu-modifiers.test.ts
 //
-// Tests del esquema Zod de modificadores (mig 042). Garantizan que la API
-// rechaza inputs inseguros antes de tocar la DB:
+// Tests del esquema Zod de modificadores. Garantizan que la API rechaza inputs
+// inseguros antes de tocar la DB:
 //   - price_delta_cents negativo → reject
 //   - max_select < min_select → reject
 //   - selectionType single con maxSelect != 1 → reject
 //   - límites superiores razonables (max 100_000 cents = 1000 €)
 //
 // Solo importa los schemas; no monta DB ni Auth. 100% puro.
+//
+// Mig 051: imports apuntan a modifier-library-schema (biblioteca tenant-wide).
 
 import { describe, expect, it } from "vitest";
-import { modifierInputSchema, groupCreateSchema } from "@/lib/menu-modifiers-schema";
+import { optionInputSchema as modifierInputSchema, groupCreateSchema } from "@/lib/modifier-library-schema";
 
 describe("modifierInputSchema — defensa contra precios negativos", () => {
   it("acepta priceDeltaCents=0 (gratis)", () => {
@@ -58,7 +60,7 @@ describe("groupCreateSchema — coherencia min/max y single/multi", () => {
       required: true,
       minSelect: 1,
       maxSelect: 1,
-      modifiers: [],
+      options: [],
     });
     expect(r.success).toBe(true);
   });
@@ -67,7 +69,7 @@ describe("groupCreateSchema — coherencia min/max y single/multi", () => {
     const r = groupCreateSchema.safeParse({
       name: "Tamaño",
       selectionType: "single",
-      modifiers: [],
+      options: [],
     });
     expect(r.success).toBe(true);
   });
@@ -77,7 +79,7 @@ describe("groupCreateSchema — coherencia min/max y single/multi", () => {
       name: "Tamaño",
       selectionType: "single",
       maxSelect: 2,
-      modifiers: [],
+      options: [],
     });
     expect(r.success).toBe(false);
   });
@@ -88,7 +90,7 @@ describe("groupCreateSchema — coherencia min/max y single/multi", () => {
       selectionType: "multi",
       minSelect: 3,
       maxSelect: 2,
-      modifiers: [],
+      options: [],
     });
     expect(r.success).toBe(false);
   });
@@ -97,7 +99,7 @@ describe("groupCreateSchema — coherencia min/max y single/multi", () => {
     const r = groupCreateSchema.safeParse({
       name: "Extras",
       selectionType: "multi",
-      modifiers: [{ name: "Bacon", priceDeltaCents: 200 }],
+      options: [{ name: "Bacon", priceDeltaCents: 200 }],
     });
     expect(r.success).toBe(true);
     if (r.success) expect(r.data.maxSelect).toBe(null);
@@ -107,7 +109,7 @@ describe("groupCreateSchema — coherencia min/max y single/multi", () => {
     const r = groupCreateSchema.safeParse({
       name: "Extras",
       selectionType: "multi",
-      modifiers: [
+      options: [
         { name: "Bacon", priceDeltaCents: 200 },
         { name: "Descuento", priceDeltaCents: -50 }, // <- rechaza
       ],
@@ -123,7 +125,7 @@ describe("groupCreateSchema — coherencia min/max y single/multi", () => {
     const r = groupCreateSchema.safeParse({
       name: "Extras",
       selectionType: "multi",
-      modifiers: many,
+      options: many,
     });
     expect(r.success).toBe(false);
   });
