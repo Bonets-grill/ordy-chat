@@ -114,6 +114,14 @@ vi.mock("@/lib/db/schema", () => ({
     lastLowStockAlertAt: { name: "last_low_stock_alert_at" },
     available: { name: "available" },
   },
+  // Mig 048: createOrder ahora resuelve modifier name canónico ES desde DB
+  // (evita que un cliente en EN persista "Extra cheese" → KDS confundido).
+  menuItemModifiers: {
+    id: { name: "id" },
+    groupId: { name: "group_id" },
+    name: { name: "name" },
+    priceDeltaCents: { name: "price_delta_cents" },
+  },
 }));
 
 // Best-effort fire-and-forget; lo silenciamos para que el test no sea ruidoso.

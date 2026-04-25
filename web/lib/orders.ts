@@ -8,7 +8,7 @@
 
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { agentConfigs, menuItems, orderItems, orders, shifts, tableSessions, tenants } from "@/lib/db/schema";
+import { agentConfigs, menuItemModifiers, menuItems, orderItems, orders, shifts, tableSessions, tenants } from "@/lib/db/schema";
 import { type OrderPaymentMethod } from "@/lib/payment-methods";
 import { queuePosReport } from "@/lib/pos-reports";
 import { stripeClient } from "@/lib/stripe";
@@ -108,12 +108,60 @@ export async function createOrder(input: CreateOrderInput) {
   // seleccionados. Lo calculamos una sola vez aquí y reutilizamos para tax,
   // line_total y persistencia. Filtramos modifiers con priceDeltaCents<0 por
   // defensa-en-profundidad (la DB ya lo bloquea con CHECK).
+  //
+  // Mig 048 dual-language: el cliente puede pasar el modifier `name` en su
+  // idioma (ej "Extra cheese"). NO confiamos en eso — resolvemos el nombre
+  // CANÓNICO en español desde DB usando el modifierId. El KDS solo entiende
+  // español. Misma defensa para priceDeltaCents (anti-tampering).
+  const allModifierIds = Array.from(
+    new Set(
+      input.items.flatMap((i) => (i.modifiers ?? []).map((m) => m.modifierId)),
+    ),
+  );
+  let dbMods: Array<{ id: string; groupId: string; name: string; priceDeltaCents: number }> = [];
+  if (allModifierIds.length) {
+    try {
+      const raw = await db
+        .select({
+          id: menuItemModifiers.id,
+          groupId: menuItemModifiers.groupId,
+          name: menuItemModifiers.name,
+          priceDeltaCents: menuItemModifiers.priceDeltaCents,
+        })
+        .from(menuItemModifiers)
+        .where(inArray(menuItemModifiers.id, allModifierIds));
+      if (Array.isArray(raw)) dbMods = raw;
+    } catch {
+      // Defensive: si el lookup falla, caemos a client data.
+    }
+  }
+  const modById = new Map(dbMods.map((m) => [m.id, m]));
+
   const itemsAdjusted = input.items.map((i) => {
-    const safeMods = (i.modifiers ?? []).filter((m) => m.priceDeltaCents >= 0);
-    const modsTotal = safeMods.reduce((acc, m) => acc + m.priceDeltaCents, 0);
+    const canonicalMods = (i.modifiers ?? [])
+      .map((m) => {
+        const dbm = modById.get(m.modifierId);
+        // Si el modifier está en DB → usamos canónico (name ES + price defensivo).
+        // Si NO está (legacy data, test, ID desconocido) → usamos lo que pasó el cliente.
+        return dbm
+          ? {
+              groupId: dbm.groupId,
+              modifierId: dbm.id,
+              name: dbm.name,
+              priceDeltaCents: dbm.priceDeltaCents,
+            }
+          : {
+              groupId: m.groupId,
+              modifierId: m.modifierId,
+              name: m.name,
+              priceDeltaCents: m.priceDeltaCents,
+            };
+      })
+      .filter((m) => m.priceDeltaCents >= 0);
+    const modsTotal = canonicalMods.reduce((acc, m) => acc + m.priceDeltaCents, 0);
     return {
       ...i,
-      modifiers: safeMods,
+      modifiers: canonicalMods,
       unitPriceCentsAdjusted: i.unitPriceCents + modsTotal,
     };
   });
