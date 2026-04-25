@@ -9,7 +9,34 @@
 // 2. En prod: proxy al runtime Python (Railway) vía /render, que sí tiene Chromium.
 // 3. Fallback: null → scraper degrada a fetch plano.
 
-type BrowserLike = { newContext: (opts?: unknown) => Promise<unknown>; close: () => Promise<void> };
+type RouteLike = {
+  request: () => { resourceType: () => string };
+  abort: () => Promise<void>;
+  continue: () => Promise<void>;
+};
+type PageLike = {
+  goto: (url: string, opts?: { waitUntil?: string; timeout?: number }) => Promise<unknown>;
+  evaluate: <T>(fn: () => Promise<T> | T) => Promise<T>;
+  waitForTimeout: (ms: number) => Promise<void>;
+  content: () => Promise<string>;
+  url: () => string;
+};
+type BrowserContextLike = {
+  route: (pattern: string, handler: (route: RouteLike) => void) => Promise<void>;
+  newPage: () => Promise<PageLike>;
+  close: () => Promise<void>;
+};
+type BrowserContextOpts = {
+  userAgent?: string;
+  locale?: string;
+  viewport?: { width: number; height: number };
+  javaScriptEnabled?: boolean;
+  ignoreHTTPSErrors?: boolean;
+};
+type BrowserLike = {
+  newContext: (opts?: BrowserContextOpts) => Promise<BrowserContextLike>;
+  close: () => Promise<void>;
+};
 
 const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 OrdyChatBot/1.0";
@@ -87,8 +114,7 @@ export async function renderPage(url: string, timeoutMs = 25_000): Promise<Rende
   const t0 = Date.now();
   const browser = await getBrowser();
   if (!browser) return null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const context = await (browser as any).newContext({
+  const ctx = await browser.newContext({
     userAgent: USER_AGENT,
     locale: "es-ES",
     viewport: { width: 1440, height: 900 },
@@ -96,18 +122,16 @@ export async function renderPage(url: string, timeoutMs = 25_000): Promise<Rende
     ignoreHTTPSErrors: false,
   });
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const ctx = context as any;
-  await ctx.route("**/*", (route: unknown) => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const r = route as any;
-    const type = r.request().resourceType();
-    if (["image", "media", "font", "stylesheet"].includes(type)) return r.abort();
-    return r.continue();
+  await ctx.route("**/*", (route) => {
+    const type = route.request().resourceType();
+    if (["image", "media", "font", "stylesheet"].includes(type)) {
+      void route.abort();
+      return;
+    }
+    void route.continue();
   });
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const page = await (ctx as any).newPage();
+  const page = await ctx.newPage();
   try {
     await page.goto(url, { waitUntil: "networkidle", timeout: timeoutMs });
     await page.evaluate(async () => {

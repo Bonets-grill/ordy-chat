@@ -399,8 +399,18 @@ export function queuePosReport(
   // No await — vive fuera del lifecycle del request. Envolvemos en
   // Promise.resolve().then para que cualquier throw síncrono no rompa al caller.
   Promise.resolve()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .then(() => sendPosReport(tenantId, kind as any, data as any))
+    .then(() => {
+      switch (kind) {
+        case "shift_auto_opened":
+          return sendPosReport(tenantId, kind, data as ShiftAutoOpenedPayload);
+        case "shift_closed":
+          return sendPosReport(tenantId, kind, data as ShiftClosedPayload);
+        case "daily_summary":
+          return sendPosReport(tenantId, kind, data as DailySummaryPayload);
+        case "low_stock":
+          return sendPosReport(tenantId, kind, data as LowStockPayload);
+      }
+    })
     .catch((err) => {
       logger.error("queuePosReport swallow", {
         tenantId,
