@@ -44,10 +44,13 @@ describe("parseGoogleBusiness — fixtures con JSON-LD", () => {
     expect(out.reviews_count).toBe(89);
   });
 
-  it("devuelve vacío cuando no hay JSON-LD", () => {
+  it("cae al fallback de meta tags cuando no hay JSON-LD (mig 047 scrapers)", () => {
+    // Antes devolvía {} porque no había selectores DOM para Google. Ahora cae
+    // a extractBusinessMeta que sí saca el <title>. Esto sigue siendo seguro:
+    // los meta tags son estables y ya están validados por Zod en el merger.
     const html = fixture("google/sin-jsonld.html");
     const out = parseGoogleBusiness(html);
-    expect(out).toEqual({});
+    expect(out.name).toBe("Página sin JSON-LD");
   });
 
   it("devuelve vacío con HTML muy corto", () => {

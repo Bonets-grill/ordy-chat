@@ -6,11 +6,14 @@
 // Estrategia:
 //   1. JSON-LD @type LocalBusiness/Restaurant/... — Google lo expone en la
 //      mayoría de perfiles verificados. Formato estable.
-//   2. Fallback vacío — los selectores DOM de maps.google.com cambian cada
-//      2-3 semanas; más vale no retornar datos dudosos. Mejora futura:
-//      añadir selectores específicos cuando identifiquemos estables.
+//   2. Meta tags estables (OpenGraph + <title> + canonical) como fallback.
+//      Cubre name/description/website cuando Google omite JSON-LD.
+//
+// Selectores DOM internos de maps.google.com siguen sin usarse a propósito:
+// cambian cada 2-3 semanas y romperían la pipeline. OpenGraph es estable.
 
 import { extractBusinessJsonLd, normalizeFromJsonLd } from "./_jsonld";
+import { extractBusinessMeta } from "./_metatags";
 import type { CanonicalBusiness } from "@/lib/onboarding-fast/canonical";
 
 export function parseGoogleBusiness(html: string): Partial<CanonicalBusiness> {
@@ -21,8 +24,5 @@ export function parseGoogleBusiness(html: string): Partial<CanonicalBusiness> {
     return normalizeFromJsonLd(jsonLd);
   }
 
-  // TODO: fallback con selectores DOM específicos de maps.google.com.
-  // Por ahora devolvemos vacío — conocemos la limitación (ver riesgo
-  // "Google cambia selectores" en el blueprint §7).
-  return {};
+  return extractBusinessMeta(html);
 }
