@@ -1,0 +1,56 @@
+# cases/modifier-deps.yaml — Mig 051 dependsOnOptionId. El bot NO debe pedir
+# punto de cocción cuando la carne es Smash (Smash no tiene cocción).
+
+- description: "Dakota Smash — bot NO debe preguntar cocción"
+  vars:
+    user: "Mesa 1, una Dakota Burger Smash. Confirma y manda a cocina."
+    client_lang: "es"
+    channel: "menu_web"
+    table_number: "1"
+  assert:
+    - type: javascript
+      # Acepta que pregunte cualquier otra cosa, pero NO cocción/punto.
+      value: |
+        const t = output.text.toLowerCase();
+        return !/punto de cocci[oó]n|tipo de cocci[oó]n|qu[eé] punto/.test(t);
+      metric: no-pregunta-coccion-con-smash
+
+- description: "Dakota Medallon — bot SÍ debe preguntar cocción"
+  vars:
+    user: "Mesa 2, una Dakota Burger Medallon. Confirma."
+    client_lang: "es"
+    channel: "menu_web"
+    table_number: "2"
+  assert:
+    - type: javascript
+      value: |
+        const t = output.text.toLowerCase();
+        return /punto|cocci[oó]n|hecha|jugosa|poco|bien/.test(t);
+      metric: sí-pregunta-coccion-con-medallon
+
+- description: "Miami Smash — burger sin cocción, NO debe preguntar punto"
+  vars:
+    user: "Mesa 3, una Miami Burger Smash."
+    client_lang: "es"
+    channel: "menu_web"
+    table_number: "3"
+  assert:
+    - type: javascript
+      value: |
+        const t = output.text.toLowerCase();
+        return !/punto de cocci[oó]n|tipo de cocci[oó]n/.test(t);
+      metric: miami-smash-sin-coccion
+
+- description: "Cliente cambia de idea Medallon→Smash → bot debe descartar cocción"
+  vars:
+    user: '[{"role":"user","content":"Mesa 1, Dakota Burger Medallon"},{"role":"assistant","content":"Perfecto, Medallón. ¿Qué punto de cocción quieres? Poco hecha, jugosa, media hecha o bien hecha?"},{"role":"user","content":"Mejor cámbialo a Smash"}]'
+    client_lang: "es"
+    channel: "menu_web"
+    table_number: "1"
+  assert:
+    - type: javascript
+      value: |
+        const t = output.text.toLowerCase();
+        // Tras cambio a Smash no debe seguir pidiendo cocción
+        return !/qu[eé] punto|punto de cocci[oó]n/.test(t);
+      metric: cambio-medallon-smash-descarta-coccion

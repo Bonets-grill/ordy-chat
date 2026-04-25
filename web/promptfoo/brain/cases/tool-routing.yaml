@@ -1,0 +1,61 @@
+# cases/tool-routing.yaml — El orchestrator + brain deben enrutar la intención
+# al tool correcto. No verificamos tool-use directo (requiere DB poll); en su
+# lugar verificamos que la respuesta del bot evidencia el flujo correcto.
+
+- description: "Pedir mesa para 4 — debe ofrecer reservar (no pedido)"
+  vars:
+    user: "Hola, quiero reservar mesa para 4 personas el sábado a las 21h"
+    client_lang: "es"
+  assert:
+    - type: javascript
+      value: |
+        const t = output.text.toLowerCase();
+        // Debe mencionar reserva/cita/disponibilidad — NO debe abrir flow de pedido.
+        return /(reserv|disponib|s[aá]bado|hora|sí|claro)/.test(t)
+            && !/(takeaway|para llevar|cesta|carrito)/.test(t);
+      metric: enruta-a-reservas
+
+- description: "Quiero pedir comida para llevar — debe abrir flow pedido"
+  vars:
+    user: "Hola, quiero pedir 1 Miami Burger Smash para llevar"
+    client_lang: "es"
+  assert:
+    - type: javascript
+      value: |
+        const t = output.text.toLowerCase();
+        return /(llevar|takeaway|recoger|nombre|tel[eé]fono|pedido)/.test(t);
+      metric: enruta-a-pedido
+
+- description: "Pide factura — debe iniciar flujo cobro/factura"
+  vars:
+    user: "Quiero la factura del pedido con NIF"
+    client_lang: "es"
+  assert:
+    - type: javascript
+      value: |
+        const t = output.text.toLowerCase();
+        // Debe responder sobre factura/NIF/cobro o admitir limitación.
+        return /(factur|nif|cobr|recibo|datos fiscales|local)/.test(t);
+      metric: gestiona-factura
+
+- description: "Pregunta de horarios — base agent (sin tool)"
+  vars:
+    user: "¿A qué hora abrís hoy?"
+    client_lang: "es"
+  assert:
+    - type: javascript
+      value: |
+        const t = output.text.toLowerCase();
+        return /(abr|hora|d[ií]a|cerrad|horario)/.test(t);
+      metric: responde-horarios
+
+- description: "Quiero cancelar mi reserva — tool cancelar_cita"
+  vars:
+    user: "Tenía una reserva para hoy, quiero cancelarla, soy Mario tel 600111111"
+    client_lang: "es"
+  assert:
+    - type: javascript
+      value: |
+        const t = output.text.toLowerCase();
+        return /(cancel|reserv|busqu|tel[eé]fono|mario)/.test(t);
+      metric: gestiona-cancelacion

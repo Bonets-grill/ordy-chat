@@ -1,0 +1,60 @@
+# cases/idiomas.yaml — Multi-idioma. El bot debe responder en el lang del cliente.
+
+- description: "ES — saludo simple"
+  vars:
+    user: "Hola, qué tal?"
+    client_lang: "es"
+  assert:
+    - type: javascript
+      value: /(hola|bienvenid|qué tal|buenas)/i.test(output.text)
+      metric: saluda-en-es
+
+- description: "IT — saludo en italiano debe responder en italiano"
+  vars:
+    user: "Ciao, come va? Vorrei vedere il menù"
+    client_lang: "it"
+  assert:
+    - type: javascript
+      value: /(ciao|buongiorno|salve|certo|grazie)/i.test(output.text)
+      metric: responde-it
+    - type: not-contains
+      value: "Bienvenido"
+      metric: no-cae-a-es
+
+- description: "DE — pregunta en alemán debe responder en alemán"
+  vars:
+    user: "Hallo, ich möchte die Speisekarte sehen"
+    client_lang: "de"
+  assert:
+    - type: javascript
+      value: /(hallo|guten|willkommen|gerne|natürlich)/i.test(output.text)
+      metric: responde-de
+
+- description: "FR — pregunta en francés debe responder en francés"
+  vars:
+    user: "Bonjour, je voudrais voir la carte"
+    client_lang: "fr"
+  assert:
+    - type: javascript
+      value: /(bonjour|bienvenue|bien sûr|carte|menu)/i.test(output.text)
+      metric: responde-fr
+
+- description: "EN — pregunta en inglés debe responder en inglés"
+  vars:
+    user: "Hi, can I see the menu please?"
+    client_lang: "en"
+  assert:
+    - type: javascript
+      value: /(hi|hello|welcome|sure|menu|of course)/i.test(output.text)
+      metric: responde-en
+
+- description: "ES con tabla — bot reconoce mesa via channel/table_number"
+  vars:
+    user: "Hola, somos mesa"
+    client_lang: "es"
+    channel: "menu_web"
+    table_number: "5"
+  assert:
+    - type: contains
+      value: "5"
+      metric: confirma-numero-mesa

@@ -1,0 +1,58 @@
+# web/promptfoo/brain/brain.eval.yaml — Suite Promptfoo del brain Ordy Chat.
+#
+# Cubre los flujos críticos del agente principal contra el runtime de prod
+# (sandbox is_test=true → no envía WA real, no factura, KDS marca 🧪).
+#
+# Ejecutar local:
+#   export RUNTIME_URL=https://ordy-chat-runtime-production.up.railway.app
+#   export RUNTIME_INTERNAL_SECRET=<from .env.local>
+#   export DATABASE_URL=<from .env.local>
+#   cd web && pnpm dlx promptfoo@0.96.0 eval -c promptfoo/brain/brain.eval.yaml --pass-threshold 0.8
+#
+# Cobertura por área (cases/*.yaml):
+#   - idiomas.yaml       — IT/DE/FR/EN response language match
+#   - modifier-deps.yaml — Smash NO pregunta cocción · Medallon SÍ
+#   - tool-routing.yaml  — reserva/pedido/factura → tool/intent correcto
+#   - allergens.yaml     — declaración alérgeno → respuesta segura
+#   - edge-cases.yaml    — prompt injection, idiomas raros, ofensivos
+#
+# El `defaultTest` aplica a todos los cases que no override.
+
+description: "Brain Ordy Chat — eval por flujos críticos contra runtime real (sandbox)"
+
+providers:
+  - id: runtime-brain
+    config:
+      tenant_slug: bonets-grill-icod
+      timeout_ms: 60000
+
+prompts:
+  # Promptfoo tratará cada {{user}} como el mensaje a enviar. El provider
+  # acepta también JSON-string de messages array si el case define vars.messages.
+  - "{{user}}"
+
+defaultTest:
+  options:
+    provider:
+      id: file://./providers/runtime-brain.js
+  assert:
+    # Garantías universales para CADA respuesta del brain.
+    - type: javascript
+      value: typeof output === 'object' && typeof output.text === 'string' && output.text.length > 0
+      metric: respuesta-no-vacia
+    - type: not-contains
+      value: "problemas técnicos"
+      metric: sin-fallback-error
+    - type: javascript
+      value: output.tokens_in > 0 && output.tokens_out > 0
+      metric: tokens-medidos
+
+# Cada test file aporta su set de cases. Promptfoo los junta al ejecutar.
+tests:
+  - file://./cases/idiomas.yaml
+  - file://./cases/modifier-deps.yaml
+  - file://./cases/tool-routing.yaml
+  - file://./cases/allergens.yaml
+  - file://./cases/edge-cases.yaml
+
+outputPath: results/brain.json

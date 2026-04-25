@@ -1,0 +1,57 @@
+name: Brain evals (Promptfoo)
+
+# Corre cuando se toca el brain / prompts / orchestrator. Falla merge si
+# --pass-threshold 0.8 no se cumple. Manual trigger para runs ad-hoc.
+
+on:
+  pull_request:
+    paths:
+      - 'runtime/app/brain.py'
+      - 'runtime/app/prompt_wrapper.py'
+      - 'runtime/app/agents/**'
+      - 'runtime/app/menu_search.py'
+      - 'web/promptfoo/brain/**'
+  workflow_dispatch:
+    inputs:
+      threshold:
+        description: 'Pass threshold (0.0–1.0)'
+        required: false
+        default: '0.8'
+
+jobs:
+  brain-eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+      - name: Run brain eval
+        env:
+          RUNTIME_URL: ${{ secrets.RUNTIME_URL }}
+          RUNTIME_INTERNAL_SECRET: ${{ secrets.RUNTIME_INTERNAL_SECRET }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          THRESHOLD="${{ github.event.inputs.threshold || '0.8' }}"
+          pnpm dlx promptfoo@0.96.0 eval \
+            -c promptfoo/brain/brain.eval.yaml \
+            --pass-threshold "$THRESHOLD" \
+            --output results/brain.json
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: promptfoo-brain-results
+          path: web/results/brain.json
+          retention-days: 14

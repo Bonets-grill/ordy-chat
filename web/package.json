@@ -17,6 +17,10 @@
     "test:unit:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
+    "eval:brain": "pnpm dlx promptfoo@0.118.17 eval -c promptfoo/brain/brain.eval.yaml --pass-threshold 0.8",
+    "eval:brain:idiomas": "pnpm dlx promptfoo@0.118.17 eval -c promptfoo/brain/brain.eval.yaml --filter-pattern idiomas --pass-threshold 0.8",
+    "eval:brain:view": "pnpm dlx promptfoo@0.118.17 view",
+    "eval:merger": "pnpm dlx promptfoo@0.118.17 eval -c promptfoo/merger.eval.yaml --pass-threshold 0.9",
     "cap:sync": "node scripts/build-mobile.mjs",
     "build:mobile:ios": "node scripts/build-mobile.mjs ios",
     "build:mobile:android": "node scripts/build-mobile.mjs android"
@@ -77,6 +81,7 @@
     "happy-dom": "^20.9.0",
     "playwright": "^1.59.1",
     "postcss": "^8.5.10",
+    "promptfoo": "0.118.17",
     "tailwindcss": "^3.4.15",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",
