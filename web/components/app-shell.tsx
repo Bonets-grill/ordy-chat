@@ -13,7 +13,7 @@
 //     que no lo usen siguen funcionando con su propio markup.
 
 import {
-  BellRing, Bot, BookOpen, CalendarCheck, CalendarX, ChefHat,
+  BarChart3, BellRing, Bot, BookOpen, CalendarCheck, CalendarX, ChefHat,
   CreditCard, FileText, FlaskConical, LayoutDashboard, Menu,
   MessageSquareText, QrCode, Settings, Smartphone, Truck,
 } from "lucide-react";
@@ -48,7 +48,8 @@ const NAV: NavItem[] = [
 
   // Cuenta — facturación, fiscal, reportes.
   { href: "/agent/fiscal",       label: "Datos fiscales",  icon: FileText,           group: "acc" },
-  { href: "/agent/reportes-pos", label: "Reportes POS",    icon: BellRing,           group: "acc" },
+  { href: "/dashboard/ventas",   label: "Ventas y reportes", icon: BarChart3,        group: "acc" },
+  { href: "/agent/reportes-pos", label: "Reportes POS (WA)", icon: BellRing,         group: "acc" },
   { href: "/billing",            label: "Facturación",     icon: CreditCard,         group: "acc" },
 ];
 
