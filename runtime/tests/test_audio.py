@@ -123,6 +123,14 @@ class TestEsAlucinacionWhisper:
             "[music]",
             "you",
             "  You.  ",
+            # Prompt leaks (incidente prod 2026-04-25): el whisper_prompt
+            # antiguo se devolvía como transcripción cuando el audio era
+            # silencio/ruido. Cualquier fragmento debe filtrarse.
+            "Transcribe solo lo que dice el cliente — ignora música, eco, o frases genéricas de YouTube.",
+            "Transcribe solo lo que dice el cliente",
+            "Conversación en un restaurante entre cliente y camarero",
+            "Ignora música, eco, o frases genéricas de YouTube",
+            "Frases genéricas de YouTube",
         ],
     )
     def test_detecta_alucinaciones_conocidas(self, texto: str) -> None:

@@ -78,6 +78,23 @@ _WHISPER_HALLUCINATIONS: frozenset[str] = frozenset(
     }
 )
 
+# Heurística adicional: fragmentos típicos de prompt-leak. Whisper, cuando
+# recibe silencio o ruido, a veces devuelve el propio prompt que le pasamos.
+# Estos fragmentos NUNCA aparecen en habla normal de cliente y siempre
+# implican leak. Incidente prod 2026-04-25: el prompt antiguo contenía la
+# frase literal "Transcribe solo lo que dice el cliente — ignora música,
+# eco, o frases genéricas de YouTube" y se filtraba al chat como mensaje.
+_PROMPT_LEAK_FRAGMENTS: tuple[str, ...] = (
+    "transcribe solo lo que dice",
+    "ignora musica",
+    "ignora música",
+    "ignora eco",
+    "frases genericas de youtube",
+    "frases genéricas de youtube",
+    "conversacion en un restaurante",
+    "conversación en un restaurante",
+)
+
 
 def _normaliza_texto_para_alucinacion(texto: str) -> str:
     """Pasa a minúsculas, strip y elimina acentos. Preserva corchetes porque
@@ -97,7 +114,7 @@ def es_alucinacion_whisper(texto: str) -> bool:
     """True si el texto es una alucinación conocida de Whisper sobre silencio.
 
     Match directo contra lista canónica + heurística para frases que siempre
-    implican alucinación (mención de amara.org o subtítulos+comunidad).
+    implican alucinación (amara.org, subtítulos+comunidad, prompt leak).
     """
     if not texto:
         return False
@@ -110,6 +127,10 @@ def es_alucinacion_whisper(texto: str) -> bool:
         return True
     if "subtitulos" in norm and ("comunidad" in norm or "amara" in norm):
         return True
+    # Prompt leak: cualquier fragmento del whisper_prompt actual o histórico.
+    for frag in _PROMPT_LEAK_FRAGMENTS:
+        if frag in norm:
+            return True
     return False
 
 
@@ -174,17 +195,16 @@ async def transcribir_audio(
     buffer.name = f"audio.{ext}"
 
     client = AsyncOpenAI(api_key=api_key, timeout=45.0, max_retries=2)
-    # Prompt de contexto: Whisper usa esto como seed para orientar la
-    # transcripción. Útil en conversaciones de restaurante donde el ASR
-    # tiende a alucinar nombres inventados ("Phoenix", "Mario", etc.)
-    # cuando el audio es corto o con ruido. Max 224 tokens según OpenAI.
+    # Prompt de contexto Whisper: SOLO keywords sueltas, NUNCA instrucciones.
+    # Whisper usa esto como seed para orientar la transcripción, pero cuando
+    # recibe silencio/ruido tiende a devolver el propio prompt como texto
+    # transcrito (incidente prod 2026-04-25: el prompt en frases imperativas
+    # se filtraba al chat como si lo hubiera dicho el cliente). Mantener
+    # estilo "lista de palabras de dominio". Max 224 tokens según OpenAI.
     # temperature=0 para minimizar variabilidad.
     whisper_prompt = (
-        "Conversación en un restaurante entre cliente y camarero. El cliente "
-        "hace pedidos, pide la carta, reserva mesa. Menciona hamburguesas, "
-        "entrantes, bebidas, postres. Idioma español neutro. Transcribe "
-        "solo lo que dice el cliente — ignora música, eco, o frases "
-        "genéricas de YouTube."
+        "Restaurante. Carta. Pedido. Reserva. Mesa. Camarero. Cliente. "
+        "Hamburguesa. Entrante. Bebida. Postre. Cuenta. Cocina. Bar."
     )
     resp: Any = await client.audio.transcriptions.create(
         model=WHISPER_MODEL,
