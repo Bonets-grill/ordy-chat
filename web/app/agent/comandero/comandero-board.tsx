@@ -7,7 +7,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Check, CreditCard, LogOut, Minus, Plus, ShoppingCart, Trash2, Utensils } from "lucide-react";
+import { ArrowLeft, Check, CreditCard, LogOut, Minus, Plus, Search, ShoppingCart, Trash2, Utensils, X } from "lucide-react";
 
 type Modifier = { id: string; name: string; priceDeltaCents: number };
 type ModifierGroup = {
@@ -84,6 +84,7 @@ export function ComanderoBoard({ actor }: { actor?: ComanderoActor }) {
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
+  const [search, setSearch] = React.useState("");
 
   // Carga inicial + refresh.
   const loadTables = React.useCallback(async () => {
@@ -228,15 +229,34 @@ export function ComanderoBoard({ actor }: { actor?: ComanderoActor }) {
   // Antes vivía después y al alternar view tables↔menu cambiaba el número de
   // hooks ejecutados → React error #310 (rendered more hooks than previous
   // render) que crasheaba la página entera. Incidente prod 2026-04-25 13:14.
+  const filteredItems = React.useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter(
+      (i) =>
+        i.name.toLowerCase().includes(q) ||
+        (i.description ?? "").toLowerCase().includes(q),
+    );
+  }, [items, search]);
   const itemsByCategory = React.useMemo(() => {
     const m = new Map<string, MenuItem[]>();
-    for (const i of items) {
+    for (const i of filteredItems) {
       const arr = m.get(i.category) ?? [];
       arr.push(i);
       m.set(i.category, arr);
     }
     return Array.from(m.entries());
+  }, [filteredItems]);
+  const allCategories = React.useMemo(() => {
+    const m = new Set<string>();
+    for (const i of items) m.add(i.category);
+    return Array.from(m);
   }, [items]);
+
+  function scrollToCategory(cat: string) {
+    const el = document.getElementById(`cmd-cat-${cat}`);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 
   if (view === "tables") {
     return (
@@ -359,13 +379,14 @@ export function ComanderoBoard({ actor }: { actor?: ComanderoActor }) {
     <div className="min-h-screen bg-stone-50">
       {actor ? <ActorTopBar actor={actor} /> : null}
       <main className="mx-auto max-w-4xl px-4 py-4">
-      <header className="mb-4 flex items-center gap-3">
+      <header className="mb-3 flex items-center gap-3">
         <button
           type="button"
           onClick={() => {
             setView("tables");
             setTableNumber(null);
             setCart([]);
+            setSearch("");
           }}
           className="rounded-full p-2 text-neutral-700 hover:bg-neutral-100"
           aria-label="Volver"
@@ -385,20 +406,72 @@ export function ComanderoBoard({ actor }: { actor?: ComanderoActor }) {
       {items.length === 0 ? (
         <p className="text-sm text-neutral-500">Cargando carta…</p>
       ) : (
-        <div className="space-y-6 pb-32">
-          {itemsByCategory.map(([cat, list]) => (
-            <section key={cat}>
-              <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                {cat}
-              </h2>
-              <ul className="space-y-2">
-                {list.map((item) => (
-                  <ItemRow key={item.id} item={item} onAdd={addToCart} />
+        <>
+          {/* Buscador + chips de categoría sticky bajo el ActorTopBar.
+              Top calculado para no chocar con el ActorTopBar (38px ~ py-2 + texto).
+              Usar top-0 si no hay actor. */}
+          <div
+            className={`sticky z-20 -mx-4 mb-4 border-b border-neutral-200 bg-stone-50 px-4 py-2 ${
+              actor ? "top-[38px]" : "top-0"
+            }`}
+          >
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400" />
+              <input
+                type="search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Buscar plato o ingrediente…"
+                className="w-full rounded-lg border border-neutral-300 bg-white py-2 pl-9 pr-9 text-sm focus:border-neutral-900 focus:outline-none"
+              />
+              {search ? (
+                <button
+                  type="button"
+                  onClick={() => setSearch("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1 text-neutral-500 hover:bg-neutral-100"
+                  aria-label="Limpiar búsqueda"
+                >
+                  <X size={12} />
+                </button>
+              ) : null}
+            </div>
+            {!search && allCategories.length > 1 ? (
+              <div className="mt-2 -mx-1 flex gap-1.5 overflow-x-auto pb-1">
+                {allCategories.map((cat) => (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => scrollToCategory(cat)}
+                    className="shrink-0 rounded-full border border-neutral-300 bg-white px-3 py-1 text-xs font-medium text-neutral-700 hover:border-neutral-900 hover:bg-neutral-900 hover:text-white"
+                  >
+                    {cat}
+                  </button>
                 ))}
-              </ul>
-            </section>
-          ))}
-        </div>
+              </div>
+            ) : null}
+          </div>
+
+          {itemsByCategory.length === 0 ? (
+            <p className="py-8 text-center text-sm text-neutral-500">
+              Sin resultados para “{search}”.
+            </p>
+          ) : (
+            <div className="space-y-6 pb-32">
+              {itemsByCategory.map(([cat, list]) => (
+                <section key={cat} id={`cmd-cat-${cat}`} className="scroll-mt-32">
+                  <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                    {cat}
+                  </h2>
+                  <ul className="space-y-2">
+                    {list.map((item) => (
+                      <ItemRow key={item.id} item={item} onAdd={addToCart} />
+                    ))}
+                  </ul>
+                </section>
+              ))}
+            </div>
+          )}
+        </>
       )}
 
       {/* Carrito flotante */}
