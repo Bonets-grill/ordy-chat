@@ -2,23 +2,26 @@
 // POST: Mario aprueba un payout 'ready' y ejecuta el transfer Stripe.
 // Gate high-value: payouts >= HIGH_VALUE_PAYOUT_CENTS requieren confirm
 // dual explícito (body.confirm_high_value = true + body.confirmation_text
-// matching el id del payout). TOTP 2FA queda como TODO post-MVP — cuando
-// Mario configure TOTP se añade aquí.
+// matching el id del payout).
+// Mig 047: si el usuario tiene TOTP activo (totp_enabled_at != NULL), el
+// body debe incluir totp_token de 6 dígitos válido contra su secret cifrado.
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { auditLog, resellerPayouts } from "@/lib/db/schema";
+import { auditLog, resellerPayouts, users } from "@/lib/db/schema";
 import { limitByUserId } from "@/lib/rate-limit";
 import { executeStripeTransfer, TransferError } from "@/lib/payouts/stripe-transfer";
+import { verifyTotpToken } from "@/lib/totp";
 
 export const dynamic = "force-dynamic";
 
 const BODY = z.object({
   confirm_high_value: z.boolean().optional(),
   confirmation_text: z.string().optional(),
+  totp_token: z.string().regex(/^\d{6}$/).optional(),
 });
 
 export async function POST(
@@ -46,6 +49,25 @@ export async function POST(
       { error: "invalid_state", current: payout.status },
       { status: 409 },
     );
+  }
+
+  // TOTP gate (mig 047): si el aprobador tiene 2FA activa, exigir token.
+  const [me] = await db
+    .select({
+      email: users.email,
+      totpSecretEncrypted: users.totpSecretEncrypted,
+      totpEnabledAt: users.totpEnabledAt,
+    })
+    .from(users)
+    .where(eq(users.id, session.user.id))
+    .limit(1);
+  if (me?.totpEnabledAt && me.totpSecretEncrypted) {
+    if (!body.data.totp_token) {
+      return NextResponse.json({ error: "totp_required" }, { status: 401 });
+    }
+    if (!verifyTotpToken(me.totpSecretEncrypted, body.data.totp_token, me.email)) {
+      return NextResponse.json({ error: "totp_invalid" }, { status: 401 });
+    }
   }
 
   // High-value approval gate

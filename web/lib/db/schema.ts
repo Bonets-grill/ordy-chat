@@ -27,6 +27,9 @@ export const users = pgTable("users", {
   role: text("role").notNull().default("tenant_admin"),
   // Hash argon2id. NULL = usuario sin login directo (sólo magic link / OAuth).
   passwordHash: text("password_hash"),
+  // Mig 047 — TOTP 2FA. Cifrado AES-256-GCM con ENCRYPTION_KEY.
+  totpSecretEncrypted: text("totp_secret_encrypted"),
+  totpEnabledAt: timestamp("totp_enabled_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
