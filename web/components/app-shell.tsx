@@ -15,7 +15,7 @@
 import {
   BellRing, Bot, BookOpen, CalendarCheck, CalendarX, ChefHat,
   CreditCard, FileText, FlaskConical, LayoutDashboard, Menu,
-  MessageSquareText, QrCode, Smartphone, Truck,
+  MessageSquareText, QrCode, Settings, Smartphone, Truck,
 } from "lucide-react";
 import Link from "next/link";
 import type { Session } from "next-auth";
