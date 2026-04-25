@@ -131,6 +131,8 @@ export async function getTranslatedMenu(
     category: string;
     imageUrl: string | null;
   }>;
+  modifierGroups: Array<{ id: string; name: string }>;
+  modifiers: Array<{ id: string; name: string }>;
 }> {
   const items = await db
     .select({
@@ -199,7 +201,92 @@ export async function getTranslatedMenu(
       imageUrl: i.imageUrl,
     };
   });
-  return { items: out };
+
+  // Mig 048 (sesión 2026-04-25 14:18): traduce también los nombres de
+  // modifier groups y modifiers individuales. Mismo patrón: cache en
+  // i18n_translations[lang], LLM solo cuando falta.
+  const groupRows = await db
+    .select({
+      id: menuItemModifierGroups.id,
+      name: menuItemModifierGroups.name,
+      i18n: menuItemModifierGroups.i18nTranslations,
+    })
+    .from(menuItemModifierGroups)
+    .where(eq(menuItemModifierGroups.tenantId, tenantId));
+  const modRows = groupRows.length
+    ? await db
+        .select({
+          id: menuItemModifiers.id,
+          name: menuItemModifiers.name,
+          i18n: menuItemModifiers.i18nTranslations,
+        })
+        .from(menuItemModifiers)
+    : [];
+
+  const missingGroups: SourceItem[] = groupRows
+    .filter((g) => !pickFromI18n(g.i18n, lang)?.name)
+    .map((g) => ({ id: g.id, kind: "modifier_group", name: g.name, description: null }));
+  const missingMods: SourceItem[] = modRows
+    .filter((m) => !pickFromI18n(m.i18n, lang)?.name)
+    .map((m) => ({ id: m.id, kind: "modifier", name: m.name, description: null }));
+
+  const allMissing = [...missingGroups, ...missingMods];
+  if (allMissing.length > 0) {
+    try {
+      const apiKey = await resolveAnthropicApiKey();
+      const translations = await translateBatch(apiKey, lang, allMissing);
+      const byId = new Map(translations.map((t) => [t.id, t]));
+      const groupIds = new Set(groupRows.map((g) => g.id));
+      const modIds = new Set(modRows.map((m) => m.id));
+      await Promise.all(
+        translations.map((t) => {
+          const targetTable = groupIds.has(t.id)
+            ? menuItemModifierGroups
+            : modIds.has(t.id)
+              ? menuItemModifiers
+              : null;
+          if (!targetTable) return Promise.resolve();
+          return db
+            .update(targetTable)
+            .set({
+              i18nTranslations: sql`jsonb_set(${targetTable.i18nTranslations}, ${"{" + lang + "}"}, ${JSON.stringify(
+                { name: t.name },
+              )}::jsonb, true)`,
+            })
+            .where(eq(targetTable.id, t.id));
+        }),
+      );
+      for (const g of groupRows) {
+        const got = byId.get(g.id);
+        if (got) {
+          const m = (g.i18n as I18nMap | null) ?? {};
+          m[lang] = { name: got.name };
+          g.i18n = m;
+        }
+      }
+      for (const mr of modRows) {
+        const got = byId.get(mr.id);
+        if (got) {
+          const m = (mr.i18n as I18nMap | null) ?? {};
+          m[lang] = { name: got.name };
+          mr.i18n = m;
+        }
+      }
+    } catch {
+      // best-effort
+    }
+  }
+
+  const groupsOut = groupRows.map((g) => ({
+    id: g.id,
+    name: pickFromI18n(g.i18n, lang)?.name ?? g.name,
+  }));
+  const modsOut = modRows.map((mr) => ({
+    id: mr.id,
+    name: pickFromI18n(mr.i18n, lang)?.name ?? mr.name,
+  }));
+
+  return { items: out, modifierGroups: groupsOut, modifiers: modsOut };
 }
 
 /** Para el comandero / KDS: SIEMPRE devuelve canónico ES. */

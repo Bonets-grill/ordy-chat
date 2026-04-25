@@ -70,5 +70,10 @@ export async function GET(
   }
 
   const data = await getTranslatedMenu(tenant.id, langParam as SupportedLang);
-  return NextResponse.json({ lang: langParam, items: data.items });
+  return NextResponse.json({
+    lang: langParam,
+    items: data.items,
+    modifierGroups: data.modifierGroups,
+    modifiers: data.modifiers,
+  });
 }
