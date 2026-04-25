@@ -84,6 +84,9 @@ export async function GET(req: Request) {
       // método actual si ya se cobró. Si paidAt es null el botón dice "Cobrar".
       paymentMethod: o.paymentMethod,
       paidAt: o.paidAt ? o.paidAt.toISOString() : null,
+      // Mig 041: propina guardada (0 si no se introdujo). El KDS muestra
+      // "guardada: X €" para que el camarero sepa que ya hay propina.
+      tipCents: o.tipCents,
       createdAt: o.createdAt.toISOString(),
       items: itemsInScope
         .filter((it) => it.orderId === o.id)

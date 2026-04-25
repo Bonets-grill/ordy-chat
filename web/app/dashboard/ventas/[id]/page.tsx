@@ -43,6 +43,9 @@ export default async function TurnoDetailPage({ params }: { params: Promise<{ id
       cardPaid: sql<number>`coalesce(sum(${orders.totalCents}) FILTER (WHERE ${orders.paidAt} IS NOT NULL AND ${orders.paymentMethod} = 'card'), 0)::int`,
       transferPaid: sql<number>`coalesce(sum(${orders.totalCents}) FILTER (WHERE ${orders.paidAt} IS NOT NULL AND ${orders.paymentMethod} = 'transfer'), 0)::int`,
       otherPaid: sql<number>`coalesce(sum(${orders.totalCents}) FILTER (WHERE ${orders.paidAt} IS NOT NULL AND ${orders.paymentMethod} = 'other'), 0)::int`,
+      // Mig 041: propinas del turno.
+      tipTotal: sql<number>`coalesce(sum(${orders.tipCents}) FILTER (WHERE ${orders.paidAt} IS NOT NULL), 0)::int`,
+      tipCount: sql<number>`count(*) FILTER (WHERE ${orders.paidAt} IS NOT NULL AND ${orders.tipCents} > 0)::int`,
     })
     .from(orders)
     .where(and(eq(orders.shiftId, shift.id), eq(orders.isTest, false)));
@@ -81,6 +84,8 @@ export default async function TurnoDetailPage({ params }: { params: Promise<{ id
     cardPaid: 0,
     transferPaid: 0,
     otherPaid: 0,
+    tipTotal: 0,
+    tipCount: 0,
   };
   // Mig 039: el cuadre usa SOLO cash+NULL. Tarjeta/transferencia no pasan
   // por caja → sumarlos al esperado marcaba siempre falso faltante.
@@ -155,6 +160,27 @@ export default async function TurnoDetailPage({ params }: { params: Promise<{ id
           {shift.notes && (
             <p className="mt-3 text-sm text-neutral-600"><b>Notas:</b> {shift.notes}</p>
           )}
+        </CardContent>
+      </Card>
+
+      {/* Mig 041: propinas del turno. Dejamos esta card siempre visible para
+           que el tenant entienda cómo se generan: si tipCount=0, copy claro
+           apuntando al KDS. */}
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle>Propinas</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-2 sm:grid-cols-3">
+            <KV k="Total propinas" v={euros(s.tipTotal)} />
+            <KV k="Pedidos con propina" v={String(s.tipCount)} />
+            <KV k="Propina media" v={s.tipCount > 0 ? euros(Math.round(s.tipTotal / s.tipCount)) : "—"} />
+          </div>
+          {s.tipCount === 0 ? (
+            <p className="mt-3 text-xs text-neutral-500">
+              Sin propinas registradas en este turno. Cuando el camarero introduzca propina al cobrar el pedido en el KDS, aparecerá aquí.
+            </p>
+          ) : null}
         </CardContent>
       </Card>
 

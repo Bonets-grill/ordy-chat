@@ -72,6 +72,9 @@ type KdsOrder = {
   // pulsa "Cobrar" en el KDS con método seleccionado, se rellena.
   paymentMethod?: PaymentMethod | null;
   paidAt?: string | null;
+  // Mig 041: propina en céntimos. 0 = sin propina (default). Pedidos pre-
+  // mig 041 que el endpoint /api/kds aún no devuelva quedan en undefined.
+  tipCents?: number;
   createdAt: string;
   items: KdsItem[];
 };
@@ -82,6 +85,24 @@ const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   transfer: "Transferencia",
   other: "Otro",
 };
+
+// Mig 041: helpers para input "Propina €". Tolera coma o punto decimal,
+// rechaza negativos y limita a 100€ (mismo cap que el Zod del endpoint).
+// Devuelve céntimos enteros. "" / "0" / undefined → 0.
+function parseTipEuros(input: string): number {
+  if (!input) return 0;
+  const normalized = input.replace(",", ".").trim();
+  if (normalized === "") return 0;
+  const v = Number(normalized);
+  if (!Number.isFinite(v) || v < 0) return 0;
+  const cents = Math.round(v * 100);
+  return Math.min(cents, 100_00);
+}
+
+function formatTipEuros(cents: number): string {
+  if (cents <= 0) return "";
+  return (cents / 100).toFixed(2).replace(/\.00$/, "");
+}
 
 // Columnas tradicionales (post-aceptación). pending_kitchen_review tiene su
 // propia sección con botones aceptar/rechazar arriba del board.
@@ -356,26 +377,29 @@ export function KdsBoard({ kioskToken }: { kioskToken?: string } = {}) {
     }
   }
 
-  // Mig 039: marcar pedido como pagado desde el KDS con método elegido.
-  // 1 click + 1 tap (el dropdown ya tenía cash seleccionado). La ruta
-  // PATCH /api/orders/[id] es retrocompatible: si markPaid=true y ya
-  // estaba paid, solo corrige el método (caso "lo marqué cash y era tarjeta").
-  async function markPaid(orderId: string, paymentMethod: PaymentMethod) {
+  // Mig 039 + 041: marcar pedido como pagado desde el KDS con método +
+  // (opcional) propina. La ruta PATCH /api/orders/[id] es retrocompatible:
+  // si markPaid=true y ya estaba paid, solo corrige método/propina ("lo
+  // marqué cash y era tarjeta", "olvidé añadir la propina").
+  async function markPaid(orderId: string, paymentMethod: PaymentMethod, tipCents: number) {
     if (advancing) return;
     setAdvancing(orderId);
-    // Optimistic: pintar local el método + paid_at para feedback inmediato.
+    // Optimistic: pintar local método + paid_at + propina para feedback inmediato.
     setOrders((prev) =>
       prev.map((o) =>
         o.id === orderId
-          ? { ...o, paymentMethod, paidAt: new Date().toISOString() }
+          ? { ...o, paymentMethod, tipCents, paidAt: new Date().toISOString() }
           : o,
       ),
     );
     try {
+      // tipCents siempre se envía: 0 es válido (sin propina). Así un cobro
+      // post-error que corrige una propina previa la pisa a 0 si el camarero
+      // limpia el campo.
       const res = await fetch(`/api/orders/${orderId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", ...authHeaders },
-        body: JSON.stringify({ markPaid: true, paymentMethod }),
+        body: JSON.stringify({ markPaid: true, paymentMethod, tipCents }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -674,7 +698,7 @@ function Column({
   status: OrderStatus;
   orders: KdsOrder[];
   onAdvance: (id: string) => void;
-  onMarkPaid: (id: string, method: PaymentMethod) => void;
+  onMarkPaid: (id: string, method: PaymentMethod, tipCents: number) => void;
   onChargeTpv: (orderId: string, readerUuid: string) => void;
   readers: TpvReader[];
   tpvInFlight: Record<string, string>;
@@ -699,7 +723,7 @@ function Column({
             order={o}
             disabled={advancingId === o.id}
             onAdvance={() => onAdvance(o.id)}
-            onMarkPaid={(method) => onMarkPaid(o.id, method)}
+            onMarkPaid={(method, tipCents) => onMarkPaid(o.id, method, tipCents)}
             onChargeTpv={(readerUuid) => onChargeTpv(o.id, readerUuid)}
             readers={readers}
             tpvBusy={Boolean(tpvInFlight[o.id])}
@@ -722,7 +746,7 @@ function OrderCard({
   order: KdsOrder;
   disabled: boolean;
   onAdvance: () => void;
-  onMarkPaid: (method: PaymentMethod) => void;
+  onMarkPaid: (method: PaymentMethod, tipCents: number) => void;
   onChargeTpv: (readerUuid: string) => void;
   readers: TpvReader[];
   tpvBusy: boolean;
@@ -747,6 +771,12 @@ function OrderCard({
   const [method, setMethod] = React.useState<PaymentMethod>(() =>
     (order.paymentMethod as PaymentMethod | null | undefined) ?? "cash",
   );
+  // Mig 041: input propina € visible solo cuando estás marcando pagado o
+  // corrigiendo. Stringueamos para no pelear con el type=number (Mario quiere
+  // permitir ",50" sin que JS lo refuse). El parseo a céntimos pasa por
+  // parseTipEuros para tolerar coma o punto.
+  const initialTipString = (order.tipCents ?? 0) > 0 ? formatTipEuros(order.tipCents ?? 0) : "";
+  const [tipEuros, setTipEuros] = React.useState<string>(initialTipString);
   const isPaid = Boolean(order.paidAt);
 
   // El card dejó de ser un <button> outer — ahora es <div> para poder
@@ -816,34 +846,62 @@ function OrderCard({
 
       {/* Mig 039: zona de cobro inline. Se muestra SIEMPRE (cocina puede
            cobrar un pedido en cualquier estado). Si ya está pagado, se
-           pinta un badge con el método y un select por si hay que corregir. */}
-      <div className="mt-3 flex items-center gap-2 rounded-md bg-white/80 px-2 py-1.5 ring-1 ring-neutral-200">
-        <label className="text-[10px] font-medium uppercase tracking-wider text-neutral-500">
-          {isPaid ? "Pagado" : "Cobrar"}
-        </label>
-        <select
-          value={method}
-          onChange={(e) => setMethod(e.target.value as PaymentMethod)}
-          disabled={disabled || tpvBusy}
-          className="flex-1 rounded border border-neutral-200 bg-white px-1.5 py-1 text-xs"
-          aria-label="Método de pago"
-        >
-          {(Object.keys(PAYMENT_METHOD_LABELS) as PaymentMethod[]).map((m) => (
-            <option key={m} value={m}>
-              {PAYMENT_METHOD_LABELS[m]}
-            </option>
-          ))}
-        </select>
-        <button
-          type="button"
-          onClick={() => onMarkPaid(method)}
-          disabled={disabled || tpvBusy}
-          className={`rounded px-2 py-1 text-xs font-medium text-white transition disabled:opacity-50 ${
-            isPaid ? "bg-neutral-600 hover:bg-neutral-700" : "bg-emerald-600 hover:bg-emerald-700"
-          }`}
-        >
-          {isPaid ? "Corregir" : "Cobrar manual"}
-        </button>
+           pinta un badge con el método y un select por si hay que corregir.
+           Mig 041: input "Propina €" opcional para reportes por turno/día. */}
+      <div className="mt-3 space-y-2 rounded-md bg-white/80 px-2 py-1.5 ring-1 ring-neutral-200">
+        <div className="flex items-center gap-2">
+          <label className="text-[10px] font-medium uppercase tracking-wider text-neutral-500">
+            {isPaid ? "Pagado" : "Cobrar"}
+          </label>
+          <select
+            value={method}
+            onChange={(e) => setMethod(e.target.value as PaymentMethod)}
+            disabled={disabled || tpvBusy}
+            className="flex-1 rounded border border-neutral-200 bg-white px-1.5 py-1 text-xs"
+            aria-label="Método de pago"
+          >
+            {(Object.keys(PAYMENT_METHOD_LABELS) as PaymentMethod[]).map((m) => (
+              <option key={m} value={m}>
+                {PAYMENT_METHOD_LABELS[m]}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => onMarkPaid(method, parseTipEuros(tipEuros))}
+            disabled={disabled || tpvBusy}
+            className={`rounded px-2 py-1 text-xs font-medium text-white transition disabled:opacity-50 ${
+              isPaid ? "bg-neutral-600 hover:bg-neutral-700" : "bg-emerald-600 hover:bg-emerald-700"
+            }`}
+          >
+            {isPaid ? "Corregir" : "Cobrar manual"}
+          </button>
+        </div>
+        <div className="flex items-center gap-2">
+          <label
+            htmlFor={`tip-${order.id}`}
+            className="text-[10px] font-medium uppercase tracking-wider text-neutral-500"
+            title="Propina opcional. Se guarda al pulsar Cobrar/Corregir."
+          >
+            Propina €
+          </label>
+          <input
+            id={`tip-${order.id}`}
+            type="text"
+            inputMode="decimal"
+            placeholder="0,00"
+            value={tipEuros}
+            onChange={(e) => setTipEuros(e.target.value)}
+            disabled={disabled || tpvBusy}
+            className="w-20 rounded border border-neutral-200 bg-white px-1.5 py-1 text-right text-xs font-variant-numeric tabular-nums"
+            aria-label="Propina en euros"
+          />
+          {(order.tipCents ?? 0) > 0 ? (
+            <span className="text-[10px] text-neutral-400">
+              guardada: {formatTipEuros(order.tipCents ?? 0)} €
+            </span>
+          ) : null}
+        </div>
       </div>
 
       {/* Mig 045: cobro en TPV físico. Solo si:

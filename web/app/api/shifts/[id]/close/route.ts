@@ -61,6 +61,9 @@ export async function POST(req: Request, ctx: Ctx) {
       otherPaid: sql<number>`coalesce(sum(${orders.totalCents}) FILTER (WHERE ${orders.paidAt} IS NOT NULL AND ${orders.paymentMethod} = 'other'), 0)::int`,
       totalPaid: sql<number>`coalesce(sum(${orders.totalCents}) FILTER (WHERE ${orders.paidAt} IS NOT NULL), 0)::int`,
       paidCount: sql<number>`count(*) FILTER (WHERE ${orders.paidAt} IS NOT NULL)::int`,
+      // Mig 041: total de propinas del turno + cuántos pedidos llevaban propina.
+      tipTotal: sql<number>`coalesce(sum(${orders.tipCents}) FILTER (WHERE ${orders.paidAt} IS NOT NULL), 0)::int`,
+      tipCount: sql<number>`count(*) FILTER (WHERE ${orders.paidAt} IS NOT NULL AND ${orders.tipCents} > 0)::int`,
     })
     .from(orders)
     .where(and(eq(orders.shiftId, shift.id), eq(orders.isTest, false)));
@@ -112,6 +115,8 @@ export async function POST(req: Request, ctx: Ctx) {
       countedCashCents: parsed.data.countedCashCents,
       diffCents,
       topItems: top3,
+      // Mig 041: propinas del turno. Solo se renderiza la línea si > 0.
+      tipCents: paidSum?.tipTotal ?? 0,
     });
   } catch (err) {
     // No bloqueamos la respuesta si algo revienta al agregar datos WA.

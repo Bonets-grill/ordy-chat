@@ -49,6 +49,8 @@ export type ShiftClosedPayload = {
   diffCents: number;
   /** Top 3 items: nombre + qty. */
   topItems: Array<{ name: string; quantity: number }>;
+  /** Mig 041: propinas totales del turno (céntimos). 0 = sin propinas. */
+  tipCents?: number;
 };
 
 export type DailySummaryPayload = {
@@ -142,6 +144,11 @@ export function buildShiftClosedMessage(p: ShiftClosedPayload): string {
   const diffBadge = p.diffCents === 0 ? "✅" : p.diffCents > 0 ? "🟢" : "🔴";
   const diffLabel = p.diffCents > 0 ? `+${euros(p.diffCents)}` : euros(p.diffCents);
 
+  // Mig 041: línea de propinas, solo si > 0. No queremos enviar "🎁 Propinas: 0 €"
+  // a quien no las usa (ruido en el WA del dueño).
+  const tipLine =
+    p.tipCents != null && p.tipCents > 0 ? `🎁 Propinas: ${euros(p.tipCents)}` : null;
+
   return [
     "✅ Ordy Chat · Turno cerrado",
     "",
@@ -150,6 +157,7 @@ export function buildShiftClosedMessage(p: ShiftClosedPayload): string {
     "",
     `💵 Caja inicial: ${euros(p.openingCashCents)}`,
     ...breakdownBlock,
+    ...(tipLine ? [tipLine] : []),
     "",
     `💵 Esperado caja: ${euros(p.expectedCashCents)}`,
     `💵 Contado: ${euros(p.countedCashCents)}`,

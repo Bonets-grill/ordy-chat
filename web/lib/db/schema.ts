@@ -342,6 +342,10 @@ export const orders = pgTable(
     // CHECK constraint a nivel DB limita a ('cash'|'card'|'transfer'|'other').
     // Lista canónica en `lib/payment-methods.ts`.
     paymentMethod: text("payment_method"),
+    // Migración 041: propina del pedido (céntimos). Adicional al total_cents
+    // (no incluida). 0 por default. CHECK >= 0 a nivel DB. Pedidos pre-mig
+    // 041 quedan en 0 — no inventamos propinas históricas.
+    tipCents: integer("tip_cents").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     paidAt: timestamp("paid_at", { withTimezone: true }),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
