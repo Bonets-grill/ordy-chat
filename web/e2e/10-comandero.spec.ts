@@ -29,8 +29,8 @@ async function seedComanderoFixture() {
   const user = userRows[0];
 
   const tenantRows = (await sql`
-    INSERT INTO tenants (slug, name, subscription_status, trial_ends_at)
-    VALUES (${slug}, 'E2E Comandero Resto', 'trialing', now() + interval '14 days')
+    INSERT INTO tenants (slug, name, owner_user_id, subscription_status, trial_ends_at)
+    VALUES (${slug}, 'E2E Comandero Resto', ${user.id}, 'trialing', now() + interval '14 days')
     RETURNING id
   `) as { id: string }[];
   const tenantId = tenantRows[0].id;
