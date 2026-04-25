@@ -84,9 +84,12 @@ export async function POST(req: Request) {
     .set({
       kitchenDecision: "accepted",
       pickupEtaMinutes: etaMinutes,
-      // Mig 027 + Fase 5/6: order queda en pending_kitchen_review hasta que cliente
-      // confirme el ETA por WhatsApp. Bot procesará la respuesta y avanzará a 'pending'.
-      // Si el cliente no responde en X tiempo, un cron eventual cancelará (TBD).
+      // Tras aceptar+ETA el pedido entra YA al flujo KDS normal (status='pending').
+      // La notificación al cliente vía WA es informativa ("tu pedido estará listo
+      // en X min"), no bloqueante. El handshake con confirmación del cliente
+      // (Fase 5/6) nunca se completó y dejaba pedidos invisibles en el KDS — ver
+      // bug reportado 2026-04-25 (tarjeta desaparece tras aceptar+ETA).
+      status: "pending",
       updatedAt: new Date(),
     })
     .where(eq(orders.id, orderId))
