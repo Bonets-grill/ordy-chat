@@ -4,6 +4,9 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { auth } from "@/lib/auth";
 import { getSessionReseller, resellerPayoutsList } from "@/lib/reseller/scope";
+import { UploadInvoiceButton } from "./upload-invoice-button";
+
+const UPLOADABLE_STATUSES = new Set(["queued", "tax_calculated", "ready"]);
 
 export const dynamic = "force-dynamic";
 
@@ -95,9 +98,11 @@ export default async function ResellerPayoutsPage() {
                       </td>
                       <td>
                         {p.invoicePdfUrl ? (
-                          <a href={p.invoicePdfUrl} className="text-xs text-brand-600 hover:underline">
+                          <a href={p.invoicePdfUrl} className="text-xs text-brand-600 hover:underline" target="_blank" rel="noopener noreferrer">
                             PDF
                           </a>
+                        ) : UPLOADABLE_STATUSES.has(p.status) ? (
+                          <UploadInvoiceButton payoutId={p.id} />
                         ) : (
                           <span className="text-xs text-neutral-400">—</span>
                         )}

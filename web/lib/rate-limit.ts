@@ -95,7 +95,12 @@ export async function limitByResellerSlug(
   return r.success ? { ok: true } : { ok: false, reset: r.reset };
 }
 
-type UserBucket = "reseller_create" | "reseller_approve" | "payout_approve" | "connect_start";
+type UserBucket =
+  | "reseller_create"
+  | "reseller_approve"
+  | "payout_approve"
+  | "payout_invoice_upload"
+  | "connect_start";
 
 export async function limitByUserId(
   userId: string,

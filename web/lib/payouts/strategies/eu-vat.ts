@@ -4,7 +4,7 @@
 // Directiva 2006/112/CE art. 44 + LIVA art. 69. Mario NO repercute IVA,
 // el reseller autoliquida en su país. Modelo 349 anual (Mario) obligatorio.
 // No se emite self-billing desde Ordy — el reseller emite su propia factura
-// y la sube al panel (TODO F5 post-MVP: upload PDF).
+// y la sube al panel desde /reseller/payouts (mig 047, Vercel Blob).
 
 import type { TaxBreakdown, TaxStrategy } from "./types";
 import { applyDebtClawback } from "./types";
