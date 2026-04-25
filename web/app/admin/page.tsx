@@ -199,48 +199,86 @@ export default async function AdminHome() {
               Ver todos →
             </Link>
           </div>
-          {/* Cockpit cards: MRR estimado + trials a punto de expirar. */}
-          <div className="mb-3 grid gap-3 sm:grid-cols-3">
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-              <div className="text-[11px] uppercase tracking-wide text-emerald-700">MRR estimado (top 10)</div>
-              <div className="mt-1 text-2xl font-semibold tabular-nums text-emerald-900">
+          {/* Cockpit cards estilo Bloomberg — números XL tabular + delta sutil */}
+          <div className="mb-4 grid gap-3 sm:grid-cols-3">
+            <div className="overflow-hidden rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-emerald-100/40 p-5 shadow-sm">
+              <div className="flex items-center justify-between">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700">
+                  💰 MRR estimado
+                </div>
+                <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
+                  top 10
+                </span>
+              </div>
+              <div className="mt-3 font-mono text-3xl font-bold tabular-nums tracking-tight text-emerald-900">
                 {totalMrr.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €
               </div>
               <div className="mt-1 text-[11px] text-emerald-700/80">
                 Solo planes 'active' (49,90 €/mes/tenant)
               </div>
             </div>
-            <div className={`rounded-xl border p-4 ${trialExpiringSoon > 0 ? "border-amber-200 bg-amber-50" : "border-neutral-200 bg-white"}`}>
-              <div className={`text-[11px] uppercase tracking-wide ${trialExpiringSoon > 0 ? "text-amber-700" : "text-neutral-500"}`}>Trials &lt; 3d</div>
-              <div className={`mt-1 text-2xl font-semibold tabular-nums ${trialExpiringSoon > 0 ? "text-amber-900" : "text-neutral-900"}`}>
+            <div
+              className={`overflow-hidden rounded-2xl border p-5 shadow-sm ${
+                trialExpiringSoon > 0
+                  ? "border-amber-200 bg-gradient-to-br from-amber-50 to-amber-100/40"
+                  : "border-neutral-200 bg-white"
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <div
+                  className={`text-[10px] font-semibold uppercase tracking-wider ${
+                    trialExpiringSoon > 0 ? "text-amber-700" : "text-neutral-500"
+                  }`}
+                >
+                  ⏰ Trials &lt; 3d
+                </div>
+                {trialExpiringSoon > 0 ? (
+                  <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-700">
+                    acción
+                  </span>
+                ) : null}
+              </div>
+              <div
+                className={`mt-3 font-mono text-3xl font-bold tabular-nums tracking-tight ${
+                  trialExpiringSoon > 0 ? "text-amber-900" : "text-neutral-900"
+                }`}
+              >
                 {trialExpiringSoon}
               </div>
               <div className={`mt-1 text-[11px] ${trialExpiringSoon > 0 ? "text-amber-700/80" : "text-neutral-500"}`}>
-                {trialExpiringSoon > 0 ? "Acción: contactar para upgrade" : "Sin trials cerca de expirar"}
+                {trialExpiringSoon > 0 ? "Contactar para upgrade" : "Sin trials cerca de expirar"}
               </div>
             </div>
-            <div className="rounded-xl border border-neutral-200 bg-white p-4">
-              <div className="text-[11px] uppercase tracking-wide text-neutral-500">Total tenants top 10</div>
-              <div className="mt-1 text-2xl font-semibold tabular-nums text-neutral-900">
+            <div className="overflow-hidden rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 to-violet-100/40 p-5 shadow-sm">
+              <div className="flex items-center justify-between">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-violet-700">
+                  👥 Total tenants
+                </div>
+                <span className="rounded-full bg-violet-500/10 px-2 py-0.5 text-[10px] font-medium text-violet-700">
+                  top 10
+                </span>
+              </div>
+              <div className="mt-3 font-mono text-3xl font-bold tabular-nums tracking-tight text-violet-900">
                 {recent.length}
               </div>
-              <div className="mt-1 text-[11px] text-neutral-500">
-                {recent.filter((t) => t.subscriptionStatus === "active").length} activos · {recent.filter((t) => t.subscriptionStatus === "trialing").length} trial
+              <div className="mt-1 text-[11px] text-violet-700/80">
+                {recent.filter((t) => t.subscriptionStatus === "active").length} activos ·{" "}
+                {recent.filter((t) => t.subscriptionStatus === "trialing").length} trial
               </div>
             </div>
           </div>
 
-          <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white">
+          <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
             <table className="w-full text-sm">
-              <thead className="bg-neutral-50">
-                <tr className="text-left text-xs uppercase text-neutral-500">
-                  <th className="px-4 py-2.5 font-medium">Tenant</th>
-                  <th className="py-2.5 font-medium">Estado</th>
-                  <th className="py-2.5 text-right font-medium">MRR</th>
-                  <th className="py-2.5 text-right font-medium">Pedidos hoy</th>
-                  <th className="py-2.5 text-right font-medium">Msgs 24h</th>
-                  <th className="py-2.5 font-medium">Salud</th>
-                  <th className="py-2.5 font-medium">Última actividad</th>
+              <thead className="bg-gradient-to-r from-neutral-50 to-stone-50">
+                <tr className="text-left text-[10px] font-semibold uppercase tracking-wider text-neutral-600">
+                  <th className="px-4 py-3">Tenant</th>
+                  <th className="py-3">Estado</th>
+                  <th className="py-3 text-right">MRR</th>
+                  <th className="py-3 text-right">Pedidos hoy</th>
+                  <th className="py-3 text-right">Msgs 24h</th>
+                  <th className="py-3">Salud</th>
+                  <th className="px-4 py-3">Última actividad</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-100">
@@ -257,45 +295,48 @@ export default async function AdminHome() {
                     const msgs24h = c?.messages_24h ?? 0;
                     const lastMs = c?.last_message_at ? new Date(c.last_message_at).getTime() : 0;
                     const minutesSince = lastMs ? Math.floor((Date.now() - lastMs) / 60000) : null;
-                    // Salud: verde si activo Y actividad <60min; ámbar trial; rojo expirado / sin actividad >24h
                     const isExpired = t.subscriptionStatus !== "active" && t.subscriptionStatus !== "trialing";
                     const isStale = minutesSince === null || minutesSince > 60 * 24;
                     let health: { tone: "success" | "warn" | "danger" | "muted"; label: string } = { tone: "success", label: "OK" };
                     if (isExpired) health = { tone: "danger", label: "Expirado" };
                     else if (t.subscriptionStatus === "trialing") health = { tone: "warn", label: "Trial" };
                     else if (isStale) health = { tone: "warn", label: "Inactivo" };
+                    const initial = (t.name ?? "?").trim().charAt(0).toUpperCase();
                     return (
-                      <tr key={t.id} className="hover:bg-neutral-50">
-                        <td className="px-4 py-2.5">
-                          <Link href={`/admin/tenants/${t.id}`} className="block">
-                            <div className="font-medium text-neutral-900">{t.name}</div>
-                            <div className="font-mono text-[10.5px] text-neutral-500">{t.slug}</div>
+                      <tr key={t.id} className="transition hover:bg-neutral-50/80">
+                        <td className="px-4 py-3">
+                          <Link href={`/admin/tenants/${t.id}`} className="flex items-center gap-3">
+                            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-violet-500 to-violet-700 text-xs font-semibold text-white shadow-sm">
+                              {initial}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="truncate font-semibold text-neutral-900">{t.name}</div>
+                              <div className="truncate font-mono text-[10.5px] text-neutral-500">{t.slug}</div>
+                            </div>
                           </Link>
                         </td>
-                        <td className="py-2.5">
+                        <td className="py-3">
                           <Badge tone={t.subscriptionStatus === "active" ? "success" : "warn"}>
                             {t.subscriptionStatus}
                           </Badge>
                         </td>
-                        <td className="py-2.5 text-right tabular-nums">
+                        <td className="py-3 text-right font-mono tabular-nums text-sm font-medium">
                           {estimatedMrr(t.subscriptionStatus).toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €
                         </td>
-                        <td className="py-2.5 text-right tabular-nums">
-                          <span className={ordersToday > 0 ? "font-semibold text-emerald-700" : "text-neutral-400"}>
+                        <td className="py-3 text-right">
+                          <span className={`font-mono tabular-nums ${ordersToday > 0 ? "font-bold text-emerald-700" : "text-neutral-400"}`}>
                             {ordersToday}
                           </span>
                         </td>
-                        <td className="py-2.5 text-right tabular-nums">
-                          <span className={msgs24h > 0 ? "font-medium text-neutral-900" : "text-neutral-400"}>
+                        <td className="py-3 text-right">
+                          <span className={`font-mono tabular-nums ${msgs24h > 0 ? "font-semibold text-neutral-900" : "text-neutral-400"}`}>
                             {msgs24h}
                           </span>
                         </td>
-                        <td className="py-2.5">
-                          <Badge tone={health.tone}>
-                            {health.label}
-                          </Badge>
+                        <td className="py-3">
+                          <Badge tone={health.tone}>{health.label}</Badge>
                         </td>
-                        <td className="py-2.5 text-xs text-neutral-500">
+                        <td className="px-4 py-3 text-[11px] font-medium uppercase tracking-wider text-neutral-500">
                           {minutesSince === null
                             ? "—"
                             : minutesSince < 60

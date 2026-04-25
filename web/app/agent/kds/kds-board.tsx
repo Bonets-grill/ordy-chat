@@ -102,13 +102,59 @@ const STATUS_LABEL: Record<OrderStatus, string> = {
   served: "Servido",
 };
 
-const STATUS_TONE: Record<OrderStatus, { card: string; badge: string }> = {
-  pending_kitchen_review: { card: "bg-violet-50 border-violet-300", badge: "bg-violet-100 text-violet-800" },
-  pending: { card: "bg-amber-50 border-amber-200", badge: "bg-amber-100 text-amber-800" },
-  preparing: { card: "bg-blue-50 border-blue-200", badge: "bg-blue-100 text-blue-800" },
-  ready: { card: "bg-emerald-50 border-emerald-300", badge: "bg-emerald-100 text-emerald-800" },
-  served: { card: "bg-neutral-50 border-neutral-200", badge: "bg-neutral-100 text-neutral-700" },
+// Design system KDS — inspirado en Toast / Beep Kitchen.
+// Cada status mapea: card (background+border), accent (border-l-4 + action button),
+// badge (status pill), num (cuadradito del número de ticket).
+const STATUS_TONE: Record<
+  OrderStatus,
+  { card: string; accent: string; badge: string; num: string; action: string }
+> = {
+  pending_kitchen_review: {
+    card: "bg-violet-50/60 border-violet-200",
+    accent: "border-l-violet-500",
+    badge: "bg-violet-100 text-violet-800",
+    num: "bg-violet-500 text-white",
+    action: "bg-violet-600 hover:bg-violet-700 text-white",
+  },
+  pending: {
+    card: "bg-amber-50/60 border-amber-200",
+    accent: "border-l-amber-500",
+    badge: "bg-amber-100 text-amber-800",
+    num: "bg-amber-500 text-white",
+    action: "bg-amber-600 hover:bg-amber-700 text-white",
+  },
+  preparing: {
+    card: "bg-sky-50/60 border-sky-200",
+    accent: "border-l-sky-500",
+    badge: "bg-sky-100 text-sky-800",
+    num: "bg-sky-500 text-white",
+    action: "bg-sky-600 hover:bg-sky-700 text-white",
+  },
+  ready: {
+    card: "bg-emerald-50/60 border-emerald-200",
+    accent: "border-l-emerald-500",
+    badge: "bg-emerald-100 text-emerald-800",
+    num: "bg-emerald-500 text-white",
+    action: "bg-emerald-600 hover:bg-emerald-700 text-white",
+  },
+  served: {
+    card: "bg-neutral-50 border-neutral-200",
+    accent: "border-l-neutral-300",
+    badge: "bg-neutral-100 text-neutral-700",
+    num: "bg-neutral-400 text-white",
+    action: "bg-neutral-600 hover:bg-neutral-700 text-white",
+  },
 };
+
+// Genera un "número de ticket" corto y legible desde el UUID. KDS de clase
+// mundial (Toast/Square) muestran 3-4 dígitos visibles en lugar del UUID.
+function shortTicket(orderId: string): string {
+  // Toma los primeros 4 chars hex del UUID y los convierte a base-36 (0-9 + a-z)
+  // para alfabeto compacto. Resultado consistente: mismo orderId siempre = mismo nº.
+  const hex = orderId.replace(/-/g, "").slice(0, 4);
+  const num = parseInt(hex, 16);
+  return num.toString(36).toUpperCase().padStart(3, "0").slice(-3);
+}
 
 // Mig POS-redesign F7: ticket-age coloring estándar de KDS de clase mundial
 // (Toast/Square). Verde <10min · ámbar 10-25min · rojo >25min. El badge de
@@ -339,13 +385,18 @@ export function KdsBoard({ kioskToken }: { kioskToken?: string } = {}) {
       ) : (
         <>
           {pendingReview.length > 0 && (
-            <section className="space-y-3">
-              <h2 className="flex items-baseline gap-2 text-sm font-semibold uppercase tracking-wide text-violet-700">
-                <span>Pendientes de aceptar</span>
-                <span className="rounded-full bg-violet-100 px-2 text-xs text-violet-700">
+            <section className="space-y-3 rounded-2xl border border-violet-200 bg-violet-50/40 p-4 ring-1 ring-violet-100">
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="flex items-center gap-2.5 text-base font-semibold tracking-tight text-violet-900">
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-violet-500 text-white">
+                    ✨
+                  </span>
+                  Pendientes de aceptar
+                </h2>
+                <span className="inline-flex h-7 min-w-[28px] items-center justify-center rounded-full bg-violet-100 px-2 text-sm font-semibold tabular-nums text-violet-800">
                   {pendingReview.length}
                 </span>
-              </h2>
+              </div>
               <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
                 {pendingReview.map((o) => (
                   <ReviewCard
@@ -394,123 +445,151 @@ function ReviewCard({
   const reason = REJECT_REASONS.find((r) => r.key === reasonKey)!;
   const tone = STATUS_TONE.pending_kitchen_review;
   const minutesAgo = Math.max(0, Math.round((Date.now() - new Date(order.createdAt).getTime()) / 60000));
-  const ageLabel = minutesAgo < 60 ? `${minutesAgo} min` : `${Math.round(minutesAgo / 60)} h`;
-  const typeLabel = order.orderType === "dine_in"
+  const ageLabel =
+    minutesAgo < 60
+      ? `${String(minutesAgo).padStart(2, "0")}:00`
+      : `${Math.round(minutesAgo / 60)}h`;
+  const ticket = shortTicket(order.id);
+  const isTakeaway = order.orderType !== "dine_in";
+  const subtitle = order.orderType === "dine_in"
     ? `Mesa ${order.tableNumber ?? "?"}`
-    : `Llevar — ${order.customerName ?? "?"}`;
+    : `Llevar · ${order.customerName ?? "?"}`;
 
   return (
-    <div className={`rounded-xl border p-4 ${tone.card}`}>
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="font-semibold text-neutral-900">
-          {order.isTest ? <span title="Pedido de playground" className="mr-1">🧪</span> : null}
-          {typeLabel}
-        </span>
-        <span className={`rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${ageTone(minutesAgo)}`}>
+    <div
+      className={`overflow-hidden rounded-2xl border border-l-4 bg-white shadow-sm ring-1 ring-black/5 ${tone.card} ${tone.accent}`}
+    >
+      <div className="flex items-center gap-3 border-b border-black/5 bg-white/60 px-4 py-3">
+        <div
+          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg font-mono text-sm font-bold tracking-wider ${tone.num}`}
+          aria-label={`Ticket ${ticket}`}
+        >
+          {ticket}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-neutral-500">
+            {isTakeaway ? <Utensils className="h-3 w-3" /> : <ChefHat className="h-3 w-3" />}
+            <span className="truncate">{subtitle}</span>
+            {order.isTest ? <span className="ml-1">🧪</span> : null}
+          </div>
+          <div className="text-xs font-semibold uppercase tracking-wider text-violet-700">
+            ✨ Esperando aceptación
+          </div>
+        </div>
+        <div className={`shrink-0 rounded-md px-2 py-1 font-mono text-base font-bold tabular-nums ${ageTone(minutesAgo)}`}>
           {ageLabel}
-        </span>
+        </div>
       </div>
-      <ul className="mt-3 space-y-1 text-sm">
+      <ul className="space-y-2 px-4 py-3">
         {order.items.map((it) => (
-          <li key={it.id} className="flex flex-col gap-0.5">
-            <div className="flex items-baseline justify-between gap-2">
-              <span className="min-w-0 truncate">
-                <span className="font-medium text-neutral-700">{it.quantity}×</span> {it.name}
-                {it.notes ? <span className="ml-1 text-xs italic text-neutral-500">({it.notes})</span> : null}
-              </span>
+          <li key={it.id} className="flex items-start gap-3 text-sm">
+            <span className="shrink-0 font-mono text-base font-bold tabular-nums text-neutral-900">
+              {it.quantity}×
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="truncate font-medium text-neutral-900">{it.name}</div>
+              {it.modifiers && it.modifiers.length > 0 ? (
+                <div className="mt-0.5 text-xs italic text-neutral-500">
+                  + {it.modifiers.map((m) => m.name).join(", ")}
+                </div>
+              ) : null}
+              {it.notes ? (
+                <div className="mt-0.5 text-xs italic text-neutral-600">↳ {it.notes}</div>
+              ) : null}
             </div>
-            {it.modifiers && it.modifiers.length > 0 ? (
-              <span className="text-[11px] italic text-neutral-500">
-                / {it.modifiers.map((m) => m.name).join(", ")}
-              </span>
-            ) : null}
           </li>
         ))}
       </ul>
       {order.notes ? (
-        <div className="mt-3 rounded bg-white/70 px-2 py-1 text-xs text-neutral-700 ring-1 ring-neutral-200">
-          {order.notes}
+        <div className="mx-4 mb-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-900 ring-1 ring-amber-200">
+          📝 {order.notes}
         </div>
       ) : null}
 
-      {mode === "idle" ? (
-        <div className="mt-4 space-y-2">
-          <div className="flex items-center gap-2">
-            <label className="text-xs font-medium uppercase tracking-wider text-neutral-600">Tiempo</label>
+      <div className="border-t border-black/5 bg-white/40 p-3">
+        {mode === "idle" ? (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <label className="text-[11px] font-medium uppercase tracking-wider text-neutral-600">
+                Tiempo estimado
+              </label>
+              <select
+                value={eta}
+                onChange={(e) => setEta(Number(e.target.value))}
+                disabled={disabled}
+                className="flex-1 rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm font-medium tabular-nums focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-200"
+              >
+                {ETA_OPTIONS.map((m) => (
+                  <option key={m} value={m}>{m} minutos</option>
+                ))}
+              </select>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={() => onAccept(eta)}
+                disabled={disabled}
+                className="col-span-2 rounded-xl bg-emerald-600 px-3 py-3 text-sm font-semibold text-white transition hover:bg-emerald-700 active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100"
+              >
+                ✓ Aceptar
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode("rejecting")}
+                disabled={disabled}
+                className="rounded-xl border-2 border-rose-300 bg-white px-3 py-3 text-sm font-semibold text-rose-700 transition hover:bg-rose-50 disabled:opacity-50"
+              >
+                Rechazar
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-2 rounded-lg bg-rose-50/50 p-3 ring-1 ring-rose-200">
+            <label className="text-[11px] font-medium uppercase tracking-wider text-rose-700">
+              Razón del rechazo
+            </label>
             <select
-              value={eta}
-              onChange={(e) => setEta(Number(e.target.value))}
+              value={reasonKey}
+              onChange={(e) => { setReasonKey(e.target.value); setDetail(""); }}
               disabled={disabled}
-              className="rounded-md border border-violet-200 bg-white px-2 py-1 text-sm"
+              className="w-full rounded-lg border border-rose-200 bg-white px-3 py-2 text-sm focus:border-rose-500 focus:outline-none focus:ring-2 focus:ring-rose-200"
             >
-              {ETA_OPTIONS.map((m) => (
-                <option key={m} value={m}>{m} min</option>
+              {REJECT_REASONS.map((r) => (
+                <option key={r.key} value={r.key}>{r.label}</option>
               ))}
             </select>
+            {reason.needsDetail && (
+              <input
+                type="text"
+                value={detail}
+                onChange={(e) => setDetail(e.target.value)}
+                placeholder={reason.detailLabel ?? "Especifica"}
+                disabled={disabled}
+                maxLength={120}
+                className="w-full rounded-lg border border-rose-200 bg-white px-3 py-2 text-sm focus:border-rose-500 focus:outline-none focus:ring-2 focus:ring-rose-200"
+              />
+            )}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => onReject(reasonKey, reason.needsDetail ? detail.trim() : undefined)}
+                disabled={disabled || (reason.needsDetail && !detail.trim())}
+                className="flex-1 rounded-xl bg-rose-600 px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-700 disabled:opacity-50"
+              >
+                Confirmar rechazo
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode("idle")}
+                disabled={disabled}
+                className="rounded-xl border-2 border-neutral-300 bg-white px-3 py-2.5 text-sm font-semibold text-neutral-700 transition hover:bg-neutral-50"
+              >
+                Cancelar
+              </button>
+            </div>
           </div>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => onAccept(eta)}
-              disabled={disabled}
-              className="flex-1 rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50"
-            >
-              Aceptar
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode("rejecting")}
-              disabled={disabled}
-              className="rounded-md border border-rose-300 bg-white px-3 py-1.5 text-sm font-medium text-rose-700 transition hover:bg-rose-50 disabled:opacity-50"
-            >
-              Rechazar
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="mt-4 space-y-2 rounded-lg bg-white/80 p-3 ring-1 ring-rose-200">
-          <label className="text-xs font-medium uppercase tracking-wider text-rose-700">Razón</label>
-          <select
-            value={reasonKey}
-            onChange={(e) => { setReasonKey(e.target.value); setDetail(""); }}
-            disabled={disabled}
-            className="w-full rounded-md border border-rose-200 bg-white px-2 py-1 text-sm"
-          >
-            {REJECT_REASONS.map((r) => (
-              <option key={r.key} value={r.key}>{r.label}</option>
-            ))}
-          </select>
-          {reason.needsDetail && (
-            <input
-              type="text"
-              value={detail}
-              onChange={(e) => setDetail(e.target.value)}
-              placeholder={reason.detailLabel ?? "Especifica"}
-              disabled={disabled}
-              maxLength={120}
-              className="w-full rounded-md border border-rose-200 bg-white px-2 py-1 text-sm"
-            />
-          )}
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => onReject(reasonKey, reason.needsDetail ? detail.trim() : undefined)}
-              disabled={disabled || (reason.needsDetail && !detail.trim())}
-              className="flex-1 rounded-md bg-rose-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-rose-700 disabled:opacity-50"
-            >
-              Confirmar rechazo
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode("idle")}
-              disabled={disabled}
-              className="rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50"
-            >
-              Cancelar
-            </button>
-          </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
@@ -554,27 +633,40 @@ function Column({
   onAdvance: (id: string) => void;
   advancingId: string | null;
 }) {
+  const tone = STATUS_TONE[status];
   return (
     <div className="space-y-3">
-      <h2 className="flex items-baseline gap-2 text-sm font-semibold uppercase tracking-wide text-neutral-600">
-        <span>{STATUS_LABEL[status]}</span>
-        <span className="rounded-full bg-neutral-100 px-2 text-xs text-neutral-500">
+      <div className="flex items-center justify-between gap-3 px-1">
+        <h2 className="flex items-baseline gap-2.5 text-base font-semibold tracking-tight text-neutral-900">
+          <span
+            className={`inline-block h-2.5 w-2.5 rounded-full ${tone.num.replace(" text-white", "")}`}
+            aria-hidden
+          />
+          {STATUS_LABEL[status]}
+        </h2>
+        <span
+          className={`inline-flex h-7 min-w-[28px] items-center justify-center rounded-full px-2 text-sm font-semibold tabular-nums ${tone.badge}`}
+        >
           {orders.length}
         </span>
-      </h2>
+      </div>
       {orders.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-neutral-200 p-4 text-center text-xs text-neutral-400">
-          Sin pedidos
-        </p>
+        <div className="rounded-2xl border border-dashed border-neutral-200 bg-neutral-50/60 p-8 text-center">
+          <p className="text-xs font-medium uppercase tracking-wider text-neutral-400">
+            Sin pedidos
+          </p>
+        </div>
       ) : (
-        orders.map((o) => (
-          <OrderCard
-            key={o.id}
-            order={o}
-            disabled={advancingId === o.id}
-            onAdvance={() => onAdvance(o.id)}
-          />
-        ))
+        <div className="space-y-3">
+          {orders.map((o) => (
+            <OrderCard
+              key={o.id}
+              order={o}
+              disabled={advancingId === o.id}
+              onAdvance={() => onAdvance(o.id)}
+            />
+          ))}
+        </div>
       )}
     </div>
   );
@@ -595,72 +687,100 @@ function OrderCard({
     0,
     Math.round((Date.now() - new Date(order.createdAt).getTime()) / 60000),
   );
+  // Timer style "MM:SS" estilo Beep Kitchen para impacto visual cuando age
+  // < 60min. >60min cae a "Hh", >24h a "Nd" (no es operativamente útil pero
+  // evita números absurdos).
   const ageLabel =
     minutesAgo < 60
-      ? `${minutesAgo} min`
+      ? `${String(minutesAgo).padStart(2, "0")}:00`
       : minutesAgo < 1440
-        ? `${Math.round(minutesAgo / 60)} h`
-        : `${Math.round(minutesAgo / 1440)} d`;
-  const hasNotes = order.notes || order.items.some((it) => it.notes);
+        ? `${Math.round(minutesAgo / 60)}h`
+        : `${Math.round(minutesAgo / 1440)}d`;
+  const ticket = shortTicket(order.id);
+  const isTakeaway = order.orderType === "takeaway" || !order.tableNumber;
+  const subtitle = order.tableNumber ? `Mesa ${order.tableNumber}` : "Para llevar";
 
   return (
     <div
-      className={`rounded-xl border p-4 text-left transition ${tone.card}`}
+      className={`group overflow-hidden rounded-2xl border border-l-4 bg-white text-left shadow-sm ring-1 ring-black/5 transition hover:shadow-md ${tone.card} ${tone.accent}`}
     >
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="font-semibold text-neutral-900">
-          {order.isTest ? <span title="Pedido de playground" className="mr-1">🧪</span> : null}
-          {order.tableNumber ? `Mesa ${order.tableNumber}` : "Para llevar"}
-        </span>
-        <span
-          className={`rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${ageTone(minutesAgo)}`}
+      {/* HEADER — número ticket cuadrado + timer XL + tipo */}
+      <div className="flex items-center gap-3 border-b border-black/5 bg-white/60 px-4 py-3">
+        <div
+          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg font-mono text-sm font-bold tracking-wider ${tone.num}`}
+          aria-label={`Ticket ${ticket}`}
+        >
+          {ticket}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-neutral-500">
+            {isTakeaway ? (
+              <Utensils className="h-3 w-3" />
+            ) : (
+              <ChefHat className="h-3 w-3" />
+            )}
+            <span className="truncate">{subtitle}</span>
+            {order.isTest ? (
+              <span title="Pedido de playground" className="ml-1">🧪</span>
+            ) : null}
+          </div>
+          {order.customerName ? (
+            <div className="truncate text-xs font-medium text-neutral-700">
+              {order.customerName}
+            </div>
+          ) : null}
+        </div>
+        <div
+          className={`shrink-0 rounded-md px-2 py-1 font-mono text-base font-bold tabular-nums ${ageTone(minutesAgo)}`}
         >
           {ageLabel}
-        </span>
+        </div>
       </div>
-      {order.customerName ? (
-        <div className="mt-1 text-xs text-neutral-500">{order.customerName}</div>
-      ) : null}
 
-      <ul className="mt-3 space-y-1 text-sm">
+      {/* ITEMS — qty grande a la izq, nombre, station compacta a la dch */}
+      <ul className="space-y-2 px-4 py-3">
         {order.items.map((it) => (
-          <li key={it.id} className="flex flex-col gap-0.5">
-            <div className="flex items-baseline justify-between gap-2">
-              <span className="min-w-0 truncate">
-                <span className="font-medium text-neutral-700">{it.quantity}×</span>{" "}
-                {it.name}
-                {it.notes ? (
-                  <span className="ml-1 text-xs italic text-neutral-500">({it.notes})</span>
-                ) : null}
-              </span>
-              <span className="shrink-0 text-[10px] uppercase tracking-wider text-neutral-400">
-                {it.station === "bar" ? "Bar" : "Cocina"}
-              </span>
+          <li key={it.id} className="flex items-start gap-3 text-sm">
+            <span className="shrink-0 font-mono text-base font-bold tabular-nums text-neutral-900">
+              {it.quantity}×
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="truncate font-medium text-neutral-900">{it.name}</span>
+                <span className="shrink-0 text-[10px] uppercase tracking-wider text-neutral-400">
+                  {it.station === "bar" ? "Bar" : "Cocina"}
+                </span>
+              </div>
+              {it.modifiers && it.modifiers.length > 0 ? (
+                <div className="mt-0.5 text-xs italic text-neutral-500">
+                  + {it.modifiers.map((m) => m.name).join(", ")}
+                </div>
+              ) : null}
+              {it.notes ? (
+                <div className="mt-0.5 text-xs italic text-neutral-600">↳ {it.notes}</div>
+              ) : null}
             </div>
-            {it.modifiers && it.modifiers.length > 0 ? (
-              <span className="text-[11px] italic text-neutral-500">
-                / {it.modifiers.map((m) => m.name).join(", ")}
-              </span>
-            ) : null}
           </li>
         ))}
       </ul>
 
-      {hasNotes && order.notes ? (
-        <div className="mt-3 rounded bg-white/70 px-2 py-1 text-xs text-neutral-700 ring-1 ring-neutral-200">
-          {order.notes}
+      {order.notes ? (
+        <div className="mx-4 mb-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-900 ring-1 ring-amber-200">
+          📝 {order.notes}
         </div>
       ) : null}
 
       {next && (
-        <button
-          type="button"
-          onClick={onAdvance}
-          disabled={disabled}
-          className="mt-3 block w-full rounded-md bg-white/70 px-2 py-1.5 text-xs font-medium uppercase tracking-wider text-neutral-700 ring-1 ring-neutral-200 hover:bg-white disabled:opacity-50"
-        >
-          Pulsa para marcar {STATUS_LABEL[next].toLowerCase()}
-        </button>
+        <div className="border-t border-black/5 bg-white/40 p-3">
+          <button
+            type="button"
+            onClick={onAdvance}
+            disabled={disabled}
+            className={`block w-full rounded-xl px-3 py-3 text-sm font-semibold tracking-wide transition active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 ${tone.action}`}
+          >
+            Marcar {STATUS_LABEL[next].toLowerCase()} →
+          </button>
+        </div>
       )}
 
       {/* KDS de cocina: el cobro NO vive aquí. Se maneja en /agent/comandero

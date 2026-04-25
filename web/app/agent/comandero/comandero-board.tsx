@@ -300,21 +300,45 @@ export function ComanderoBoard({ actor }: { actor?: ComanderoActor }) {
   }
 
   if (view === "tables") {
+    const totalOccupied = tables.filter((t) => t.state === "occupied").length;
+    const totalRevenue = tables.reduce((sum, t) => sum + (t.openTotalCents ?? 0), 0);
     return (
-      <div className="min-h-screen bg-stone-50">
+      <div className="min-h-screen bg-gradient-to-b from-stone-50 to-stone-100">
         {actor ? <ActorTopBar actor={actor} /> : null}
-        <main className="mx-auto max-w-4xl px-4 py-6">
-        <header className="mb-6">
-          <h1 className="text-3xl font-semibold text-neutral-900">Comandero</h1>
-          <p className="mt-1 text-sm text-neutral-500">
-            Selecciona una mesa para tomar el pedido. Los pedidos van directos al KDS.
-          </p>
+        <main className="mx-auto max-w-6xl px-4 py-8">
+        <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-semibold tracking-tight text-neutral-900">Comandero</h1>
+            <p className="mt-1.5 text-sm text-neutral-500">
+              Selecciona una mesa para tomar pedido. Los pedidos van directos al KDS.
+            </p>
+          </div>
+          {tables.length > 0 ? (
+            <div className="flex items-center gap-3">
+              <div className="rounded-2xl border border-neutral-200 bg-white px-4 py-2.5 shadow-sm">
+                <div className="text-[10px] font-medium uppercase tracking-wider text-neutral-500">
+                  Mesas activas
+                </div>
+                <div className="mt-0.5 font-mono text-xl font-bold tabular-nums text-neutral-900">
+                  {totalOccupied}<span className="text-sm font-normal text-neutral-400">/{tables.length}</span>
+                </div>
+              </div>
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 shadow-sm">
+                <div className="text-[10px] font-medium uppercase tracking-wider text-emerald-700">
+                  Por cobrar
+                </div>
+                <div className="mt-0.5 font-mono text-xl font-bold tabular-nums text-emerald-900">
+                  {formatEur(totalRevenue)}
+                </div>
+              </div>
+            </div>
+          ) : null}
         </header>
 
         {loading ? (
           <p className="text-sm text-neutral-500">Cargando mesas…</p>
         ) : tables.length === 0 ? (
-          <div className="rounded-xl border border-neutral-200 p-8 text-center">
+          <div className="rounded-2xl border border-neutral-200 bg-white p-12 text-center shadow-sm">
             <p className="text-sm text-neutral-600">
               No tienes mesas configuradas. Ve a{" "}
               <a href="/agent/tables" className="font-medium text-brand-600 hover:underline">
@@ -329,62 +353,86 @@ export function ComanderoBoard({ actor }: { actor?: ComanderoActor }) {
               const occupied = list.filter((t) => t.state === "occupied").length;
               return (
                 <section key={zone}>
-                  <header className="mb-3 flex items-baseline justify-between border-b border-neutral-200 pb-2">
-                    <h2 className="text-xs font-semibold uppercase tracking-wider text-neutral-700">
+                  <header className="mb-4 flex items-baseline justify-between">
+                    <h2 className="text-sm font-semibold uppercase tracking-wider text-neutral-700">
                       {zone}
                     </h2>
                     <span className="text-xs text-neutral-500">
-                      {list.length} mesa{list.length !== 1 ? "s" : ""}
-                      {occupied > 0 ? ` · ${occupied} ocupada${occupied !== 1 ? "s" : ""}` : ""}
+                      {occupied}/{list.length} ocupada{occupied !== 1 ? "s" : ""}
                     </span>
                   </header>
-                  <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                  <ul className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
                     {list.map((t) => (
                       <li key={t.id}>
                         <button
                           type="button"
                           onClick={() => selectTable(t)}
-                          className={`w-full rounded-xl border p-4 text-left transition active:scale-95 ${
+                          className={`group relative w-full overflow-hidden rounded-2xl border-2 p-5 text-left shadow-sm transition active:scale-[0.97] hover:shadow-md ${
                             t.state === "occupied"
-                              ? "border-amber-300 bg-amber-50 hover:border-amber-400"
-                              : "border-emerald-200 bg-emerald-50 hover:border-emerald-300"
+                              ? "border-amber-300 bg-gradient-to-br from-amber-50 to-amber-100/60 hover:border-amber-400"
+                              : "border-emerald-200 bg-gradient-to-br from-white to-emerald-50/60 hover:border-emerald-300"
                           }`}
                         >
-                          <div className="flex items-baseline justify-between">
-                            <span className="text-2xl font-semibold text-neutral-900">
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="font-mono text-4xl font-bold tabular-nums tracking-tight text-neutral-900">
                               {t.number}
                             </span>
-                            <span className="text-xs text-neutral-500">
-                              {t.seats} pax
+                            <span
+                              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+                                t.state === "occupied"
+                                  ? "bg-amber-200/70 text-amber-900"
+                                  : "bg-emerald-200/70 text-emerald-900"
+                              }`}
+                            >
+                              <span
+                                className={`h-1.5 w-1.5 rounded-full ${
+                                  t.state === "occupied" ? "bg-amber-600 animate-pulse" : "bg-emerald-600"
+                                }`}
+                              />
+                              {t.state === "occupied" ? "Ocupada" : "Libre"}
                             </span>
                           </div>
-                          <div className="mt-3 text-xs">
-                            {t.state === "occupied" ? (
-                              <span className="font-medium text-amber-800">
-                                Ocupada · {t.openOrdersCount} pedido{t.openOrdersCount !== 1 ? "s" : ""}
-                              </span>
-                            ) : (
-                              <span className="font-medium text-emerald-800">Libre</span>
-                            )}
+                          <div className="mt-1 text-[11px] font-medium uppercase tracking-wider text-neutral-500">
+                            {t.seats} pax
                           </div>
-                          {t.state === "occupied" && t.openTotalCents > 0 ? (
-                            <div className="mt-1 text-xs text-neutral-700">
-                              Acumulado: {formatEur(t.openTotalCents)}
+                          {t.state === "occupied" ? (
+                            <div className="mt-3 space-y-1 border-t border-amber-200/60 pt-2">
+                              <div className="flex items-baseline justify-between">
+                                <span className="text-[10px] font-medium uppercase tracking-wider text-amber-700">
+                                  Pedidos
+                                </span>
+                                <span className="font-mono text-sm font-bold tabular-nums text-amber-900">
+                                  {t.openOrdersCount}
+                                </span>
+                              </div>
+                              {t.openTotalCents > 0 ? (
+                                <div className="flex items-baseline justify-between">
+                                  <span className="text-[10px] font-medium uppercase tracking-wider text-amber-700">
+                                    Acumulado
+                                  </span>
+                                  <span className="font-mono text-base font-bold tabular-nums text-neutral-900">
+                                    {formatEur(t.openTotalCents)}
+                                  </span>
+                                </div>
+                              ) : null}
                             </div>
-                          ) : null}
+                          ) : (
+                            <div className="mt-3 border-t border-emerald-200/60 pt-2 text-[11px] font-medium text-emerald-700">
+                              Toca para abrir
+                            </div>
+                          )}
                         </button>
                         {t.state === "occupied" ? (
-                          <div className="mt-2 flex gap-1">
+                          <div className="mt-2 grid grid-cols-2 gap-2">
                             <button
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 void closeTable(t, "cash");
                               }}
-                              className="inline-flex flex-1 items-center justify-center gap-1 rounded-md bg-emerald-600 px-2 py-1.5 text-xs font-medium text-white shadow-sm active:scale-95"
+                              className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2.5 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-700 active:scale-95"
                             >
-                              <CreditCard size={12} />
-                              Efectivo
+                              💵 Efectivo
                             </button>
                             <button
                               type="button"
@@ -392,7 +440,7 @@ export function ComanderoBoard({ actor }: { actor?: ComanderoActor }) {
                                 e.stopPropagation();
                                 void closeTable(t, "card");
                               }}
-                              className="inline-flex flex-1 items-center justify-center gap-1 rounded-md bg-stone-700 px-2 py-1.5 text-xs font-medium text-white shadow-sm active:scale-95"
+                              className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-neutral-900 px-3 py-2.5 text-xs font-semibold text-white shadow-sm transition hover:bg-neutral-800 active:scale-95"
                             >
                               <CreditCard size={12} />
                               Tarjeta
@@ -543,18 +591,28 @@ export function ComanderoBoard({ actor }: { actor?: ComanderoActor }) {
         </>
       )}
 
-      {/* Carrito flotante */}
+      {/* Carrito flotante — bottom sheet estilo POS */}
       {cart.length > 0 ? (
-        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-neutral-200 bg-white p-3 shadow-lg">
-          <div className="mx-auto max-w-4xl">
-            <details className="rounded-lg">
-              <summary className="flex cursor-pointer items-center justify-between rounded-md bg-neutral-50 p-3">
-                <span className="flex items-center gap-2 text-sm font-medium text-neutral-900">
-                  <ShoppingCart size={16} />
-                  {cart.reduce((s, l) => s + l.qty, 0)} ítems
+        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-neutral-200 bg-white/95 shadow-2xl backdrop-blur supports-[backdrop-filter]:bg-white/85">
+          <div className="mx-auto max-w-4xl px-4 py-3">
+            <details className="rounded-2xl">
+              <summary className="flex cursor-pointer items-center justify-between gap-3 rounded-xl bg-gradient-to-br from-neutral-900 to-neutral-800 px-4 py-3 text-white shadow-md transition hover:shadow-lg">
+                <span className="flex items-center gap-3">
+                  <span className="relative inline-flex h-9 w-9 items-center justify-center rounded-xl bg-white/15">
+                    <ShoppingCart size={18} />
+                    <span className="absolute -right-1.5 -top-1.5 inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-emerald-400 px-1 text-[10px] font-bold text-emerald-950 ring-2 ring-neutral-900">
+                      {cart.reduce((s, l) => s + l.qty, 0)}
+                    </span>
+                  </span>
+                  <span className="flex flex-col text-left">
+                    <span className="text-[10px] font-medium uppercase tracking-wider text-white/60">
+                      Carrito · {cart.length} línea{cart.length !== 1 ? "s" : ""}
+                    </span>
+                    <span className="text-sm font-semibold">Pulsa para ver detalle</span>
+                  </span>
                 </span>
-                <span className="flex items-center gap-2">
-                  <span className="font-semibold text-neutral-900">
+                <span className="flex items-center gap-3">
+                  <span className="font-mono text-xl font-bold tabular-nums">
                     {formatEur(cartTotal)}
                   </span>
                   <button
@@ -563,39 +621,38 @@ export function ComanderoBoard({ actor }: { actor?: ComanderoActor }) {
                       e.preventDefault();
                       clearCart();
                     }}
-                    className="text-xs text-red-600 hover:underline"
+                    className="rounded-md bg-white/10 px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-white/80 transition hover:bg-white/20"
                     aria-label="Vaciar carrito"
                   >
                     Vaciar
                   </button>
                 </span>
               </summary>
-              <ul className="mt-3 space-y-1 text-sm">
+              <ul className="mt-3 max-h-72 overflow-y-auto space-y-1.5 rounded-xl border border-neutral-200 bg-white p-2 text-sm">
                 {cart.map((l, i) => {
                   const item = itemsById.get(l.itemId);
                   if (!item) return null;
                   return (
-                    <li key={i} className="flex items-center gap-2">
+                    <li key={i} className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-neutral-50">
                       <button
                         type="button"
                         onClick={() => changeQty(i, -1)}
-                        className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-neutral-100"
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-neutral-100 hover:bg-neutral-200"
                       >
-                        <Minus size={12} />
+                        <Minus size={14} />
                       </button>
-                      <span className="w-6 text-center text-xs">{l.qty}</span>
+                      <span className="w-6 text-center font-mono text-sm font-bold tabular-nums">{l.qty}</span>
                       <button
                         type="button"
                         onClick={() => changeQty(i, 1)}
-                        className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-neutral-900 text-white"
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-neutral-900 text-white hover:bg-neutral-800"
                       >
-                        <Plus size={12} />
+                        <Plus size={14} />
                       </button>
-                      <span className="flex-1 truncate text-xs">
-                        {item.name}
+                      <span className="flex-1 truncate text-sm">
+                        <span className="font-medium text-neutral-900">{item.name}</span>
                         {l.modifiers.length > 0 ? (
-                          <span className="text-neutral-500">
-                            {" "}
+                          <span className="ml-1 text-xs text-neutral-500">
                             ({l.modifiers.map((m) => m.name).join(", ")})
                           </span>
                         ) : null}
@@ -603,10 +660,10 @@ export function ComanderoBoard({ actor }: { actor?: ComanderoActor }) {
                       <button
                         type="button"
                         onClick={() => removeLine(i)}
-                        className="inline-flex h-6 w-6 items-center justify-center rounded-full text-red-500 hover:bg-red-50"
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-red-500 transition hover:bg-red-50"
                         aria-label={`Quitar ${item.name}`}
                       >
-                        <Trash2 size={12} />
+                        <Trash2 size={14} />
                       </button>
                     </li>
                   );
@@ -692,21 +749,26 @@ function ItemRow({
   }
 
   return (
-    <li className="rounded-xl border border-neutral-200 bg-white">
-      <div className="flex gap-3 p-3">
-        <div className="flex flex-1 flex-col">
-          <div className="flex items-baseline justify-between gap-2">
-            <span className="font-medium text-neutral-900">
-              {item.isRecommended ? "⭐ " : ""}
+    <li className="group overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm transition hover:border-neutral-300 hover:shadow-md">
+      <div className="flex items-center gap-4 p-4">
+        <div className="flex flex-1 flex-col gap-1">
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="text-[15px] font-semibold text-neutral-900">
+              {item.isRecommended ? <span className="mr-1 text-amber-500">⭐</span> : null}
               {item.name}
             </span>
-            <span className="shrink-0 font-semibold text-neutral-900 tabular-nums">
+            <span className="shrink-0 font-mono text-base font-bold tabular-nums text-neutral-900">
               {formatEur(item.priceCents)}
             </span>
           </div>
           {item.description ? (
-            <p className="mt-1 line-clamp-2 text-xs text-neutral-500">
+            <p className="line-clamp-2 text-xs text-neutral-500">
               {item.description}
+            </p>
+          ) : null}
+          {hasGroups ? (
+            <p className="mt-0.5 text-[10px] font-medium uppercase tracking-wider text-brand-600">
+              Personalizable · {item.modifierGroups.length} grupo{item.modifierGroups.length !== 1 ? "s" : ""}
             </p>
           ) : null}
         </div>
@@ -714,9 +776,9 @@ function ItemRow({
           type="button"
           onClick={quickAdd}
           aria-label={`Añadir ${item.name}`}
-          className="inline-flex h-10 w-10 shrink-0 items-center justify-center self-center rounded-full bg-neutral-900 text-white shadow active:scale-95"
+          className="inline-flex h-12 w-12 shrink-0 items-center justify-center self-center rounded-2xl bg-neutral-900 text-white shadow-md transition hover:bg-neutral-800 hover:shadow-lg active:scale-95"
         >
-          <Plus size={18} />
+          <Plus size={22} strokeWidth={2.5} />
         </button>
       </div>
       {open && hasGroups ? (
@@ -1044,23 +1106,23 @@ function PosView({
             </section>
 
             {/* Totales + ajustes */}
-            <section className="mb-4 rounded-xl border border-stone-200 bg-white p-4">
-              <div className="space-y-1 text-sm">
-                <div className="flex justify-between text-stone-600">
+            <section className="mb-4 overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm">
+              <div className="space-y-1.5 p-5 text-sm">
+                <div className="flex justify-between text-stone-500">
                   <span>Subtotal</span>
-                  <span className="tabular-nums">{formatEur(ticket.totals.subtotal)}</span>
+                  <span className="font-mono tabular-nums">{formatEur(ticket.totals.subtotal)}</span>
                 </div>
-                <div className="flex justify-between text-stone-600">
+                <div className="flex justify-between text-stone-500">
                   <span>IVA</span>
-                  <span className="tabular-nums">{formatEur(ticket.totals.tax)}</span>
+                  <span className="font-mono tabular-nums">{formatEur(ticket.totals.tax)}</span>
                 </div>
-                <div className="mt-1 flex justify-between border-t border-stone-100 pt-2 font-medium text-stone-900">
+                <div className="mt-1.5 flex justify-between border-t border-stone-100 pt-2 font-semibold text-stone-900">
                   <span>Total</span>
-                  <span className="tabular-nums">{formatEur(ticket.totals.total)}</span>
+                  <span className="font-mono tabular-nums">{formatEur(ticket.totals.total)}</span>
                 </div>
               </div>
 
-              <div className="mt-4 grid gap-3">
+              <div className="grid gap-3 border-t border-stone-100 bg-stone-50/40 p-5">
                 <AdjustmentInput
                   label="Descuento"
                   value={discountInput}
@@ -1081,38 +1143,42 @@ function PosView({
                 />
               </div>
 
-              <div className="mt-4 flex items-baseline justify-between border-t border-stone-200 pt-3">
-                <span className="text-sm font-medium uppercase tracking-wide text-stone-700">A pagar</span>
-                <span className="text-2xl font-bold tabular-nums text-stone-900">{formatEur(finalToPay)}</span>
+              <div className="flex items-baseline justify-between gap-4 bg-gradient-to-r from-emerald-50 to-emerald-100/60 px-5 py-4">
+                <span className="text-xs font-semibold uppercase tracking-wider text-emerald-900">
+                  A pagar
+                </span>
+                <span className="font-mono text-3xl font-bold tabular-nums text-emerald-900">
+                  {formatEur(finalToPay)}
+                </span>
               </div>
             </section>
 
-            {/* Cobrar */}
+            {/* Cobrar — botones grandes estilo POS profesional */}
             <section className="grid grid-cols-2 gap-3">
               <button
                 type="button"
                 disabled={paying}
                 onClick={() => handlePay("cash")}
-                className="rounded-xl bg-emerald-600 px-4 py-4 text-base font-semibold text-white shadow-sm active:scale-95 disabled:opacity-50"
+                className="rounded-2xl bg-emerald-600 px-4 py-5 text-base font-semibold text-white shadow-md transition hover:bg-emerald-700 active:scale-[0.97] disabled:opacity-50 disabled:active:scale-100"
               >
-                Efectivo
+                <span className="mr-1">💵</span> Efectivo
               </button>
               <button
                 type="button"
                 disabled={paying}
                 onClick={() => handlePay("card")}
-                className="rounded-xl bg-stone-900 px-4 py-4 text-base font-semibold text-white shadow-sm active:scale-95 disabled:opacity-50"
+                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-neutral-900 px-4 py-5 text-base font-semibold text-white shadow-md transition hover:bg-neutral-800 active:scale-[0.97] disabled:opacity-50 disabled:active:scale-100"
               >
-                Tarjeta
+                <CreditCard size={18} /> Tarjeta
               </button>
             </section>
 
             <button
               type="button"
               onClick={() => setShowSplit(true)}
-              className="mt-3 w-full rounded-xl border-2 border-dashed border-stone-300 bg-white px-4 py-3 text-sm font-medium text-stone-700 active:scale-[0.98] hover:border-stone-400 hover:bg-stone-50"
+              className="mt-3 w-full rounded-2xl border-2 border-dashed border-stone-300 bg-white px-4 py-3.5 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 active:scale-[0.98]"
             >
-              Dividir cuenta entre varios clientes →
+              👥 Dividir cuenta entre varios clientes
             </button>
           </>
         )}
