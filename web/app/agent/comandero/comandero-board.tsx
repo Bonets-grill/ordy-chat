@@ -7,7 +7,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Check, CreditCard, Minus, Plus, ShoppingCart, Trash2, Utensils } from "lucide-react";
+import { ArrowLeft, Check, CreditCard, LogOut, Minus, Plus, ShoppingCart, Trash2, Utensils } from "lucide-react";
 
 type Modifier = { id: string; name: string; priceDeltaCents: number };
 type ModifierGroup = {
@@ -70,7 +70,11 @@ function groupTablesByZone(tables: Table[]): Array<{ zone: string; list: Table[]
     .map(([zone, list]) => ({ zone, list }));
 }
 
-export function ComanderoBoard() {
+type ComanderoActor =
+  | { kind: "employee"; name: string; role: "waiter" | "manager" }
+  | { kind: "owner"; name: string; tenantSlug?: string | null };
+
+export function ComanderoBoard({ actor }: { actor?: ComanderoActor }) {
   const router = useRouter();
   const [view, setView] = React.useState<View>("tables");
   const [tables, setTables] = React.useState<Table[]>([]);
@@ -222,7 +226,9 @@ export function ComanderoBoard() {
 
   if (view === "tables") {
     return (
-      <main className="mx-auto max-w-4xl px-4 py-6">
+      <div className="min-h-screen bg-stone-50">
+        {actor ? <ActorTopBar actor={actor} /> : null}
+        <main className="mx-auto max-w-4xl px-4 py-6">
         <header className="mb-6">
           <h1 className="text-3xl font-semibold text-neutral-900">Comandero</h1>
           <p className="mt-1 text-sm text-neutral-500">
@@ -330,6 +336,7 @@ export function ComanderoBoard() {
           <p className="mt-4 text-center text-sm text-red-600">{error}</p>
         ) : null}
       </main>
+      </div>
     );
   }
 
@@ -345,7 +352,9 @@ export function ComanderoBoard() {
   }, [items]);
 
   return (
-    <main className="mx-auto max-w-4xl px-4 py-4">
+    <div className="min-h-screen bg-stone-50">
+      {actor ? <ActorTopBar actor={actor} /> : null}
+      <main className="mx-auto max-w-4xl px-4 py-4">
       <header className="mb-4 flex items-center gap-3">
         <button
           type="button"
@@ -474,6 +483,50 @@ export function ComanderoBoard() {
         </div>
       ) : null}
     </main>
+    </div>
+  );
+}
+
+function ActorTopBar({ actor }: { actor: ComanderoActor }) {
+  async function logout() {
+    if (actor.kind !== "employee") {
+      // owner: lo mandamos al dashboard como "salir del modo comandero".
+      window.location.href = "/dashboard";
+      return;
+    }
+    try {
+      await fetch("/api/comandero/logout", { method: "POST" });
+    } finally {
+      window.location.href = "/agent/comandero";
+    }
+  }
+  return (
+    <header className="sticky top-0 z-30 flex items-center justify-between border-b border-neutral-200 bg-white/95 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-white/70">
+      <div className="flex items-center gap-2">
+        <Utensils className="h-4 w-4 text-neutral-700" />
+        <span className="text-sm font-semibold text-neutral-900">
+          {actor.name}
+        </span>
+        {actor.kind === "employee" && actor.role === "manager" ? (
+          <span className="rounded bg-neutral-900 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-white">
+            Manager
+          </span>
+        ) : null}
+        {actor.kind === "owner" ? (
+          <span className="rounded bg-amber-500 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-white">
+            Owner
+          </span>
+        ) : null}
+      </div>
+      <button
+        type="button"
+        onClick={() => void logout()}
+        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100"
+      >
+        <LogOut size={12} />
+        {actor.kind === "employee" ? "Cerrar sesión" : "Salir del modo"}
+      </button>
+    </header>
   );
 }
 
