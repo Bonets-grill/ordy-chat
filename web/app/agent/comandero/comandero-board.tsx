@@ -7,7 +7,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Check, Minus, Plus, ShoppingCart, Utensils } from "lucide-react";
+import { ArrowLeft, Check, CreditCard, Minus, Plus, ShoppingCart, Utensils } from "lucide-react";
 
 type Modifier = { id: string; name: string; priceDeltaCents: number };
 type ModifierGroup = {
@@ -89,6 +89,29 @@ export function ComanderoBoard() {
     setCart([]);
     setError(null);
     setView("menu");
+  }
+
+  async function closeTable(t: Table, method: "cash" | "card" = "cash") {
+    const confirmTxt =
+      method === "cash"
+        ? `Cobrar mesa ${t.number} en efectivo (${formatEur(t.openTotalCents)})?`
+        : `Cobrar mesa ${t.number} con tarjeta (${formatEur(t.openTotalCents)})?`;
+    if (!confirm(confirmTxt)) return;
+    const r = await fetch(
+      `/api/comandero/tables/${encodeURIComponent(t.number)}/close`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paymentMethod: method }),
+      },
+    );
+    if (!r.ok) {
+      const data = (await r.json().catch(() => ({}))) as { error?: string };
+      setError(data.error ?? `Error ${r.status}`);
+      return;
+    }
+    await loadTables();
+    router.refresh();
   }
 
   function addToCart(item: MenuItem, modifiers: CartLine["modifiers"] = []) {
@@ -229,10 +252,39 @@ export function ComanderoBoard() {
                     </div>
                   ) : null}
                 </button>
+                {t.state === "occupied" ? (
+                  <div className="mt-2 flex gap-1">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void closeTable(t, "cash");
+                      }}
+                      className="inline-flex flex-1 items-center justify-center gap-1 rounded-md bg-emerald-600 px-2 py-1.5 text-xs font-medium text-white shadow-sm active:scale-95"
+                    >
+                      <CreditCard size={12} />
+                      Efectivo
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void closeTable(t, "card");
+                      }}
+                      className="inline-flex flex-1 items-center justify-center gap-1 rounded-md bg-stone-700 px-2 py-1.5 text-xs font-medium text-white shadow-sm active:scale-95"
+                    >
+                      <CreditCard size={12} />
+                      Tarjeta
+                    </button>
+                  </div>
+                ) : null}
               </li>
             ))}
           </ul>
         )}
+        {error ? (
+          <p className="mt-4 text-center text-sm text-red-600">{error}</p>
+        ) : null}
       </main>
     );
   }

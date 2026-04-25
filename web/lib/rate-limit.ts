@@ -101,7 +101,8 @@ type UserBucket =
   | "payout_approve"
   | "payout_invoice_upload"
   | "connect_start"
-  | "comandero_create_order";
+  | "comandero_create_order"
+  | "comandero_close_table";
 
 export async function limitByUserId(
   userId: string,
