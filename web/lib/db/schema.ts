@@ -747,6 +747,8 @@ export const menuItemModifierGroups = pgTable("menu_item_modifier_groups", {
   // null = sin límite (multi). Para single la DB fuerza =1.
   maxSelect: integer("max_select"),
   sortOrder: integer("sort_order").notNull().default(0),
+  // Mig 048 — i18n del nombre del grupo ({ en: { name }, fr: { name }, ... }).
+  i18nTranslations: jsonb("i18n_translations").notNull().default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -759,6 +761,8 @@ export const menuItemModifiers = pgTable("menu_item_modifiers", {
   priceDeltaCents: integer("price_delta_cents").notNull().default(0),
   available: boolean("available").notNull().default(true),
   sortOrder: integer("sort_order").notNull().default(0),
+  // Mig 048 — i18n del nombre del modifier.
+  i18nTranslations: jsonb("i18n_translations").notNull().default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
