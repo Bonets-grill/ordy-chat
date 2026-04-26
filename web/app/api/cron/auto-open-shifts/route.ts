@@ -17,7 +17,7 @@
 // Idempotente: si ya hay un turno abierto, no inserta nada.
 // Frecuencia: cada 5 min (window mínima de retraso al abrir = 5 min, OK).
 
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, exists, inArray, isNull, not, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { agentConfigs, shifts, tenants } from "@/lib/db/schema";
@@ -38,24 +38,32 @@ export async function GET(req: Request) {
   const unauthorized = validateCronAuth(req);
   if (unauthorized) return unauthorized;
 
-  // Tenants activos sin turno abierto. Joineamos con agent_configs para
-  // obtener el schedule. Si un tenant no tiene agent_config aún (raro,
-  // pasaría solo si onboarding incompleto), el LEFT JOIN devuelve schedule
-  // NULL y el helper isWithinSchedule lo trata como "siempre abierto".
-  const candidates = (await db.execute(sql`
-    SELECT
-      t.id::text AS "tenantId",
-      ac.schedule AS "schedule",
-      t.timezone AS "timezone"
-    FROM tenants t
-    LEFT JOIN agent_configs ac ON ac.tenant_id = t.id
-    WHERE t.subscription_status IN ('active','trialing','trial')
-      AND NOT EXISTS (
-        SELECT 1 FROM shifts s
-         WHERE s.tenant_id = t.id
-           AND s.closed_at IS NULL
-      )
-  `)) as unknown as CandidateRow[];
+  // Tenants activos sin turno abierto.
+  // Bug fix 2026-04-26 (post-bump @neondatabase/serverless 0.10→1.1):
+  // El driver nuevo cambió el shape de db.execute(sql`...`) → "n is not iterable".
+  // Reescrito con drizzle queryBuilder (db.select + leftJoin) que SIEMPRE
+  // retorna array iterable garantizado por tipo.
+  const candidates: CandidateRow[] = await db
+    .select({
+      tenantId: tenants.id,
+      schedule: agentConfigs.schedule,
+      timezone: tenants.timezone,
+    })
+    .from(tenants)
+    .leftJoin(agentConfigs, eq(agentConfigs.tenantId, tenants.id))
+    .where(
+      and(
+        inArray(tenants.subscriptionStatus, ["active", "trialing", "trial"]),
+        not(
+          exists(
+            db
+              .select({ one: sql<number>`1` })
+              .from(shifts)
+              .where(and(eq(shifts.tenantId, tenants.id), isNull(shifts.closedAt))),
+          ),
+        ),
+      ),
+    );
 
   const now = new Date();
   const opened: Array<{ tenantId: string; shiftId: string }> = [];
