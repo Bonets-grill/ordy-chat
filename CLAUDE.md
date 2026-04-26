@@ -31,7 +31,7 @@ Todo se persiste en **Neon Postgres** (project `empty-block-73744049`). Drizzle 
 |------|------------|
 | Web framework | Next.js 15 (App Router, RSC por defecto) |
 | Lenguaje web | TypeScript estricto |
-| Styling | Tailwind v3 + shadcn/ui |
+| Styling | Tailwind v4 (via `@tailwindcss/postcss`) + shadcn/ui — `app/globals.css` usa `@import "tailwindcss"` + `@config "../tailwind.config.ts"` (legacy bridge) |
 | ORM | Drizzle |
 | Auth | Auth.js v5 (email magic link vía Resend) |
 | DB | Neon Postgres (serverless, `@neondatabase/serverless`) |
