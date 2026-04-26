@@ -13,7 +13,26 @@ import { authConfig } from "@/lib/auth.config";
 import { db } from "@/lib/db";
 import { accounts, sessions, users, verificationTokens } from "@/lib/db/schema";
 
-const ALLOW_DEV_LOGIN = process.env.ALLOW_DEV_LOGIN === "1";
+// CN-003 fix 2026-04-26 (cyber-neo audit): hard-gate contra producción.
+// El provider 'dev' permite login passwordless del SUPER_ADMIN_EMAIL — si la
+// flag llegase a Vercel/Railway en prod, cualquiera con el email entra como
+// super-admin sin credencial. Bloqueamos por NODE_ENV+VERCEL_ENV antes de
+// que la flag sea siquiera evaluable.
+const ALLOW_DEV_LOGIN =
+  process.env.ALLOW_DEV_LOGIN === "1" &&
+  process.env.NODE_ENV !== "production" &&
+  process.env.VERCEL_ENV !== "production";
+
+if (process.env.ALLOW_DEV_LOGIN === "1" &&
+    (process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "production")) {
+  // Detectado intento de activar dev-login en prod — log y abort.
+  // En lugar de throw (que tumbaría el deploy entero), logueamos crítico y
+  // forzamos ALLOW_DEV_LOGIN=false. Si Sentry está montado, captura.
+  console.error(
+    "[SECURITY] ALLOW_DEV_LOGIN=1 detected in production environment. " +
+    "Provider disabled. Audit your deploy env vars immediately.",
+  );
+}
 
 function renderMagicLinkEmail(url: string, email: string): string {
   // Bulletproof email — tables en lugar de divs, color sólido en lugar de gradient

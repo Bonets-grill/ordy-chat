@@ -18,6 +18,10 @@ on:
         required: false
         default: '0.8'
 
+# CN-001 fix 2026-04-26: explicit least-privilege permissions.
+permissions:
+  contents: read
+
 jobs:
   brain-eval:
     runs-on: ubuntu-latest

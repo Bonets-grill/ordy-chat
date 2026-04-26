@@ -5,6 +5,12 @@ on:
     branches: ["**"]
   pull_request:
 
+# CN-001 fix 2026-04-26 (cyber-neo audit): explicit least-privilege permissions.
+# Default GITHUB_TOKEN inherits repo-wide write scope which lets a compromised
+# dependency exfiltrate code or push commits. Workflow only needs to read.
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -36,7 +42,10 @@ jobs:
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
 
-      - run: pnpm install --frozen-lockfile || pnpm install
+      # CN-002 fix 2026-04-26: removed `|| pnpm install` fallback. Frozen-install
+      # failure now surfaces a lockfile drift instead of silently resolving new
+      # transitive versions (supply-chain integrity).
+      - run: pnpm install --frozen-lockfile
 
       - run: pnpm typecheck
 
