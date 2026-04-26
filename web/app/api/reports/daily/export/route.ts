@@ -23,11 +23,13 @@ export async function GET(req: Request) {
   const days = Number.isFinite(daysRaw) && daysRaw > 0 ? Math.min(Math.floor(daysRaw), 180) : 30;
   const since = new Date(Date.now() - days * 86_400_000);
 
-  // Mismo shape que /api/reports/daily — diferencia: export añade avg ticket
-  // y filtra por tenant del bundle (ownership).
+  // Fix Mario 2026-04-26: agregados en TZ tenant + excluir canceled.
+  const tenantTz = bundle.tenant.timezone || "Atlantic/Canary";
+  const tzLit = sql.raw(`'${tenantTz.replace(/'/g, "")}'`);
+
   const rows = await db
     .select({
-      day: sql<string>`to_char(date_trunc('day', ${orders.paidAt}), 'YYYY-MM-DD')`,
+      day: sql<string>`to_char(date_trunc('day', ${orders.paidAt} AT TIME ZONE ${tzLit}), 'YYYY-MM-DD')`,
       count: sql<number>`count(*)::int`,
       total: sql<number>`coalesce(sum(${orders.totalCents}), 0)::int`,
       avg: sql<number>`coalesce(avg(${orders.totalCents}), 0)::int`,
@@ -36,11 +38,12 @@ export async function GET(req: Request) {
     .where(and(
       eq(orders.tenantId, bundle.tenant.id),
       eq(orders.isTest, false),
+      sql`${orders.status} != 'canceled'`,
       isNotNull(orders.paidAt),
       gte(orders.paidAt, since),
     ))
-    .groupBy(sql`date_trunc('day', ${orders.paidAt})`)
-    .orderBy(sql`date_trunc('day', ${orders.paidAt}) desc`);
+    .groupBy(sql`date_trunc('day', ${orders.paidAt} AT TIME ZONE ${tzLit})`)
+    .orderBy(sql`date_trunc('day', ${orders.paidAt} AT TIME ZONE ${tzLit}) desc`);
 
   const header = ["day", "orders_count", "total_cents", "avg_ticket_cents"] as const;
   const body = rows.map((r) => [

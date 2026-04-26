@@ -25,10 +25,15 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const period = parsePeriodWithDefault(url.searchParams.get("period"));
 
+  // Fix Mario 2026-04-26: TZ tenant para agrupados + excluir canceled.
+  const tenantTz = bundle.tenant.timezone || "Atlantic/Canary";
+  const tzLit = sql.raw(`'${tenantTz.replace(/'/g, "")}'`);
+
   // Conds compartidas. Para shift validamos ownership primero.
   const baseConds = [
     eq(orders.tenantId, bundle.tenant.id),
     eq(orders.isTest, false),
+    sql`${orders.status} != 'canceled'`,
     isNotNull(orders.paidAt),
   ];
 
@@ -76,14 +81,14 @@ export async function GET(req: Request) {
     // byDay queda vacío — el frontend pinta empty state.
     const byDay = await db
       .select({
-        day: sql<string>`to_char(date_trunc('day', ${orders.paidAt}), 'YYYY-MM-DD')`,
+        day: sql<string>`to_char(date_trunc('day', ${orders.paidAt} AT TIME ZONE ${tzLit}), 'YYYY-MM-DD')`,
         tipCents: sql<number>`coalesce(sum(${orders.tipCents}), 0)::int`,
         count: sql<number>`count(*)::int`,
       })
       .from(orders)
       .where(and(...baseConds, gt(orders.tipCents, 0)))
-      .groupBy(sql`date_trunc('day', ${orders.paidAt})`)
-      .orderBy(sql`date_trunc('day', ${orders.paidAt}) desc`);
+      .groupBy(sql`date_trunc('day', ${orders.paidAt} AT TIME ZONE ${tzLit})`)
+      .orderBy(sql`date_trunc('day', ${orders.paidAt} AT TIME ZONE ${tzLit}) desc`);
 
     return NextResponse.json({
       period: period.kind,

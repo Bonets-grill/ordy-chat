@@ -33,9 +33,15 @@ export default async function PropinasPage({
   const period = readPeriodParam(sp.period);
   const shiftId = sp.shift && /^[0-9a-f-]{36}$/i.test(sp.shift) ? sp.shift : null;
 
+  // Fix Mario 2026-04-26: TZ tenant para "hoy" + agrupados por día + excluir
+  // canceled. Antes startOfDay usaba server UTC → desplazaba el día 1-2h.
+  const tenantTz = bundle.tenant.timezone || "Atlantic/Canary";
+  const tzLit = sql.raw(`'${tenantTz.replace(/'/g, "")}'`);
+
   const baseConds = [
     eq(orders.tenantId, bundle.tenant.id),
     eq(orders.isTest, false),
+    sql`${orders.status} != 'canceled'`,
     isNotNull(orders.paidAt),
   ];
 
@@ -56,15 +62,18 @@ export default async function PropinasPage({
     shiftMeta = s;
     baseConds.push(eq(orders.shiftId, shiftId));
   } else {
-    since = (() => {
-      if (period === "today") {
-        const now = new Date();
-        return new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      }
-      if (period === "7d") return new Date(Date.now() - 7 * 86_400_000);
-      return new Date(Date.now() - 30 * 86_400_000);
-    })();
-    baseConds.push(gte(orders.paidAt, since));
+    if (period === "today") {
+      // Para "today" el bound es start_of_day en TZ tenant, no JS local.
+      // since queda como aproximación informativa (1d antes) — el filtro
+      // SQL real lo añadimos abajo con AT TIME ZONE.
+      since = new Date(Date.now() - 86_400_000);
+      baseConds.push(sql`${orders.paidAt} >= (date_trunc('day', NOW() AT TIME ZONE ${tzLit}) AT TIME ZONE ${tzLit})`);
+    } else {
+      since = period === "7d"
+        ? new Date(Date.now() - 7 * 86_400_000)
+        : new Date(Date.now() - 30 * 86_400_000);
+      baseConds.push(gte(orders.paidAt, since));
+    }
   }
 
   const [totalRow] = await db
@@ -87,14 +96,14 @@ export default async function PropinasPage({
     ? []
     : await db
         .select({
-          day: sql<string>`to_char(date_trunc('day', ${orders.paidAt}), 'YYYY-MM-DD')`,
+          day: sql<string>`to_char(date_trunc('day', ${orders.paidAt} AT TIME ZONE ${tzLit}), 'YYYY-MM-DD')`,
           tipCents: sql<number>`coalesce(sum(${orders.tipCents}), 0)::int`,
           count: sql<number>`count(*)::int`,
         })
         .from(orders)
         .where(and(...baseConds, gt(orders.tipCents, 0)))
-        .groupBy(sql`date_trunc('day', ${orders.paidAt})`)
-        .orderBy(sql`date_trunc('day', ${orders.paidAt}) desc`);
+        .groupBy(sql`date_trunc('day', ${orders.paidAt} AT TIME ZONE ${tzLit})`)
+        .orderBy(sql`date_trunc('day', ${orders.paidAt} AT TIME ZONE ${tzLit}) desc`);
 
   return (
     <AppShell

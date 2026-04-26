@@ -15,7 +15,9 @@
     { "path": "/api/cron/verifactu-retry", "schedule": "0 * * * *" },
     { "path": "/api/cron/learning", "schedule": "0 3 * * *" },
     { "path": "/api/cron/sessions-cleanup", "schedule": "*/5 * * * *" },
-    { "path": "/api/cron/daily-sales-report", "schedule": "55 22 * * *" }
+    { "path": "/api/cron/daily-sales-report", "schedule": "55 22 * * *" },
+    { "path": "/api/cron/appointments-reminder", "schedule": "*/15 * * * *" },
+    { "path": "/api/cron/validator-regression", "schedule": "0 6 * * *" }
   ],
   "headers": [
     {

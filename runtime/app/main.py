@@ -17,6 +17,7 @@ import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -306,7 +307,7 @@ async def onboarding_scrape_endpoint(request: Request):
 # onboarding_auto y autopatch_retry son triggers sistema, sin limit.
 # ────────────────────────────────────────────────────────────
 
-_VALIDATOR_TRIGGERS = {"onboarding_auto", "admin_manual", "autopatch_retry"}
+_VALIDATOR_TRIGGERS = {"onboarding_auto", "admin_manual", "autopatch_retry", "cron_regression"}
 
 
 @app.post("/internal/learning/run")
@@ -610,6 +611,88 @@ async def internal_orders_notify_rejection(request: Request):
     msg = fmt_rechazo_kitchen(business_name, reason_key, detail if isinstance(detail, str) and detail.strip() else None)
     sent = await enviar_a_cliente(tenant_id, customer_phone, msg)
     return {"ok": True, "sent": sent}
+
+
+@app.post("/internal/appointments/remind")
+async def internal_appointments_remind(request: Request):
+    """Cron handler — recordatorio T-2h para reservas confirmadas.
+    Llamado por /api/cron/appointments-reminder cada 15 min.
+
+    Lógica:
+      1. Lee appointments con starts_at en ventana [now+1h45m, now+2h15m]
+         y reminder_sent_at IS NULL y status='confirmed' y is_test=false.
+      2. Para cada uno: envía WA al customer_phone con plantilla amistosa.
+      3. UPDATE reminder_sent_at = NOW() (idempotency: no re-mandamos).
+      4. Best-effort por tenant — si Whapi/Evolution falla, no rompe el cron.
+
+    No body. Devuelve {sent: N, skipped: N, failed: N}.
+    """
+    _check_internal_secret(request)
+    pool = await inicializar_pool()
+    sent = 0
+    skipped = 0
+    failed = 0
+    async with pool.acquire() as conn:
+        # Ventana de ±15 min sobre las 2h. Coincide con cron schedule (cada 15min)
+        # para que cada reserva caiga en exactamente 1 ejecución.
+        # Filtramos también por tenant activo + no pausado (no enviar a tenants
+        # cancelados o pausados manualmente). agent_configs lleva paused.
+        rows = await conn.fetch(
+            """
+            SELECT a.id, a.tenant_id, a.customer_phone, a.customer_name,
+                   a.starts_at, a.duration_min, a.title,
+                   t.name AS tenant_name, t.timezone, t.subscription_status,
+                   COALESCE(c.paused, false) AS paused
+              FROM appointments a
+              JOIN tenants t ON t.id = a.tenant_id
+              LEFT JOIN agent_configs c ON c.tenant_id = t.id
+             WHERE a.reminder_sent_at IS NULL
+               AND a.status = 'confirmed'
+               AND a.is_test = false
+               AND a.starts_at BETWEEN NOW() + INTERVAL '105 minutes'
+                                   AND NOW() + INTERVAL '135 minutes'
+             LIMIT 200
+            """
+        )
+        from app.messaging import enviar_a_cliente
+        for r in rows:
+            phone = (r["customer_phone"] or "").strip()
+            if not phone:
+                skipped += 1
+                continue
+            if r["paused"] or r["subscription_status"] not in ("active", "trialing"):
+                skipped += 1
+                continue
+            try:
+                tz = ZoneInfo(r["timezone"] or "Atlantic/Canary")
+                local = r["starts_at"].astimezone(tz)
+                hora = local.strftime("%H:%M")
+                fecha = local.strftime("%d/%m")
+                nombre = (r["customer_name"] or "").strip()
+                saludo = f"Hola {nombre}" if nombre else "Hola"
+                msg = (
+                    f"{saludo} 👋 Te recordamos tu reserva en {r['tenant_name']}: "
+                    f"hoy {hora} ({fecha})."
+                    f"\n\nSi necesitas cambiar algo, respóndenos por aquí 🙌"
+                )
+                ok = await enviar_a_cliente(r["tenant_id"], phone, msg)
+                if ok:
+                    sent += 1
+                    await conn.execute(
+                        "UPDATE appointments SET reminder_sent_at=NOW() WHERE id=$1",
+                        r["id"],
+                    )
+                else:
+                    failed += 1
+            except Exception as e:
+                logger.warning(
+                    "fallo recordatorio reserva",
+                    extra={"event": "appt_reminder_fail", "appt_id": str(r["id"]),
+                           "tenant_id": str(r["tenant_id"]), "error": str(e)[:200]},
+                )
+                failed += 1
+    return {"ok": True, "sent": sent, "skipped": skipped, "failed": failed,
+            "candidates": len(rows)}
 
 
 @app.post("/internal/menu/scrape-url")
