@@ -103,11 +103,15 @@ export async function GET(req: Request) {
 
   // Smoke: contamos cuántos shifts abiertos quedan tras esta ejecución
   // (útil para monitoring del cron en logs Vercel).
-  const [{ openCount }] = (await db
+  // Bug fix 2026-04-26: la versión anterior usaba `eq(shifts.tenantId, sql\`${shifts.tenantId}\`)`
+  // que comparaba la columna consigo misma (siempre true) + un `.concat()` defensivo
+  // que rompía el destructuring en runtime con "TypeError: n is not iterable".
+  // Versión simple — un solo COUNT, sin self-join.
+  const countRows = await db
     .select({ openCount: sql<number>`count(*)::int` })
     .from(shifts)
-    .where(and(eq(shifts.tenantId, sql`${shifts.tenantId}`), isNull(shifts.closedAt))))
-    .concat([{ openCount: 0 }]);
+    .where(isNull(shifts.closedAt));
+  const openCount = countRows[0]?.openCount ?? 0;
 
   return NextResponse.json({
     ok: true,
