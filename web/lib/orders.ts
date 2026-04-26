@@ -87,6 +87,11 @@ export type CreateOrderInput = {
   /** Metadata libre persistida en orders.metadata (jsonb). El comandero usa
    *  { created_by_waiter_id: userId } para reportes por mesero. */
   metadata?: Record<string, unknown>;
+  /** true = pedido creado por staff (comandero/POS interno). El staff sabe
+   *  que el local está abierto físicamente — saltamos guard horario y
+   *  guard idempotency (un mesero PUEDE legítimamente crear 2 pedidos
+   *  iguales para 2 mesas distintas). */
+  bypassGuards?: boolean;
 };
 
 export type OrderTotals = {
@@ -124,10 +129,12 @@ export async function createOrder(input: CreateOrderInput) {
 
   // GUARD HORARIO (bug Bonets 2026-04-26): el bot creó pedido a las 23:06
   // sábado cuando el restaurante cerraba 23:00. Ahora server-side rechaza
-  // pedidos fuera del horario declarado en agent_configs.schedule. Los
-  // tests (is_test=true) sí pueden crear fuera de horario para validar
-  // playground sin bloquear desarrollo.
-  if (!(input.isTest ?? false)) {
+  // pedidos fuera del horario declarado en agent_configs.schedule.
+  //
+  // EXCEPCIONES (no aplican guard):
+  //   - is_test (playground sandbox)
+  //   - bypassGuards (comandero/POS interno — el staff sabe si está abierto)
+  if (!(input.isTest ?? false) && !(input.bypassGuards ?? false)) {
     const [cfg] = await db
       .select({ schedule: agentConfigs.schedule })
       .from(agentConfigs)
@@ -143,8 +150,9 @@ export async function createOrder(input: CreateOrderInput) {
   // 2x en la misma sesión de Bradly → 2 pedidos idénticos en la DB. Si en
   // los últimos 60s ya existe un pedido del mismo customer_phone con el
   // mismo total_cents calculado, lo devolvemos en vez de crear duplicado.
-  // Solo aplica con customerPhone (no para test playground sin phone real).
-  if (input.customerPhone && !(input.isTest ?? false)) {
+  // Solo aplica con customerPhone (no para test playground sin phone real)
+  // y NO para staff interno (comandero puede crear 2 pedidos = 2 mesas).
+  if (input.customerPhone && !(input.isTest ?? false) && !(input.bypassGuards ?? false)) {
     const sinceTs = new Date(Date.now() - 60_000);
     const recents = await db
       .select({

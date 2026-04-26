@@ -118,15 +118,34 @@ export async function POST(req: NextRequest) {
       ? { created_by_employee_id: actor.employeeId, employee_name: actor.name }
       : { created_by_waiter_id: actor.userId };
 
-  const order = await createOrder({
-    tenantId: actor.tenantId,
-    orderType: "dine_in",
-    tableNumber: parsed.data.tableNumber,
-    notes: parsed.data.notes,
-    items: lines,
-    isTest: false,
-    metadata: orderMetadata,
-  });
+  let order;
+  try {
+    order = await createOrder({
+      tenantId: actor.tenantId,
+      orderType: "dine_in",
+      tableNumber: parsed.data.tableNumber,
+      notes: parsed.data.notes,
+      items: lines,
+      isTest: false,
+      metadata: orderMetadata,
+      // Comandero = staff interno físicamente en el local. Salta guards
+      // de horario público y de idempotency (un mesero PUEDE crear 2
+      // pedidos iguales para mesas distintas en <60s).
+      bypassGuards: true,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // Mensaje legible al frontend en lugar de Error 500 críptico.
+    if (msg === "session_in_billing") {
+      return NextResponse.json({ error: "session_in_billing", message: "La cuenta ya se pidió. No puedes añadir más items." }, { status: 409 });
+    }
+    if (msg.startsWith("out_of_stock")) {
+      return NextResponse.json({ error: "out_of_stock", message: msg }, { status: 409 });
+    }
+    // Defensa: cualquier error → 500 con mensaje legible (no Error 500 mudo).
+    console.error("[comandero/orders] createOrder fail", err);
+    return NextResponse.json({ error: "create_order_failed", message: msg.slice(0, 200) }, { status: 500 });
+  }
 
   return NextResponse.json({
     orderId: order.id,
