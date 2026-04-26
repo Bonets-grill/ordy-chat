@@ -24,7 +24,7 @@ export async function stripeClient(): Promise<Stripe> {
   }
   if (!secret) throw new Error("STRIPE_SECRET_KEY no configurada");
 
-  cached = new Stripe(secret, { apiVersion: "2025-02-24.acacia" });
+  cached = new Stripe(secret, { apiVersion: "2026-04-22.dahlia" });
   return cached;
 }
 

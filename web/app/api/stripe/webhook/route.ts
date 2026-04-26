@@ -210,7 +210,14 @@ export async function POST(req: Request) {
 
 async function handleInvoicePaid(inv: Stripe.Invoice) {
   // Solo invoices de suscripción (no pagos one-off del mesero).
-  const subId = typeof inv.subscription === "string" ? inv.subscription : inv.subscription?.id;
+  // Stripe API 2026-04-22 (v22): inv.subscription movido a
+  // inv.parent.subscription_details.subscription (solo si parent.type
+  // === 'subscription_details').
+  const subRef =
+    inv.parent?.type === "subscription_details"
+      ? inv.parent.subscription_details?.subscription ?? null
+      : null;
+  const subId = typeof subRef === "string" ? subRef : subRef?.id ?? null;
   if (!subId) return;
 
   // Resolver tenant por subscription
@@ -247,7 +254,27 @@ async function handleInvoicePaid(inv: Stripe.Invoice) {
     Date.UTC(paidDate.getUTCFullYear(), paidDate.getUTCMonth(), 1),
   );
 
-  const chargeId = typeof inv.charge === "string" ? inv.charge : inv.charge?.id ?? null;
+  // Stripe API 2026-04-22 (v22): inv.charge fue removido. El charge ahora vive
+  // en InvoicePayment.payment.charge. Listamos el primer InvoicePayment del
+  // invoice para extraerlo (necesario para matchear refunds en
+  // handleChargeRefunded por stripeChargeId).
+  let chargeId: string | null = null;
+  try {
+    const stripeForLookup = await stripeClient();
+    const payments = await stripeForLookup.invoicePayments.list({
+      invoice: inv.id,
+      limit: 1,
+    });
+    const chargeRef = payments.data[0]?.payment.charge;
+    chargeId = typeof chargeRef === "string" ? chargeRef : chargeRef?.id ?? null;
+  } catch (e) {
+    // Si la lookup falla, registramos la commission con stripeChargeId=null.
+    // OJO: handleChargeRefunded matchea SOLO por stripeChargeId, así que un
+    // refund futuro NO se reversaría automáticamente — requeriría
+    // reconciliación manual. Stripe reintenta webhooks hasta 3 días, así que
+    // logueamos y seguimos en lugar de 500'ear.
+    console.error(`[stripe] invoicePayments.list failed for ${inv.id}: ${(e as Error).message}`);
+  }
   const customerId = typeof inv.customer === "string" ? inv.customer : inv.customer?.id ?? "";
 
   await db

@@ -72,15 +72,19 @@ export async function readPostTransferFx(args: {
 
   // El destination_payment es un Charge en la connected account; su
   // balance_transaction da el exchange_rate aplicado.
-  const charge = await stripe.charges.retrieve(destinationPaymentId, {
-    stripeAccount: connectedAccountId,
-  });
+  // Stripe SDK v22 eliminó el overload retrieve(id, options). Hay que pasar
+  // params (undefined) y options (con stripeAccount) como argumentos separados.
+  const charge = await stripe.charges.retrieve(
+    destinationPaymentId,
+    undefined,
+    { stripeAccount: connectedAccountId },
+  );
   const btId =
     typeof charge.balance_transaction === "string"
       ? charge.balance_transaction
       : charge.balance_transaction?.id;
   if (!btId) return null;
-  const bt = await stripe.balanceTransactions.retrieve(btId, {
+  const bt = await stripe.balanceTransactions.retrieve(btId, undefined, {
     stripeAccount: connectedAccountId,
   });
   return {
