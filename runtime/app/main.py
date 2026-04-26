@@ -696,6 +696,178 @@ async def internal_appointments_remind(request: Request):
             "candidates": len(rows)}
 
 
+@app.post("/internal/surveys/dispatch")
+async def internal_surveys_dispatch(request: Request):
+    """Cron handler — encuesta NPS post-pedido (mig 057).
+    Llamado por /api/cron/post-order-surveys cada 15 min.
+
+    Lógica:
+      1. Lee post_order_surveys con status='pending' AND scheduled_for <= NOW().
+      2. Por cada survey: chequea defensa-en-profundidad ANTES de enviar:
+         - Tenant subscription activa.
+         - Agent no pausado globalmente.
+         - Conversación no pausada (paused_conversations).
+         - No handoff_request reciente activo (último 1h).
+         - Hora local del tenant entre 14:00-20:00.
+      3. Si pasa filtros: detecta idioma, envía mensaje, marca status='sent'.
+      4. Si no pasa: marca status='skipped_*' con motivo. NO reintenta.
+      5. Best-effort: si Whapi/Evolution falla, status queda 'pending' para
+         próximo tick (Stripe-style retry implícito).
+
+    No body. Devuelve {sent, skipped, failed, candidates}.
+    """
+    from app.lang_detect import detectar_idioma_cliente
+    from app.survey_templates import build_survey_message
+
+    _check_internal_secret(request)
+    pool = await inicializar_pool()
+    sent = 0
+    skipped = 0
+    failed = 0
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT s.id, s.tenant_id, s.customer_phone, s.order_id,
+                   o.customer_name,
+                   t.name AS tenant_name, t.timezone, t.subscription_status,
+                   COALESCE(c.paused, false) AS agent_paused
+              FROM post_order_surveys s
+              JOIN orders o ON o.id = s.order_id
+              JOIN tenants t ON t.id = s.tenant_id
+              LEFT JOIN agent_configs c ON c.tenant_id = t.id
+             WHERE s.status = 'pending'
+               AND s.scheduled_for <= NOW()
+               AND s.is_test = false
+             ORDER BY s.scheduled_for ASC
+             LIMIT 200
+            """
+        )
+
+        for r in rows:
+            survey_id = r["id"]
+            tenant_id = r["tenant_id"]
+            phone = (r["customer_phone"] or "").strip()
+
+            # Filtros defensa-en-profundidad.
+            if r["subscription_status"] not in ("active", "trialing"):
+                await conn.execute(
+                    "UPDATE post_order_surveys SET status='skipped_subscription_inactive' WHERE id=$1",
+                    survey_id,
+                )
+                skipped += 1
+                continue
+
+            if r["agent_paused"]:
+                await conn.execute(
+                    "UPDATE post_order_surveys SET status='skipped_paused' WHERE id=$1",
+                    survey_id,
+                )
+                skipped += 1
+                continue
+
+            # Conversación pausada manualmente (admin tomó el control).
+            paused = await conn.fetchval(
+                """
+                SELECT 1 FROM paused_conversations
+                 WHERE tenant_id=$1 AND customer_phone=$2
+                   AND (pause_until IS NULL OR pause_until > NOW())
+                 LIMIT 1
+                """,
+                tenant_id, phone,
+            )
+            if paused:
+                await conn.execute(
+                    "UPDATE post_order_surveys SET status='skipped_handoff' WHERE id=$1",
+                    survey_id,
+                )
+                skipped += 1
+                continue
+
+            # Handoff request activo en última hora.
+            recent_handoff = await conn.fetchval(
+                """
+                SELECT 1 FROM handoff_requests
+                 WHERE tenant_id=$1 AND customer_phone=$2
+                   AND created_at > NOW() - INTERVAL '1 hour'
+                 LIMIT 1
+                """,
+                tenant_id, phone,
+            )
+            if recent_handoff:
+                await conn.execute(
+                    "UPDATE post_order_surveys SET status='skipped_handoff' WHERE id=$1",
+                    survey_id,
+                )
+                skipped += 1
+                continue
+
+            # Ventana horaria local del tenant: 14:00-20:00.
+            try:
+                tz = ZoneInfo(r["timezone"] or "Atlantic/Canary")
+            except Exception:
+                tz = ZoneInfo("Atlantic/Canary")
+            from datetime import datetime, timezone
+            local_now = datetime.now(timezone.utc).astimezone(tz)
+            if not (14 <= local_now.hour < 20):
+                # No marcamos skipped — la próxima ejecución del cron lo verá
+                # otra vez. Si la ventana se cierra para siempre (ej. 23h pasadas),
+                # la encuesta queda pending hasta el día siguiente 14h.
+                continue
+
+            # Detectar idioma del cliente desde su historial reciente.
+            user_msgs = await conn.fetch(
+                """
+                SELECT m.content
+                  FROM messages m
+                  JOIN conversations c ON c.id = m.conversation_id
+                 WHERE c.tenant_id=$1 AND c.phone=$2 AND m.role='user'
+                 ORDER BY m.created_at DESC
+                 LIMIT 6
+                """,
+                tenant_id, phone,
+            )
+            historial_format = [{"role": "user", "content": m["content"]} for m in user_msgs]
+            lang = detectar_idioma_cliente(historial_format, "")
+
+            try:
+                msg = build_survey_message(
+                    lang, r["tenant_name"], r["customer_name"]
+                )
+                ok = await enviar_a_cliente(tenant_id, phone, msg)
+                if ok:
+                    await conn.execute(
+                        """
+                        UPDATE post_order_surveys
+                           SET status='sent', sent_at=NOW(), client_lang=$2
+                         WHERE id=$1
+                        """,
+                        survey_id, lang,
+                    )
+                    sent += 1
+                else:
+                    await conn.execute(
+                        "UPDATE post_order_surveys SET status='skipped_no_creds' WHERE id=$1",
+                        survey_id,
+                    )
+                    skipped += 1
+            except Exception as e:
+                # Falla transitoria — dejamos pending para el próximo tick.
+                logger.warning(
+                    "fallo envío encuesta NPS",
+                    extra={
+                        "event": "survey_dispatch_fail",
+                        "survey_id": str(survey_id),
+                        "tenant_id": str(tenant_id),
+                        "error": str(e)[:200],
+                    },
+                )
+                failed += 1
+
+    return {"ok": True, "sent": sent, "skipped": skipped, "failed": failed,
+            "candidates": len(rows)}
+
+
 @app.post("/internal/menu/scrape-url")
 async def internal_menu_scrape_url(request: Request):
     """Llamado por web /api/tenant/menu/import-url cuando el tenant pega una URL
@@ -1265,6 +1437,35 @@ async def _procesar_mensaje(tenant: TenantContext, provider: str, msg: MensajeEn
                 "admin flow tomó el mensaje",
                 extra={**log_extra, "event": "admin_handled"},
             )
+            return
+
+        # Mig 057: parser de respuestas a la encuesta NPS post-pedido.
+        # Si el cliente acaba de recibir una encuesta y responde con un
+        # dígito 1-5 (o un comentario tras el rating), capturamos sin
+        # invocar al brain — ahorra tokens y evita que el LLM divague.
+        try:
+            from app.survey_response_parser import intentar_capturar_respuesta_encuesta
+            captured = await intentar_capturar_respuesta_encuesta(
+                tenant.id, msg.telefono, texto_efectivo, historial,
+            )
+        except Exception:
+            logger.exception(
+                "survey response parser raised — caemos al flow normal",
+                extra={**log_extra, "event": "survey_parser_error"},
+            )
+            captured = False
+        if captured:
+            # Persistir el mensaje del cliente igualmente para historial.
+            try:
+                await guardar_intercambio(
+                    tenant.id, msg.telefono, msg.texto, "[encuesta NPS — capturada sin LLM]",
+                    mensaje_id=msg.mensaje_id, tokens_in=0, tokens_out=0,
+                )
+            except Exception:
+                logger.exception(
+                    "no se pudo guardar mensaje tras captura de encuesta",
+                    extra={**log_extra, "event": "survey_save_error"},
+                )
             return
 
         # ── Handoff check (C4 tanda 3c) ───────────────────────────────

@@ -1097,3 +1097,29 @@ export type NewStripeTerminalReader = typeof stripeTerminalReaders.$inferInsert;
 export type PosPayment = typeof posPayments.$inferSelect;
 export type NewPosPayment = typeof posPayments.$inferInsert;
 export type NewShift = typeof shifts.$inferInsert;
+
+// ── Encuestas NPS post-pedido (Mig 057) ────────────────────────────
+// El trigger SQL `enqueue_post_order_survey` inserta automáticamente una
+// fila aquí cuando orders.paid_at se setea por primera vez (con todos los
+// filtros de elegibilidad). El cron /api/cron/post-order-surveys despacha
+// al runtime que envía mensaje WA 24h después dentro de la ventana
+// 14:00-20:00 hora local del tenant. UNIQUE(order_id) garantiza 1 survey
+// por pedido. CHECK constraints en DB validan status y rating 1-5.
+export const postOrderSurveys = pgTable("post_order_surveys", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  orderId: uuid("order_id").notNull().unique().references(() => orders.id, { onDelete: "cascade" }),
+  customerPhone: text("customer_phone").notNull(),
+  status: text("status").notNull().default("pending"),
+  rating: integer("rating"),
+  feedbackText: text("feedback_text"),
+  clientLang: text("client_lang"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  scheduledFor: timestamp("scheduled_for", { withTimezone: true }).notNull(),
+  sentAt: timestamp("sent_at", { withTimezone: true }),
+  answeredAt: timestamp("answered_at", { withTimezone: true }),
+  isTest: boolean("is_test").notNull().default(false),
+});
+
+export type PostOrderSurvey = typeof postOrderSurveys.$inferSelect;
+export type NewPostOrderSurvey = typeof postOrderSurveys.$inferInsert;

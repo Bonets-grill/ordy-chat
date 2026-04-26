@@ -17,6 +17,7 @@
     { "path": "/api/cron/sessions-cleanup", "schedule": "*/5 * * * *" },
     { "path": "/api/cron/daily-sales-report", "schedule": "55 22 * * *" },
     { "path": "/api/cron/appointments-reminder", "schedule": "*/15 * * * *" },
+    { "path": "/api/cron/post-order-surveys", "schedule": "*/15 * * * *" },
     { "path": "/api/cron/validator-regression", "schedule": "0 6 * * *" },
     { "path": "/api/cron/auto-open-shifts", "schedule": "*/5 * * * *" }
   ],
