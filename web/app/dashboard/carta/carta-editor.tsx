@@ -5,6 +5,7 @@
 
 import * as React from "react";
 import { ModifiersEditor } from "./modifiers-editor";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 
 type MenuItem = {
   id: string;
@@ -55,6 +56,7 @@ function parsePriceInput(raw: string): number | null {
 }
 
 export function CartaEditor({ initial }: { initial: MenuItem[] }) {
+  const confirm = useConfirm();
   const [items, setItems] = React.useState<MenuItem[]>(initial);
   const [importUrl, setImportUrl] = React.useState("");
   const [importBusy, setImportBusy] = React.useState(false);
@@ -83,9 +85,13 @@ export function CartaEditor({ initial }: { initial: MenuItem[] }) {
     try {
       const replaceExisting =
         items.length === 0 ||
-        confirm(
-          `Tienes ${items.length} items en la carta. ¿Reemplazarlos todos por los importados? (Cancelar = añadir al final)`,
-        );
+        (await confirm({
+          title: `¿Reemplazar la carta?`,
+          description: `Tienes ${items.length} items en la carta. Confirmar = se reemplazan por los importados. Cancelar = se añaden al final.`,
+          confirmLabel: "Reemplazar",
+          cancelLabel: "Añadir al final",
+          variant: "danger",
+        }));
       const res = await fetch("/api/tenant/menu/import-url", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -199,7 +205,13 @@ export function CartaEditor({ initial }: { initial: MenuItem[] }) {
   }, [toast]);
 
   async function deleteItem(id: string) {
-    if (!confirm("¿Borrar este item?")) return;
+    const ok = await confirm({
+      title: "¿Borrar este item?",
+      description: "Se eliminará de la carta. Acción irreversible.",
+      confirmLabel: "Borrar",
+      variant: "danger",
+    });
+    if (!ok) return;
     setRowBusy(id, "busy");
     // eslint-disable-next-line no-console
     console.log("[carta] delete", id);

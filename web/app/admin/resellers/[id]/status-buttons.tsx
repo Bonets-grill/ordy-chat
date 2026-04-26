@@ -3,8 +3,16 @@
 import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { useAlert, useConfirm } from "@/components/ui/confirm-dialog";
 
 type Status = "pending" | "active" | "paused" | "terminated";
+
+const STATUS_LABEL: Record<Status, string> = {
+  pending: "pendiente",
+  active: "activo",
+  paused: "pausado",
+  terminated: "terminado",
+};
 
 export function StatusButtons({
   resellerId,
@@ -14,10 +22,21 @@ export function StatusButtons({
   currentStatus: string;
 }) {
   const router = useRouter();
+  const confirm = useConfirm();
+  const alert = useAlert();
   const [isPending, startTransition] = useTransition();
 
-  const setStatus = (newStatus: Status) => {
-    if (!confirm(`Cambiar estado a "${newStatus}"?`)) return;
+  const setStatus = async (newStatus: Status) => {
+    const ok = await confirm({
+      title: `¿Cambiar estado a "${STATUS_LABEL[newStatus]}"?`,
+      description:
+        newStatus === "terminated"
+          ? "Acción definitiva. El reseller dejará de poder onboardar nuevos tenants."
+          : `El reseller pasará a estado "${STATUS_LABEL[newStatus]}".`,
+      confirmLabel: "Cambiar",
+      variant: newStatus === "terminated" || newStatus === "paused" ? "danger" : "default",
+    });
+    if (!ok) return;
     startTransition(async () => {
       const res = await fetch(`/api/admin/resellers/${resellerId}/status`, {
         method: "PATCH",
@@ -28,7 +47,10 @@ export function StatusButtons({
         router.refresh();
       } else {
         const body = await res.json().catch(() => ({}));
-        alert(`Error: ${body.error ?? res.statusText}`);
+        await alert({
+          title: "No se pudo cambiar el estado",
+          description: body.error ?? res.statusText,
+        });
       }
     });
   };

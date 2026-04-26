@@ -6,6 +6,7 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import type { ValidatorRunDetail } from "@/lib/admin/validator-queries";
 import {
   approveRunAction,
@@ -27,6 +28,7 @@ export function RunActionsHeader({
   effectiveMode: "auto" | "manual" | "skip";
 }) {
   const router = useRouter();
+  const confirm = useConfirm();
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -84,7 +86,12 @@ export function RunActionsHeader({
           disabled={pending || !canTriggerAutopatch}
           onClick={() =>
             start(async () => {
-              if (!window.confirm("¿Disparar autopatch manual?")) return;
+              const ok = await confirm({
+                title: "¿Disparar autopatch manual?",
+                description: "El validador propondrá un parche al system_prompt basado en los fallos. Podrás revisarlo antes de aplicar.",
+                confirmLabel: "Disparar",
+              });
+              if (!ok) return;
               const r = await triggerManualAutopatchAction(run.id);
               onResult("triggerAutopatch", r);
             })
@@ -98,7 +105,13 @@ export function RunActionsHeader({
           disabled={pending || !canRollback}
           onClick={() =>
             start(async () => {
-              if (!window.confirm("¿Revertir al system_prompt anterior al autopatch?")) return;
+              const ok = await confirm({
+                title: "¿Revertir al system_prompt anterior?",
+                description: "Se restaurará el prompt previo al autopatch. El histórico queda en audit_log.",
+                confirmLabel: "Revertir",
+                variant: "danger",
+              });
+              if (!ok) return;
               const r = await rollbackAutopatchAction(run.id);
               onResult("rollback", r);
             })
@@ -112,7 +125,12 @@ export function RunActionsHeader({
           disabled={pending}
           onClick={() =>
             start(async () => {
-              if (!window.confirm("¿Unpausar agente de este tenant?")) return;
+              const ok = await confirm({
+                title: "¿Reactivar agente?",
+                description: "El agente volverá a responder mensajes de WhatsApp para este tenant.",
+                confirmLabel: "Reactivar",
+              });
+              if (!ok) return;
               const r = await unpauseAgentAction(run.tenantId);
               onResult("unpauseAgent", r);
             })

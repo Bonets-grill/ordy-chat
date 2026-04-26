@@ -8,6 +8,7 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
   setValidationModeAction,
   triggerManualRunAction,
@@ -37,6 +38,7 @@ export function ValidatorCard({
   paused: boolean;
 }) {
   const router = useRouter();
+  const confirm = useConfirm();
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -106,7 +108,12 @@ export function ValidatorCard({
             disabled={pending}
             onClick={() =>
               start(async () => {
-                if (!window.confirm("¿Disparar run manual del validador?")) return;
+                const ok = await confirm({
+                  title: "¿Disparar run manual del validador?",
+                  description: "Se evaluarán todas las seeds del tenant contra el agente actual. Tarda 1-3 minutos.",
+                  confirmLabel: "Disparar",
+                });
+                if (!ok) return;
                 const r = await triggerManualRunAction(tenantId);
                 notify("triggerManualRun", r.ok, !r.ok ? r.error : undefined);
               })
@@ -121,7 +128,12 @@ export function ValidatorCard({
               disabled={pending}
               onClick={() =>
                 start(async () => {
-                  if (!window.confirm("¿Unpausar agente de este tenant?")) return;
+                  const ok = await confirm({
+                    title: "¿Reactivar agente?",
+                    description: "El agente volverá a responder mensajes de WhatsApp para este tenant.",
+                    confirmLabel: "Reactivar",
+                  });
+                  if (!ok) return;
                   const r = await unpauseAgentAction(tenantId);
                   notify("unpauseAgent", r.ok, !r.ok ? r.error : undefined);
                 })

@@ -4,6 +4,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 
 type ByMethod = {
   cashCents: number;
@@ -43,6 +44,7 @@ function parseEurosInput(raw: string): number | null {
 
 export function ShiftPanel() {
   const router = useRouter();
+  const confirm = useConfirm();
   const [data, setData] = React.useState<CurrentResp | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -94,7 +96,14 @@ export function ShiftPanel() {
       setError("Efectivo contado inválido");
       return;
     }
-    if (!window.confirm("¿Cerrar turno? Esta acción no se puede deshacer.")) return;
+    const ok = await confirm({
+      title: "¿Cerrar turno?",
+      description: "Esta acción no se puede deshacer. Se generará el cierre fiscal con el efectivo contado.",
+      confirmLabel: "Cerrar turno",
+      cancelLabel: "Cancelar",
+      variant: "danger",
+    });
+    if (!ok) return;
     setLoading(true); setError(null);
     try {
       const r = await fetch(`/api/shifts/${data.shift.id}/close`, {

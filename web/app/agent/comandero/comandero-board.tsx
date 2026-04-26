@@ -8,6 +8,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Check, CreditCard, LogOut, Minus, Plus, Search, ShoppingCart, Trash2, Utensils, X } from "lucide-react";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 
 type Modifier = { id: string; name: string; priceDeltaCents: number };
 type ModifierGroup = {
@@ -107,6 +108,7 @@ type ComanderoActor =
 
 export function ComanderoBoard({ actor }: { actor?: ComanderoActor }) {
   const router = useRouter();
+  const confirm = useConfirm();
   const [view, setView] = React.useState<View>("tables");
   const [tables, setTables] = React.useState<Table[]>([]);
   const [items, setItems] = React.useState<MenuItem[]>([]);
@@ -213,9 +215,15 @@ export function ComanderoBoard({ actor }: { actor?: ComanderoActor }) {
     setCart((prev) => prev.filter((_, i) => i !== idx));
   }
 
-  function clearCart() {
+  async function clearCart() {
     if (cart.length === 0) return;
-    if (confirm("¿Vaciar todo el carrito?")) setCart([]);
+    const ok = await confirm({
+      title: "¿Vaciar el carrito?",
+      description: "Se eliminarán todas las líneas pendientes de enviar.",
+      confirmLabel: "Vaciar",
+      variant: "danger",
+    });
+    if (ok) setCart([]);
   }
 
   const itemsById = React.useMemo(() => {

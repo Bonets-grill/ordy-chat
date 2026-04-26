@@ -8,6 +8,7 @@
 
 import { Bell, BellOff } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useAlert } from "@/components/ui/confirm-dialog";
 
 const STORAGE_KEY = "ordy-wa-notify-enabled";
 const SEEN_KEY = "ordy-wa-notify-last-seen";
@@ -48,6 +49,7 @@ function persistNotifiedIds(ids: Set<string>) {
 }
 
 export function NotificationsBell() {
+  const alert = useAlert();
   const [enabled, setEnabled] = useState(false);
   const [unread, setUnread] = useState(0);
   const lastSeenRef = useRef<string>(new Date().toISOString());
@@ -161,7 +163,10 @@ export function NotificationsBell() {
       const perm = await Notification.requestPermission();
       if (perm !== "granted") return;
     } else if (Notification.permission === "denied") {
-      alert("Las notificaciones están bloqueadas por el navegador. Cámbialo en los ajustes del sitio.");
+      await alert({
+        title: "Notificaciones bloqueadas",
+        description: "Tu navegador bloqueó las notificaciones. Cámbialo desde los ajustes del sitio.",
+      });
       return;
     }
     setEnabled(true);
