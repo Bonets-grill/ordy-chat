@@ -50,6 +50,43 @@ export async function POST(req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "not_found_or_already_closed" }, { status: 404 });
   }
 
+  // 2026-04-26 (Mario bug fix): NO permitir cerrar el turno con cuentas
+  // abiertas. Una cuenta "abierta" es un pedido del turno actual que aún no
+  // se cobró (paidAt IS NULL) y no fue cancelado. Si el dueño cierra con
+  // cuentas pendientes, el cuadre de caja quedaría incompleto y el cliente
+  // se va sin pagar. Forzamos cobro/cancelación previa.
+  const openOrders = await db
+    .select({
+      id: orders.id,
+      tableNumber: orders.tableNumber,
+      customerName: orders.customerName,
+      totalCents: orders.totalCents,
+    })
+    .from(orders)
+    .where(and(
+      eq(orders.shiftId, shift.id),
+      eq(orders.isTest, false),
+      isNull(orders.paidAt),
+      sql`${orders.status} != 'canceled'`,
+    ));
+
+  if (openOrders.length > 0) {
+    return NextResponse.json(
+      {
+        error: "open_orders_exist",
+        message: "No se puede cerrar el turno con cuentas abiertas. Cobra o cancela los pedidos pendientes primero.",
+        openCount: openOrders.length,
+        openOrders: openOrders.map((o) => ({
+          id: o.id,
+          tableNumber: o.tableNumber,
+          customerName: o.customerName,
+          totalCents: o.totalCents,
+        })),
+      },
+      { status: 409 },
+    );
+  }
+
   // Mig 039: breakdown por método. `paidCents` = cash + NULL (entran en
   // caja). `paidTotalCents` = TODO lo pagado (incluye card/transfer/other)
   // para el resumen general. El cuadre solo usa cash+NULL.

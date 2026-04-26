@@ -92,19 +92,13 @@ export async function GET(req: NextRequest) {
     GROUP BY t.id
   `)) as unknown as TenantDailyRow[];
 
-  // Auto-cerramos TODOS los turnos abiertos de esos tenants. Usamos un
-  // UPDATE masivo — el WHERE filtra por los tenants activos.
-  if (tenantsActive.length > 0) {
-    const tenantIds = tenantsActive.map((r) => r.tenantId);
-    await db.execute(sql`
-      UPDATE shifts
-      SET closed_at = now(),
-          auto_closed = true,
-          updated_at = now()
-      WHERE closed_at IS NULL
-        AND tenant_id = ANY(${tenantIds}::uuid[])
-    `);
-  }
+  // 2026-04-26 (Mario decisión): el auto-close de turnos al final del día
+  // se REMOVIÓ. Cierre de turno es manual (botón en /dashboard/turno) tras
+  // verificar que todas las cuentas están cobradas. Este cron solo emite
+  // el reporte de ventas; no toca shifts.closed_at.
+  // Si un tenant olvida cerrar día tras día, el reporte sigue agregando
+  // pedidos al mismo turno — eso es comportamiento esperado hasta que el
+  // dueño lo cierre manualmente.
 
   // Para cada tenant activo: líneas por turno + top items + breakdown cash/card.
   for (const row of tenantsActive) {

@@ -8,7 +8,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { orders, tenants } from "@/lib/db/schema";
-import { createOrder, DuplicateOrderError, OutOfHoursError } from "@/lib/orders";
+import { createOrder, DuplicateOrderError, NoOpenShiftError, OutOfHoursError } from "@/lib/orders";
 import { requireTenant } from "@/lib/tenant";
 
 export const runtime = "nodejs";
@@ -133,6 +133,18 @@ export async function POST(req: Request) {
       // el LLM ignoraba el system prompt. Server-side rechazo claro.
       return NextResponse.json(
         { error: "out_of_hours", schedule: err.schedule },
+        { status: 409 },
+      );
+    }
+    if (err instanceof NoOpenShiftError) {
+      // 2026-04-26 (Mario decisión): pedidos requieren turno POS abierto.
+      // El cron auto-open-shifts abre turnos cuando entra el horario; si
+      // llega un pedido fuera de horario o el cron no corrió aún, rechazo.
+      return NextResponse.json(
+        {
+          error: "no_open_shift",
+          message: "No hay turno POS abierto. El turno se abre automáticamente cuando entra el horario del negocio.",
+        },
         { status: 409 },
       );
     }

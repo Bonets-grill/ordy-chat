@@ -24,6 +24,21 @@ export class OutOfHoursError extends Error {
   }
 }
 
+/**
+ * 2026-04-26 (Mario decisión): no se aceptan pedidos sin turno POS abierto.
+ * El cron `/api/cron/auto-open-shifts` abre turnos automáticamente cuando el
+ * tenant entra dentro del horario `agent_configs.schedule`. Si por algún
+ * motivo el cron no corrió todavía o el negocio está fuera de horario,
+ * createOrder rechaza con este error y el cliente recibe 409.
+ */
+export class NoOpenShiftError extends Error {
+  readonly code = "no_open_shift" as const;
+  constructor() {
+    super("no_open_shift: no hay turno POS abierto. Abre el turno o espera al cron auto-open.");
+    this.name = "NoOpenShiftError";
+  }
+}
+
 /** Error cuando se detecta un pedido idéntico recién creado (idempotency guard). */
 export class DuplicateOrderError extends Error {
   readonly code = "duplicate_order" as const;
@@ -279,45 +294,24 @@ export async function createOrder(input: CreateOrderInput) {
     });
   }
 
-  // Mig 038 (POS): auto-vincular al turno abierto del tenant (si hay).
-  // Pedidos de test NO se vinculan — no deben ensuciar los reportes POS.
-  //
-  // Mig 040: si NO hay turno abierto, auto-abrimos uno con opening_cash=0 y
-  // mandamos WA al dueño (best-effort, no bloqueante). Así los "turnos
-  // obligatorios" no rompen el servicio cuando el encargado se olvida.
+  // 2026-04-26 (Mario decisión): pedidos requieren turno POS abierto.
+  // Mig 038 (POS): auto-vincular al turno abierto del tenant.
+  // Mig 040 dejaba que createOrder auto-abriera turnos al primer pedido —
+  // ese comportamiento se REMOVIÓ. Ahora la apertura es responsabilidad del
+  // cron `/api/cron/auto-open-shifts` que evalúa `agent_configs.schedule`.
+  // Si no hay turno abierto cuando llega el pedido → 409 NoOpenShiftError.
+  // Pedidos de test (playground) NO se vinculan a turno — no ensucian POS.
   let shiftId: string | null = null;
-  let shiftAutoOpened = false;
   if (!(input.isTest ?? false)) {
     const [openShift] = await db
       .select({ id: shifts.id })
       .from(shifts)
       .where(and(eq(shifts.tenantId, input.tenantId), isNull(shifts.closedAt)))
       .limit(1);
-    if (openShift) {
-      shiftId = openShift.id;
-    } else {
-      try {
-        const [created] = await db
-          .insert(shifts)
-          .values({
-            tenantId: input.tenantId,
-            openingCashCents: 0,
-            openedBy: "auto",
-            autoOpened: true,
-          })
-          .returning({ id: shifts.id });
-        shiftId = created?.id ?? null;
-        shiftAutoOpened = shiftId !== null;
-      } catch {
-        // Race: otra transacción abrió justo ahora → rele.
-        const [retry] = await db
-          .select({ id: shifts.id })
-          .from(shifts)
-          .where(and(eq(shifts.tenantId, input.tenantId), isNull(shifts.closedAt)))
-          .limit(1);
-        shiftId = retry?.id ?? null;
-      }
+    if (!openShift) {
+      throw new NoOpenShiftError();
     }
+    shiftId = openShift.id;
   }
 
   // Mig 044: agregamos cantidad por nombre para el caso de líneas duplicadas
@@ -508,16 +502,9 @@ export async function createOrder(input: CreateOrderInput) {
     return orderRow;
   })();
 
-  // Mig 040: si acabamos de auto-abrir el turno, avisamos al dueño por WA.
-  // Fire-and-forget — si el WA falla o no hay destinatario, el pedido
-  // sigue creándose normal.
-  if (shiftAutoOpened) {
-    const panelBase = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || "https://ordychat.com";
-    queuePosReport(input.tenantId, "shift_auto_opened", {
-      openedAt: new Date(),
-      panelUrl: `${panelBase.replace(/\/$/, "")}/dashboard/turno`,
-    });
-  }
+  // 2026-04-26: aviso shift_auto_opened ahora lo dispara el cron
+  // /api/cron/auto-open-shifts cuando abre el turno por entrada en horario.
+  // Aquí ya no aplica porque createOrder no auto-abre.
 
   // Mig 044: alertas de stock bajo. No bloqueante. Una alerta WA por item.
   // Pedidos test (playground) NO disparan alertas — ensucian al admin.
