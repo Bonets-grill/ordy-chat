@@ -1358,12 +1358,20 @@ async def _procesar_mensaje(tenant: TenantContext, provider: str, msg: MensajeEn
                 )
             return
 
+        # Mig 057 (2026-04-26): detectar idioma del cliente desde el historial
+        # + mensaje actual y pasarlo a generar_respuesta. Sin esto el LLM
+        # respondía en español a clientes alemanes/ingleses por sesgo del
+        # system prompt (bug visto en Bonets-grill cliente extranjero).
+        from app.lang_detect import detectar_idioma_cliente
+        client_lang_detected = detectar_idioma_cliente(historial, texto_efectivo)
+
         respuesta, tin, tout = await generar_respuesta(
             tenant,
             texto_efectivo,
             historial,
             customer_phone=msg.telefono,
             media_blocks=media_blocks or None,
+            client_lang=client_lang_detected,
         )
 
         await guardar_intercambio(

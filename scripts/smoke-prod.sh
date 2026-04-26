@@ -83,18 +83,44 @@ fi
 # post-deploy con la secret en el entorno; en local sin secret se omite con
 # un aviso visible para que nadie crea que está cubierto cuando no lo está).
 if [[ -n "${RUNTIME_INTERNAL_SECRET:-}" ]]; then
-  BRAIN_RESP=$(curl -s -m 30 -X POST "$RUNTIME/internal/playground/generate" \
-    -H "Content-Type: application/json" \
-    -H "X-Internal-Secret: $RUNTIME_INTERNAL_SECRET" \
-    -d '{"tenant_slug":"bonets-grill-icod","messages":[{"role":"user","content":"hola"}]}' 2>/dev/null)
-  BRAIN_TEXT=$(echo "$BRAIN_RESP" | grep -oE '"response":"[^"]*"' | head -1 | cut -d'"' -f4)
-  BRAIN_LEN=${#BRAIN_TEXT}
-  if [[ "$BRAIN_LEN" -gt 5 ]] && [[ "$BRAIN_TEXT" != *"problemas técnicos"* ]]; then
-    RESULTS+=("✓|brain conversacional|${BRAIN_LEN}c|sandbox bonets-grill-icod respondió OK")
-  else
-    RESULTS+=("✗|brain conversacional|${BRAIN_LEN}c|respuesta vacía o fallback técnico")
-    FAILED=$((FAILED + 1))
-  fi
+  # Helper: prueba 1 turno en un idioma y verifica que la respuesta no esté
+  # vacía, no contenga "problemas técnicos", y (si aplica) contenga al menos
+  # un marcador del idioma esperado para detectar regresiones del dual-lang.
+  brain_check() {
+    local label="$1" lang="$2" msg="$3" markers="$4"
+    local body resp txt len
+    body=$(printf '{"tenant_slug":"bonets-grill-icod","client_lang":"%s","messages":[{"role":"user","content":"%s"}]}' "$lang" "$msg")
+    resp=$(curl -s -m 30 -X POST "$RUNTIME/internal/playground/generate" \
+      -H "Content-Type: application/json" \
+      -H "X-Internal-Secret: $RUNTIME_INTERNAL_SECRET" \
+      -d "$body" 2>/dev/null)
+    txt=$(echo "$resp" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("response",""))' 2>/dev/null)
+    len=${#txt}
+    if [[ "$len" -lt 5 ]] || [[ "$txt" == *"problemas técnicos"* ]]; then
+      RESULTS+=("✗|brain $label|${len}c|respuesta vacía o fallback técnico")
+      FAILED=$((FAILED + 1))
+      return
+    fi
+    if [[ -n "$markers" ]]; then
+      # bash 3.2-compatible lowercase (macOS default sin ${var,,}).
+      local txt_lc markers_lc found=0 m
+      txt_lc=$(printf '%s' "$txt" | tr '[:upper:]' '[:lower:]')
+      markers_lc=$(printf '%s' "$markers" | tr '[:upper:]' '[:lower:]')
+      IFS='|' read -ra arr <<< "$markers_lc"
+      for m in "${arr[@]}"; do
+        if [[ "$txt_lc" == *"$m"* ]]; then found=1; break; fi
+      done
+      if [[ $found -eq 0 ]]; then
+        RESULTS+=("✗|brain $label|${len}c|sin marcador idioma (esperado: $markers)")
+        FAILED=$((FAILED + 1))
+        return
+      fi
+    fi
+    RESULTS+=("✓|brain $label|${len}c|respuesta OK con idioma correcto")
+  }
+  brain_check "es"            "es" "hola"                          ""
+  brain_check "en (dual-lang)" "en" "hi, I want to order a burger" "you|order|burger|hello|hi"
+  brain_check "de (dual-lang)" "de" "hallo, ich möchte bestellen"  "möcht|hallo|bestell|guten|sie"
 else
   RESULTS+=("⚠|brain conversacional|skipped|exporta RUNTIME_INTERNAL_SECRET para cubrir brain")
 fi
