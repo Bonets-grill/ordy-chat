@@ -89,6 +89,7 @@ const NAV: NavItem[] = [
   { href: "/agent/suppliers",    label: "Proveedores",     icon: Truck,              group: "account", keywords: ["compras", "proveedores"] },
   { href: "/dashboard/tpv",      label: "TPV (Stripe Terminal)", icon: Smartphone,   group: "account", keywords: ["tpv", "stripe", "terminal"] },
   { href: "/agent/fiscal",       label: "Datos fiscales",  icon: FileText,           group: "account", keywords: ["fiscal", "verifactu", "iva", "nif"] },
+  { href: "/dashboard/ajustes",  label: "Ajustes",         icon: Settings,           group: "account", keywords: ["ajustes", "configuracion", "zona horaria", "timezone", "tz"] },
   { href: "/billing",            label: "Facturación",     icon: CreditCard,         group: "account", keywords: ["plan", "billing", "factura", "stripe"] },
 ];
 
