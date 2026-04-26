@@ -27,6 +27,24 @@ export function validateCronAuth(req: Request): NextResponse | null {
   return null;
 }
 
+/**
+ * CN-012 fix 2026-04-26: helper timing-safe para endpoints que el runtime
+ * llama con `x-internal-secret: $RUNTIME_INTERNAL_SECRET`. Antes algunos
+ * endpoints comparaban con `provided !== expected` (no constant-time).
+ * Devuelve NextResponse 403 si falla, null si OK.
+ */
+export function validateInternalSecret(req: Request): NextResponse | null {
+  const secret = process.env.RUNTIME_INTERNAL_SECRET ?? "";
+  if (!secret) {
+    return NextResponse.json({ error: "RUNTIME_INTERNAL_SECRET no configurado" }, { status: 503 });
+  }
+  const provided = req.headers.get("x-internal-secret") ?? "";
+  if (!timingSafeEqualStr(provided, secret)) {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+  return null;
+}
+
 /** Passthrough genérico a un endpoint interno del runtime. */
 export async function passthroughToRuntime(
   pathAndQuery: string,

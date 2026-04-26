@@ -134,7 +134,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   // Con "jwt" el role va embebido en el cookie (JWT firmado), accesible
   // en edge sin DB. El callback jwt() abajo refresca el role desde DB en
   // cada login (no en cada request — eso costaría latencia).
-  session: { strategy: "jwt" },
+  // CN-014 fix 2026-04-26: maxAge explícito 7d + updateAge 1d.
+  session: { strategy: "jwt", maxAge: 60 * 60 * 24 * 7, updateAge: 60 * 60 * 24 },
   providers: [
     ...(process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET
       ? [Google({

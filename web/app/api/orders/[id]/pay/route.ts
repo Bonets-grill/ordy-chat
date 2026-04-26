@@ -5,6 +5,7 @@
 
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { validateInternalSecret } from "@/lib/cron";
 import { db } from "@/lib/db";
 import { orders } from "@/lib/db/schema";
 import { createPaymentLink } from "@/lib/orders";
@@ -18,12 +19,9 @@ export async function POST(
 ) {
   const { id: orderId } = await params;
 
-  // Autorización: runtime con shared secret O super-admin (futuro).
-  const provided = req.headers.get("x-internal-secret") ?? "";
-  const expected = process.env.RUNTIME_INTERNAL_SECRET ?? "";
-  if (!expected || provided !== expected) {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
-  }
+  // CN-012 fix 2026-04-26: timing-safe comparison via helper.
+  const unauthorized = validateInternalSecret(req);
+  if (unauthorized) return unauthorized;
 
   const [order] = await db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
   if (!order) return NextResponse.json({ error: "order_not_found" }, { status: 404 });

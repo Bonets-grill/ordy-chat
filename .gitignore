@@ -65,3 +65,24 @@ yarn-error.log*
 .vercel
 whatsapp-agentkit/
 .gstack/
+
+# ── Cyber-neo CN-008 hardening (defense-in-depth) ──────────
+# Patrones que los scanners típicos detectan como secret leakage.
+# Aún si nunca creamos estos archivos, los excluimos para no caer en una
+# trampa accidental al copiar de otro proyecto.
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+id_rsa
+id_rsa.pub
+id_ed25519
+id_ed25519.pub
+credentials.json
+service-account*.json
+.npmrc
+.pypirc
+SECRETS-GENERATED.txt
+.env.production
+.env.development

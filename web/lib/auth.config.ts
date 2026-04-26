@@ -20,7 +20,9 @@ declare module "next-auth" {
 }
 
 export const authConfig = {
-  session: { strategy: "jwt" },
+  // CN-014 fix 2026-04-26: maxAge explícito 7d (default era 30d).
+  // updateAge: 1d → la cookie se refresca diariamente con role actualizado.
+  session: { strategy: "jwt", maxAge: 60 * 60 * 24 * 7, updateAge: 60 * 60 * 24 },
   pages: {
     signIn: "/signin",
     verifyRequest: "/verify",

@@ -8,6 +8,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { orders, tenants } from "@/lib/db/schema";
+import { validateInternalSecret } from "@/lib/cron";
 import { createOrder, DuplicateOrderError, NoOpenShiftError, OutOfHoursError } from "@/lib/orders";
 import { requireTenant } from "@/lib/tenant";
 
@@ -56,12 +57,9 @@ const createSchema = z.object({
 );
 
 export async function POST(req: Request) {
-  // Interno: el runtime firma con RUNTIME_INTERNAL_SECRET
-  const provided = req.headers.get("x-internal-secret") ?? "";
-  const expected = process.env.RUNTIME_INTERNAL_SECRET ?? "";
-  if (!expected || provided !== expected) {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
-  }
+  // CN-012 fix 2026-04-26: timing-safe comparison via helper.
+  const unauthorized = validateInternalSecret(req);
+  if (unauthorized) return unauthorized;
 
   const parsed = createSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {

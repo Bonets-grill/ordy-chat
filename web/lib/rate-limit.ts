@@ -14,14 +14,40 @@ import { Redis } from "@upstash/redis";
 
 let _redis: Redis | null = null;
 
+// CN-006 fix 2026-04-26: en producción rate-limit es BLOQUEANTE.
+// Antes: si Upstash env vars faltaban, todos los limiters retornaban
+// silenciosamente {ok: true} → brute-force expuesto.
+// Ahora: en producción los handlers que llaman a un limiter sin Upstash
+// configurado reciben null y deben tratar como rate-limit fail-closed.
+// El check al import-time tumbaba el build de Next 16 (collect page data
+// usa NODE_ENV=production sin runtime env), por eso es fail-at-call-time.
+function isProdRuntime(): boolean {
+  return (
+    (process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "production") &&
+    // En build, NEXT_PHASE === "phase-production-build" → NO es runtime real.
+    process.env.NEXT_PHASE !== "phase-production-build"
+  );
+}
+
 function getRedis(): Redis | null {
   if (_redis) return _redis;
   const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) return null;
+  if (!url || !token) {
+    if (isProdRuntime()) {
+      // Log crítico una sola vez por cold-start; Sentry capta.
+      console.error(
+        "[SECURITY CN-006] Upstash rate-limit no configurado en producción. " +
+        "Setear UPSTASH_REDIS_REST_URL y UPSTASH_REDIS_REST_TOKEN en Vercel.",
+      );
+    }
+    return null;
+  }
   _redis = new Redis({ url, token });
   return _redis;
 }
+
+// `rateLimitConfigured` ya existe más abajo (export function rateLimitConfigured() en l.205).
 
 const _cache: Record<string, Ratelimit> = {};
 

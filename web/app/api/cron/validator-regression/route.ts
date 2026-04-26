@@ -11,17 +11,16 @@ import { and, eq, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { tenants } from "@/lib/db/schema";
+import { validateCronAuth } from "@/lib/cron";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
 export async function GET(req: Request) {
-  const expected = process.env.CRON_SECRET ?? "";
-  const provided = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
-  if (!expected || provided !== expected) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  // CN-011 fix 2026-04-26: usar helper timing-safe en lugar de !==
+  const unauthorized = validateCronAuth(req);
+  if (unauthorized) return unauthorized;
 
   const runtimeUrl = (process.env.RUNTIME_URL ?? "").replace(/\/$/, "");
   const secret = process.env.RUNTIME_INTERNAL_SECRET ?? "";
