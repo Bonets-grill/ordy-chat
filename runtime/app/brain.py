@@ -1612,15 +1612,20 @@ async def generar_respuesta(
             total_in += resp.usage.input_tokens
             total_out += resp.usage.output_tokens
 
-            if resp.stop_reason != "tool_use":
-                # Respuesta final — extraer texto de todos los bloques text.
+            # Mirar el contenido real, no fiarse solo de stop_reason.
+            # Bug histórico: Claude puede devolver stop_reason="end_turn"/"max_tokens"
+            # con bloques tool_use pendientes, o stop_reason="tool_use" sin bloques
+            # — en ambos casos el chequeo `!= "tool_use"` daba falsos positivos y
+            # devolvía error_message en silencio (49 fallbacks 2026-04-25).
+            tool_use_blocks = [
+                b for b in resp.content if getattr(b, "type", None) == "tool_use"
+            ]
+
+            if not tool_use_blocks:
+                # No hay tools pendientes — respuesta final.
                 texto_final = "".join(
                     block.text for block in resp.content if getattr(block, "type", None) == "text"
                 ).strip()
-                # Defensive logging del bug stop_reason sin text block
-                # (memoria 1505 LLM stop_reason sin text → fallback silente).
-                # Si stop_reason termina sin text Y sin tool_use, log full
-                # stop_reason + block_types para diagnóstico futuro.
                 if not texto_final:
                     block_types = [getattr(b, "type", "?") for b in resp.content]
                     logger.warning(
@@ -1632,6 +1637,33 @@ async def generar_respuesta(
                             "block_types": block_types,
                         },
                     )
+                    # Escalar a humano automáticamente: el cliente no debe
+                    # quedarse con "problemas técnicos" sin que nadie atienda.
+                    # Saltamos sandbox y sesiones anónimas (playground/validator).
+                    if (
+                        not sandbox
+                        and customer_phone
+                        and not _is_anonymous_session(customer_phone)
+                    ):
+                        try:
+                            await crear_handoff(
+                                tenant_id=tenant.id,
+                                customer_phone=customer_phone,
+                                reason=(
+                                    f"Bot devolvió respuesta vacía "
+                                    f"(stop_reason={resp.stop_reason}, "
+                                    f"blocks={block_types}). Auto-escalado."
+                                ),
+                                priority="high",
+                            )
+                        except Exception:
+                            logger.exception(
+                                "auto-escalado tras brain_empty_text falló",
+                                extra={
+                                    "event": "auto_escalate_failed",
+                                    "tenant_slug": tenant.slug,
+                                },
+                            )
                 return texto_final or tenant.error_message, total_in, total_out
 
             # Claude pidió una tool. Registrar el assistant turn completo y ejecutar.

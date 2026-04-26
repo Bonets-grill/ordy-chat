@@ -76,6 +76,29 @@ else
   FAILED=$((FAILED + 1))
 fi
 
+# 7b. Brain conversacional real (sandbox, ejerce LLM end-to-end).
+#
+# Detecta brain_empty_text y otros fallos de UX que los healthchecks NO ven.
+# Solo se ejecuta si RUNTIME_INTERNAL_SECRET está exportado (apto para cron
+# post-deploy con la secret en el entorno; en local sin secret se omite con
+# un aviso visible para que nadie crea que está cubierto cuando no lo está).
+if [[ -n "${RUNTIME_INTERNAL_SECRET:-}" ]]; then
+  BRAIN_RESP=$(curl -s -m 30 -X POST "$RUNTIME/internal/playground/generate" \
+    -H "Content-Type: application/json" \
+    -H "X-Internal-Secret: $RUNTIME_INTERNAL_SECRET" \
+    -d '{"tenant_slug":"bonets-grill-icod","messages":[{"role":"user","content":"hola"}]}' 2>/dev/null)
+  BRAIN_TEXT=$(echo "$BRAIN_RESP" | grep -oE '"response":"[^"]*"' | head -1 | cut -d'"' -f4)
+  BRAIN_LEN=${#BRAIN_TEXT}
+  if [[ "$BRAIN_LEN" -gt 5 ]] && [[ "$BRAIN_TEXT" != *"problemas técnicos"* ]]; then
+    RESULTS+=("✓|brain conversacional|${BRAIN_LEN}c|sandbox bonets-grill-icod respondió OK")
+  else
+    RESULTS+=("✗|brain conversacional|${BRAIN_LEN}c|respuesta vacía o fallback técnico")
+    FAILED=$((FAILED + 1))
+  fi
+else
+  RESULTS+=("⚠|brain conversacional|skipped|exporta RUNTIME_INTERNAL_SECRET para cubrir brain")
+fi
+
 # 8. Commit en prod (si /api/health responde con commit)
 WEB_COMMIT=$(curl -s -m 10 "$WEB/api/health" 2>/dev/null | grep -oE '"commit":"[a-f0-9]+"' | cut -d'"' -f4)
 RUNTIME_COMMIT=$(curl -s -m 10 "$RUNTIME/version" 2>/dev/null | grep -oE '"commit":"[a-f0-9]+"' | cut -d'"' -f4)

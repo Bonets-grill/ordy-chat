@@ -155,7 +155,13 @@ async def generar_respuesta_admin(
             total_in += resp.usage.input_tokens
             total_out += resp.usage.output_tokens
 
-            if resp.stop_reason != "tool_use":
+            # Mirar contenido real, no fiarse solo de stop_reason — Claude
+            # puede devolver end_turn con tool_use blocks pendientes.
+            tool_use_blocks = [
+                b for b in resp.content if getattr(b, "type", None) == "tool_use"
+            ]
+
+            if not tool_use_blocks:
                 texto_final = "".join(
                     block.text for block in resp.content
                     if getattr(block, "type", None) == "text"
