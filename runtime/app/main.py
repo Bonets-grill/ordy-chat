@@ -220,6 +220,7 @@ app = FastAPI(title="Ordy Chat Runtime", version="1.2.0", lifespan=lifespan)
 
 
 @app.get("/")
+@app.get("/health")
 async def health():
     return {"service": "ordy-chat-runtime", "status": "ok"}
 
