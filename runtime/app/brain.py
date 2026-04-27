@@ -153,6 +153,29 @@ def _is_anonymous_session(phone: str | None) -> bool:
     return False
 
 
+# Mensaje contextual cuando Claude devuelve content vacío 2 veces seguidas.
+# NUNCA "problemas técnicos" — pedimos al cliente repetir su último mensaje.
+# Idiomas alineados con app/lang_detect.py + survey_templates.py (es/en/de/fr/it/pt).
+# Si client_lang viene None o desconocido, fallback a español.
+_EMPTY_CONTEXTUAL_MSG: dict[str, str] = {
+    "es": "Disculpa, no he podido procesar tu último mensaje. ¿Puedes repetirlo, por favor? 🙏",
+    "en": "Sorry, I couldn't process your last message. Could you repeat it, please? 🙏",
+    "de": "Entschuldige, ich konnte deine letzte Nachricht nicht verarbeiten. Kannst du sie bitte wiederholen? 🙏",
+    "fr": "Désolé, je n'ai pas pu traiter ton dernier message. Peux-tu le répéter, s'il te plaît ? 🙏",
+    "it": "Scusa, non sono riuscito a elaborare il tuo ultimo messaggio. Puoi ripetere, per favore? 🙏",
+    "pt": "Desculpa, não consegui processar a tua última mensagem. Podes repetir, por favor? 🙏",
+}
+
+
+def _empty_contextual_msg(client_lang: str | None) -> str:
+    """Devuelve un mensaje contextual en el idioma del cliente que pide
+    repetir el último mensaje. Usado cuando Claude devolvió content vacío
+    2 veces seguidas — el cliente NO debe leer 'problemas técnicos'."""
+    if client_lang and client_lang in _EMPTY_CONTEXTUAL_MSG:
+        return _EMPTY_CONTEXTUAL_MSG[client_lang]
+    return _EMPTY_CONTEXTUAL_MSG["es"]
+
+
 def _render_contexto_cliente(ctx: dict[str, Any]) -> str | None:
     """Serializa el contexto persistente a texto que Claude leerá como system block."""
     if not ctx:
@@ -1627,6 +1650,12 @@ async def generar_respuesta(
                     block.text for block in resp.content if getattr(block, "type", None) == "text"
                 ).strip()
                 if not texto_final:
+                    # CONTENT VACÍO. Estrategia "empty_content_retry" (caso Fabian
+                    # 2026-04-27): un retry inmediato con temperatura bumped a 0.4
+                    # rompe la salida degenerada del modelo en la mayoría de casos.
+                    # Si la 2ª también vuelve vacía, devolvemos un mensaje contextual
+                    # ("¿puedes repetirlo?") en el idioma del cliente — NUNCA el
+                    # error_message agresivo "problemas técnicos".
                     block_types = [getattr(b, "type", "?") for b in resp.content]
                     logger.warning(
                         "brain cliente devolvió respuesta sin texto",
@@ -1635,36 +1664,72 @@ async def generar_respuesta(
                             "tenant_slug": tenant.slug,
                             "stop_reason": resp.stop_reason,
                             "block_types": block_types,
+                            "empty_attempt": 1,
                         },
                     )
-                    # Escalar a humano automáticamente: el cliente no debe
-                    # quedarse con "problemas técnicos" sin que nadie atienda.
-                    # Saltamos sandbox y sesiones anónimas (playground/validator).
-                    if (
-                        not sandbox
-                        and customer_phone
-                        and not _is_anonymous_session(customer_phone)
-                    ):
-                        try:
-                            await crear_handoff(
-                                tenant_id=tenant.id,
-                                customer_phone=customer_phone,
-                                reason=(
-                                    f"Bot devolvió respuesta vacía "
-                                    f"(stop_reason={resp.stop_reason}, "
-                                    f"blocks={block_types}). Auto-escalado."
-                                ),
-                                priority="high",
-                            )
-                        except Exception:
-                            logger.exception(
-                                "auto-escalado tras brain_empty_text falló",
-                                extra={
-                                    "event": "auto_escalate_failed",
-                                    "tenant_slug": tenant.slug,
-                                },
-                            )
-                return texto_final or tenant.error_message, total_in, total_out
+                    # Retry inline (NO consume iteración del tool loop).
+                    resp = await client.messages.create(
+                        model=MODEL_ID,
+                        max_tokens=MAX_TOKENS,
+                        temperature=0.4,
+                        system=system_blocks,
+                        messages=messages,
+                        tools=TOOLS,
+                    )
+                    total_in += resp.usage.input_tokens
+                    total_out += resp.usage.output_tokens
+                    tool_use_blocks = [
+                        b for b in resp.content if getattr(b, "type", None) == "tool_use"
+                    ]
+                    if tool_use_blocks:
+                        # 2º intento eligió tool — caemos al path normal de tools
+                        # bajando al bloque de ejecución de tool_use blocks.
+                        pass
+                    else:
+                        texto_final = "".join(
+                            block.text for block in resp.content if getattr(block, "type", None) == "text"
+                        ).strip()
+                        if texto_final:
+                            return texto_final, total_in, total_out
+                        # 2ª vez vacía — mensaje contextual + auto-handoff
+                        block_types_2 = [getattr(b, "type", "?") for b in resp.content]
+                        logger.warning(
+                            "brain cliente devolvió respuesta sin texto tras retry",
+                            extra={
+                                "event": "brain_empty_text",
+                                "tenant_slug": tenant.slug,
+                                "stop_reason": resp.stop_reason,
+                                "block_types": block_types_2,
+                                "empty_attempt": 2,
+                            },
+                        )
+                        if (
+                            not sandbox
+                            and customer_phone
+                            and not _is_anonymous_session(customer_phone)
+                        ):
+                            try:
+                                await crear_handoff(
+                                    tenant_id=tenant.id,
+                                    customer_phone=customer_phone,
+                                    reason=(
+                                        f"Bot devolvió respuesta vacía 2 veces "
+                                        f"(stop_reason={resp.stop_reason}, "
+                                        f"blocks={block_types_2}). Auto-escalado."
+                                    ),
+                                    priority="high",
+                                )
+                            except Exception:
+                                logger.exception(
+                                    "auto-escalado tras brain_empty_text falló",
+                                    extra={
+                                        "event": "auto_escalate_failed",
+                                        "tenant_slug": tenant.slug,
+                                    },
+                                )
+                        return _empty_contextual_msg(client_lang), total_in, total_out
+                else:
+                    return texto_final, total_in, total_out
 
             # Claude pidió una tool. Registrar el assistant turn completo y ejecutar.
             messages.append({"role": "assistant", "content": resp.content})
