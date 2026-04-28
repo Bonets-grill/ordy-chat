@@ -225,9 +225,11 @@ def test_empty_content_2x_aun_dispara_auto_handoff_para_phone_real() -> None:
     ])
 
     handoff_mock = AsyncMock()
+    audit_mock = AsyncMock()
     patches = _common_patches() + [
         patch.object(brain, "_get_client", return_value=fake),
         patch.object(brain, "crear_handoff", new=handoff_mock),
+        patch.object(brain, "_registrar_alerta_empty_unrecoverable", new=audit_mock),
     ]
     for p in patches: p.start()
     try:
@@ -244,6 +246,44 @@ def test_empty_content_2x_aun_dispara_auto_handoff_para_phone_real() -> None:
     assert handoff_mock.await_count == 1, (
         f"Phone real con 2 vacíos seguidos debe crear handoff. Got {handoff_mock.await_count}"
     )
+    # Acción audit-prod #3: alerta proactiva en audit_log para super admin.
+    assert audit_mock.await_count == 1, (
+        f"Phone real con 2 vacíos seguidos debe insertar audit_log alert. Got {audit_mock.await_count}"
+    )
+    assert "problemas técnicos" not in respuesta.lower()
+
+
+def test_empty_content_2x_anonymous_NO_dispara_audit_log() -> None:
+    """En sesiones anónimas (playground-sandbox / widget público) NO debe
+    insertarse audit_log alert — son tests del owner, no incidentes reales."""
+
+    fake = AsyncMock()
+    fake.messages.create = AsyncMock(side_effect=[
+        _resp([], stop_reason="end_turn", out_t=0),
+        _resp([], stop_reason="end_turn", out_t=0),
+    ])
+
+    handoff_mock = AsyncMock()
+    audit_mock = AsyncMock()
+    patches = _common_patches() + [
+        patch.object(brain, "_get_client", return_value=fake),
+        patch.object(brain, "crear_handoff", new=handoff_mock),
+        patch.object(brain, "_registrar_alerta_empty_unrecoverable", new=audit_mock),
+    ]
+    for p in patches: p.start()
+    try:
+        respuesta, _, _ = asyncio.run(brain.generar_respuesta(
+            _Tenant(),  # type: ignore[arg-type]
+            "test",
+            historial=[],
+            customer_phone="playground-sandbox",
+            sandbox=True,
+        ))
+    finally:
+        for p in patches: p.stop()
+
+    assert handoff_mock.await_count == 0, "anonymous NO debe crear handoff"
+    assert audit_mock.await_count == 0, "anonymous NO debe insertar audit_log alert"
     assert "problemas técnicos" not in respuesta.lower()
 
 

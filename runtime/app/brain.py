@@ -176,6 +176,51 @@ def _empty_contextual_msg(client_lang: str | None) -> str:
     return _EMPTY_CONTEXTUAL_MSG["es"]
 
 
+async def _registrar_alerta_empty_unrecoverable(
+    tenant_id: "UUID",  # noqa: F821 — UUID importado abajo en TYPE_CHECKING
+    customer_phone: str,
+    stop_reason: str | None,
+    block_types: list[str],
+    client_lang: str | None,
+) -> None:
+    """Inserta una fila en audit_log cuando el retry NO salvó la respuesta
+    vacía de Claude (empty_attempt=2). El super admin la ve en /admin/audit
+    para detectar patrones (¿qué clientes/idiomas/tenants? ¿hora del día?).
+    Best-effort: si falla, no rompe el flujo — el handoff ya disparó arriba.
+
+    Recomendación operativa cerrada en audit-prod 2026-04-27 (acción 3):
+    'añadir alerta proactiva cuando empty_attempt=2 dispara'.
+    """
+    try:
+        import json
+        from app.memory import inicializar_pool
+        pool = await inicializar_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO audit_log (tenant_id, user_id, action, entity, entity_id, metadata)
+                VALUES ($1, NULL, 'brain_empty_text_unrecoverable', 'conversation', $2, $3::jsonb)
+                """,
+                tenant_id,
+                customer_phone,
+                json.dumps(
+                    {
+                        "stop_reason": stop_reason,
+                        "block_types": block_types,
+                        "client_lang": client_lang,
+                        "severity": "high",
+                    },
+                    ensure_ascii=False,
+                    default=str,
+                ),
+            )
+    except Exception:
+        logger.exception(
+            "audit_log alert insert falló (no bloquea respuesta al cliente)",
+            extra={"event": "audit_log_error", "tenant_id": str(tenant_id)},
+        )
+
+
 def _render_contexto_cliente(ctx: dict[str, Any]) -> str | None:
     """Serializa el contexto persistente a texto que Claude leerá como system block."""
     if not ctx:
@@ -1727,6 +1772,16 @@ async def generar_respuesta(
                                         "tenant_slug": tenant.slug,
                                     },
                                 )
+                            # Alerta proactiva en audit_log para que el super
+                            # admin detecte patrones recurrentes (audit-prod
+                            # 2026-04-27 acción #3).
+                            await _registrar_alerta_empty_unrecoverable(
+                                tenant_id=tenant.id,
+                                customer_phone=customer_phone,
+                                stop_reason=resp.stop_reason,
+                                block_types=block_types_2,
+                                client_lang=client_lang,
+                            )
                         return _empty_contextual_msg(client_lang), total_in, total_out
                 else:
                     return texto_final, total_in, total_out
